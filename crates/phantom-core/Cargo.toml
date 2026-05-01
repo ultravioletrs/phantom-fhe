@@ -1,0 +1,22 @@
+[package]
+name = "phantom-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Scheme-agnostic RLWE and RGSW primitives for phantom-fhe."
+
+[features]
+default = ["std"]
+std = []
+
+[dependencies]
+phantom-ring = { path = "../phantom-ring" }
+phantom-utils = { path = "../phantom-utils" }
+rand_core = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+rand_chacha = { workspace = true }
+

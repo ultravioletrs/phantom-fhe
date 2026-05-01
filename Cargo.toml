@@ -1,0 +1,18 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/phantom-core",
+    "crates/phantom-ring",
+    "crates/phantom-utils",
+]
+
+[workspace.package]
+edition = "2021"
+license = "Apache-2.0"
+repository = "https://github.com/phantom-fhe/phantom-fhe"
+rust-version = "1.85"
+
+[workspace.dependencies]
+rand_chacha = "0.3"
+rand_core = "0.6"
+thiserror = "1"

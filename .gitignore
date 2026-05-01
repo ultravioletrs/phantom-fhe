@@ -1,0 +1,28 @@
+# Rust build artifacts
+/target/
+
+# Cargo/editor local state
+/.cargo/
+Cargo.lock
+
+# IDE/editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Generated reports and scratch data
+/coverage/
+/criterion/
+/tmp/
+
