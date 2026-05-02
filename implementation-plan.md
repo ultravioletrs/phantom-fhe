@@ -915,10 +915,292 @@ Each phase is complete only when:
 
 Current next implementation target: production hardening and Phase 0 cleanup.
 
+## 26. Next Release Plan - Alpha Hardening
+
+The phase roadmap is complete at the current scaffold/correctness level. The next release should not add another broad feature layer. It should turn the existing workspace into a clearly bounded alpha: easy to build, honest about toy/scaffold internals, safer to consume, and ready for deeper production cryptography work.
+
+### Release Goal
+
+Ship an alpha-quality repository where:
+
+- public crates compile, test, document, and lint consistently
+- examples and smoke benchmarks are runnable from documented commands
+- scaffold/toy cryptography boundaries are explicit
+- the planned `phantom-fhe` facade crate exists
+- contributors can understand security status, dependency policy, and release expectations
+- production hardening work is broken into concrete follow-up tracks
+
+### Workstream 1 - Phase 0 Cleanup and Release Infrastructure
+
+Owned areas:
+
+- workspace root
+- `crates/phantom-fhe`
+- CI and repository policy files
+
+Tasks:
+
 1. Add the `phantom-fhe` facade crate.
-2. Add `SECURITY.md`, `CONTRIBUTING.md`, baseline CI, and dependency policy.
-3. Replace smoke benchmarks with Criterion if dependency policy allows it.
-4. Continue production cryptography hardening: real noise management, optimized NTT/RNS, secure parameter sets, and protocol security review.
-5. Prepare alpha release notes once Phase 0 cleanup is complete.
+2. Re-export stable top-level modules from the facade:
+   - `ring`
+   - `lattice`
+   - `schemes`
+   - `circuits`
+   - `bootstrapping`
+   - `multiparty`
+3. Decide whether `phantom-examples` and `phantom-benches` remain workspace-only packages or get facade-facing examples.
+4. Add `SECURITY.md` with current cryptographic status and vulnerability reporting guidance.
+5. Add `CONTRIBUTING.md` with formatting, testing, authorship, and no-copying rules.
+6. Add baseline CI for:
+   - `cargo fmt --all -- --check`
+   - `cargo test --workspace --all-targets`
+   - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+   - `cargo doc --workspace --no-deps`
+7. Add dependency policy:
+   - which dependencies are allowed in core crates
+   - which dependencies are dev-only
+   - whether Criterion is allowed for benchmarks
+   - whether `serde`, `rayon`, `zeroize`, and `proptest` are feature-gated or default dependencies
+
+Exit criteria:
+
+- A new contributor can clone the repository and run the documented command matrix.
+- The top-level facade crate compiles and has clear Rustdoc.
+- CI status reflects the same checks developers run locally.
+
+### Workstream 2 - Scaffold Boundary and API Honesty
+
+Owned areas:
+
+- README
+- crate-level Rustdoc
+- examples
+- parameter documentation
+- feature flags
+
+Tasks:
+
+1. Mark the current implementation as alpha/scaffold in all user-facing docs.
+2. Separate toy/test presets from future production presets.
+3. Consider a `toy` or `experimental` feature flag for APIs that should not be mistaken for secure production cryptography.
+4. Hide or rename helpers that are only present to support toy semantics.
+5. Add warnings to examples and parameter docs that current presets are not secure.
+6. Audit public APIs and decide:
+   - stable alpha API
+   - experimental API
+   - crate-private/internal API
+7. Improve error conversions that currently collapse lower-level failures into generic messages.
+
+Exit criteria:
+
+- Users cannot reasonably confuse the current alpha with production-secure FHE.
+- Public API boundaries are documented.
+- Toy examples remain easy to run but are clearly labeled.
+
+### Workstream 3 - Ring and RNS Foundation Hardening
+
+Owned areas:
+
+- `phantom-ring`
+- NTT backend
+- modular reduction
+- RNS basis operations
+- samplers
+
+Tasks:
+
+1. Add property tests for modular arithmetic, polynomial arithmetic, NTT round trips, and RNS reconstruction.
+2. Add larger randomized tests for basis extension, rescale, and modulus dropping.
+3. Replace placeholder Gaussian-like sampling with a documented, cryptographically appropriate path or keep it explicitly toy-gated.
+4. Optimize CPU NTT and measure against schoolbook multiplication.
+5. Audit allocation patterns in polynomial operations.
+6. Add in-place variants where they remove meaningful allocation in hot paths.
+7. Extend smoke benchmarks or replace them with Criterion once dependency policy is settled.
+
+Exit criteria:
+
+- Ring operations have stronger randomized coverage.
+- The CPU backend has baseline performance data.
+- Sampling status is explicit and not silently production-claimed.
+
+### Workstream 4 - Production RLWE/RGSW Track
+
+Owned areas:
+
+- `phantom-lattice::rlwe`
+- `phantom-lattice::rgsw`
+
+Tasks:
+
+1. Replace toy exact encryption internals with real RLWE encryption semantics.
+2. Add noise tracking and correctness bounds.
+3. Implement production key switching.
+4. Implement production relinearization.
+5. Implement production automorphism/Galois key behavior.
+6. Improve RGSW ciphertext representation beyond plaintext-backed scaffolding.
+7. Implement real gadget decomposition/external product paths suitable for higher layers.
+8. Add randomized decryptability and homomorphic-operation tests.
+
+Exit criteria:
+
+- RLWE operations are no longer transparent/toy.
+- Key switching and relinearization have meaningful cryptographic behavior.
+- Higher scheme crates can build production BFV/BGV/CKKS semantics on top.
+
+### Workstream 5 - Production BFV/BGV/CKKS Track
+
+Owned areas:
+
+- `phantom-schemes::bfv`
+- `phantom-schemes::bgv`
+- `phantom-schemes::ckks`
+
+Tasks:
+
+1. Replace transparent BFV/BGV ciphertext semantics with real scheme behavior.
+2. Implement proper modulus switching and plaintext scaling for BFV/BGV.
+3. Add real CKKS encoding and decoding over the ring representation.
+4. Harden CKKS scale management, rescale, level alignment, and precision accounting.
+5. Add noise/error estimates to scheme contexts.
+6. Add scheme-specific parameter builders that reject insecure or inconsistent settings.
+7. Add cross-operation tests for encryption, addition, multiplication, rotations, rescale/modswitch, and serialization.
+
+Exit criteria:
+
+- Scheme ciphertexts carry real encrypted state.
+- Existing examples still run, but over non-transparent scheme behavior where possible.
+- CKKS precision metadata reflects real approximation behavior rather than scaffold bookkeeping.
+
+### Workstream 6 - Bootstrapping and Circuits Hardening
+
+Owned areas:
+
+- `phantom-circuits`
+- `phantom-bootstrapping`
+
+Tasks:
+
+1. Keep common circuit planning APIs stable while production scheme internals evolve.
+2. Connect BGV/BFV/CKKS circuit evaluators to real evaluator semantics.
+3. Improve polynomial/minimax approximation testing with known mathematical targets.
+4. Turn CKKS bootstrapping from message-preserving scaffold into a real refresh pipeline.
+5. Decide whether BGV/BFV bootstrapping remain reserved modules or become explicit future milestones.
+6. Add parameter documentation for any bootstrapping presets.
+
+Exit criteria:
+
+- Circuit APIs remain usable across toy and production internals.
+- CKKS bootstrapping has a documented path from scaffold to production.
+- Exact-scheme bootstrapping status is explicit.
+
+### Workstream 7 - Multiparty and Protocol Security
+
+Owned areas:
+
+- `phantom-multiparty::common`
+- `phantom-multiparty::mpbgv`
+- `phantom-multiparty::mpbfv`
+- `phantom-multiparty::mpckks`
+
+Tasks:
+
+1. Review protocol transcripts and share encodings for replay, stale-share, and domain-separation risks.
+2. Add stronger validation around participant sets, thresholds, rounds, and protocol kinds.
+3. Tie collective key generation to production key material once RLWE is hardened.
+4. Tie partial decryption and re-encryption to production ciphertext semantics.
+5. Document security assumptions for threshold and interactive bootstrapping protocols.
+6. Add adversarial tests for malformed shares and protocol confusion.
+
+Exit criteria:
+
+- Multiparty workflows remain deterministic and testable.
+- Public protocol messages have documented compatibility and security boundaries.
+- Production protocol work has a concrete threat model.
+
+### Workstream 8 - Testing, Serialization, and Compatibility
+
+Owned areas:
+
+- all crates
+- serialization modules
+- test suites
+
+Tasks:
+
+1. Add golden-file serialization tests for public encodings.
+2. Add version-mismatch and domain-mismatch tests for every serialized type.
+3. Add fuzz/property tests for decode rejection where practical.
+4. Add more randomized tests for scheme and lattice operations.
+5. Add compatibility policy for serialization domains and version bumps.
+6. Keep secret-bearing types non-serializable by default.
+
+Exit criteria:
+
+- Serialization formats are intentionally versioned and regression-tested.
+- Decode rejection is tested beyond simple truncation cases.
+- Secret serialization remains an explicit non-default decision.
+
+### Workstream 9 - Performance and Benchmarking
+
+Owned areas:
+
+- `phantom-benches`
+- hot paths across ring, lattice, schemes, bootstrapping, and multiparty
+
+Tasks:
+
+1. Keep current smoke benchmarks runnable without extra setup.
+2. Decide whether to add Criterion.
+3. If Criterion is approved, add benchmark groups for:
+   - `ring_ntt`
+   - `ring_rns`
+   - `rlwe_encrypt`
+   - `rlwe_keyswitch`
+   - `bfv_eval`
+   - `bgv_eval`
+   - `ckks_eval`
+   - `ckks_bootstrapping`
+   - `multiparty`
+4. Add benchmark parameters for toy, small, and eventually production-like sizes.
+5. Track allocation counts for evaluator hot paths where possible.
+
+Exit criteria:
+
+- Performance regressions are visible before release.
+- Benchmark documentation explains which numbers are smoke signals versus meaningful performance baselines.
+
+### Workstream 10 - Alpha Release Checklist
+
+Before tagging the next release:
+
+1. Run:
+   - `cargo fmt --all -- --check`
+   - `cargo test --workspace --all-targets`
+   - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
+   - `cargo doc --workspace --no-deps`
+   - `cargo bench -p phantom-benches`
+2. Run representative examples:
+   - `cargo run -p phantom-examples --example bfv_basic`
+   - `cargo run -p phantom-examples --example bgv_polynomial`
+   - `cargo run -p phantom-examples --example ckks_rescale`
+   - `cargo run -p phantom-examples --example ckks_bootstrapping`
+   - `cargo run -p phantom-examples --example mpckks_interactive_bootstrap`
+3. Confirm README roadmap, implementation plan, and release checklist agree.
+4. Confirm all toy/scaffold warnings are present.
+5. Write alpha release notes with:
+   - implemented crate map
+   - known scaffold limitations
+   - security status
+   - supported examples
+   - planned production-hardening tracks
+
+### Recommended Sequencing
+
+1. Finish Phase 0 cleanup first: facade crate, CI, security/contributing docs, dependency policy.
+2. Mark scaffold boundaries and feature-gate toy/experimental surfaces.
+3. Harden `phantom-ring` with property tests and CPU backend benchmarks.
+4. Move into production RLWE/RGSW internals.
+5. Rebuild BFV/BGV/CKKS behavior on hardened lattice primitives.
+6. Revisit circuits, bootstrapping, and multiparty once ciphertext semantics are real.
 
 Completed implementation phases so far: Phase 1 (`phantom-utils`), Phase 2 (`phantom-ring`), Phase 3 (`phantom-lattice::rlwe`), Phase 4 (`phantom-lattice::rgsw`), Phase 5 (`phantom-schemes::bgv`), Phase 6 (`phantom-schemes::bfv`), Phase 7 (`phantom-schemes::ckks`), Phase 8 (`phantom-circuits::common`), Phase 9 (`phantom-circuits::bgv`), Phase 10 (`phantom-circuits::bfv`), Phase 11 (`phantom-circuits::ckks`), Phase 12 (`phantom-bootstrapping`), Phase 13 (`phantom-multiparty::common`), Phase 14 (`phantom-multiparty::mpbgv`), Phase 15 (`phantom-multiparty::mpbfv`), Phase 16 (`phantom-multiparty::mpckks`), Phase 17 (Serialization and compatibility), and Phase 18 (Examples, benches, and release hardening).
