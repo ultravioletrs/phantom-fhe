@@ -4,4 +4,4 @@ pub mod error;
 pub mod rgsw;
 pub mod rlwe;
 
-pub use error::{CoreError, Result};
+pub use error::{LatticeError, Result};

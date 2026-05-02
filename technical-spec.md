@@ -102,7 +102,7 @@ phantom-fhe/
   crates/
     phantom-fhe/
     phantom-ring/
-    phantom-core/
+    phantom-lattice/
     phantom-schemes/
     phantom-circuits/
     phantom-bootstrapping/
@@ -117,7 +117,7 @@ Recommended crate roles:
 ```text
 phantom-fhe             Public facade crate that re-exports stable modules
 phantom-ring            Low-level RNS polynomial arithmetic, NTT, sampling
-phantom-core            RLWE and RGSW primitives
+phantom-lattice         RLWE and RGSW primitives
 phantom-schemes         BFV, BGV, CKKS implementations
 phantom-circuits        Homomorphic circuits for BGV and CKKS
 phantom-bootstrapping   Scheme bootstrapping crate: CKKS first, BGV/BFV-capable architecture
@@ -134,11 +134,11 @@ Workspace dependency rules:
 ```text
 phantom-utils -> no crypto crate dependencies
 phantom-ring -> phantom-utils
-phantom-core -> phantom-ring, phantom-utils
-phantom-schemes -> phantom-core, phantom-ring, phantom-utils
-phantom-circuits -> phantom-schemes, phantom-core, phantom-ring, phantom-utils
-phantom-bootstrapping -> phantom-circuits, phantom-schemes, phantom-core, phantom-ring, phantom-utils
-phantom-multiparty -> phantom-bootstrapping, phantom-circuits, phantom-schemes, phantom-core, phantom-ring, phantom-utils
+phantom-lattice -> phantom-ring, phantom-utils
+phantom-schemes -> phantom-lattice, phantom-ring, phantom-utils
+phantom-circuits -> phantom-schemes, phantom-lattice, phantom-ring, phantom-utils
+phantom-bootstrapping -> phantom-circuits, phantom-schemes, phantom-lattice, phantom-ring, phantom-utils
+phantom-multiparty -> phantom-bootstrapping, phantom-circuits, phantom-schemes, phantom-lattice, phantom-ring, phantom-utils
 phantom-fhe -> public re-exports only
 ```
 
@@ -342,18 +342,18 @@ FpgaNttBackend
 
 ---
 
-# 7. Crate: `phantom-core`
+# 7. Crate: `phantom-lattice`
 
 ## 7.1 Purpose
 
-`phantom-core` implements the common cryptographic functionality for RLWE-based homomorphic encryption and RGSW.
+`phantom-lattice` implements the common cryptographic functionality for RLWE-based homomorphic encryption and RGSW.
 
 This crate must remain scheme-agnostic. It must not depend on BFV, BGV, or CKKS.
 
 ## 7.2 Internal Structure
 
 ```text
-phantom-core/
+phantom-lattice/
   src/
     lib.rs
     error.rs
@@ -949,7 +949,7 @@ Ownership rules:
 - modulus search and factorization should live in `phantom-ring`
 - arbitrary precision polynomial approximation should live in `phantom-circuits` or `phantom-bootstrapping`, unless shared broadly enough to justify extraction
 - scheme-specific matrices, vectors, maps, and packing structures should live with the scheme/circuit that owns their semantics
-- no crate in `phantom-utils` may depend on `phantom-ring`, `phantom-core`, `phantom-schemes`, `phantom-circuits`, `phantom-bootstrapping`, or `phantom-multiparty`
+- no crate in `phantom-utils` may depend on `phantom-ring`, `phantom-lattice`, `phantom-schemes`, `phantom-circuits`, `phantom-bootstrapping`, or `phantom-multiparty`
 
 ## 12.2 Structure
 
@@ -1359,7 +1359,7 @@ Deliver:
 - NTT/inverse NTT
 - samplers
 
-## Phase 2 - Core RLWE/RGSW
+## Phase 2 - Lattice RLWE/RGSW
 
 Deliver:
 

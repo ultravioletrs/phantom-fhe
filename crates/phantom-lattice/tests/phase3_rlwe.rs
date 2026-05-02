@@ -1,4 +1,4 @@
-use phantom_core::rlwe::{
+use phantom_lattice::rlwe::{
     key_switch_identity, Ciphertext, Decryptor, Encryptor, Evaluator, KeyGenerator, Plaintext,
     RlweParams, SecretDistribution,
 };
@@ -17,8 +17,8 @@ fn plaintext(values: &[u64]) -> Plaintext {
 
 fn key_material() -> (
     RlweParams,
-    phantom_core::rlwe::SecretKey,
-    phantom_core::rlwe::PublicKey,
+    phantom_lattice::rlwe::SecretKey,
+    phantom_lattice::rlwe::PublicKey,
 ) {
     let params = params();
     let keygen = KeyGenerator::new(params.clone());

@@ -1,13 +1,13 @@
-//! Error types for `phantom-core`.
+//! Error types for `phantom-lattice`.
 
 use thiserror::Error;
 
-/// Result alias used by `phantom-core`.
-pub type Result<T> = core::result::Result<T, CoreError>;
+/// Result alias used by `phantom-lattice`.
+pub type Result<T> = core::result::Result<T, LatticeError>;
 
-/// Errors emitted by core cryptographic primitives.
+/// Errors emitted by lattice cryptographic primitives.
 #[derive(Debug, Error)]
-pub enum CoreError {
+pub enum LatticeError {
     /// Ring-level operation failed.
     #[error("ring error: {0}")]
     Ring(#[from] phantom_ring::RingError),

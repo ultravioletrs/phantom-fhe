@@ -2,7 +2,7 @@
 
 use phantom_ring::Ring;
 
-use crate::{CoreError, Result};
+use crate::{LatticeError, Result};
 
 /// Scheme-agnostic RLWE parameters.
 #[derive(Clone, Debug)]
@@ -14,7 +14,7 @@ impl RlweParams {
     /// Creates parameters from a ring context.
     pub fn new(ring: Ring) -> Result<Self> {
         if ring.moduli().is_empty() {
-            return Err(CoreError::InvalidParameters("ring must have moduli"));
+            return Err(LatticeError::InvalidParameters("ring must have moduli"));
         }
         Ok(Self { ring })
     }
@@ -47,7 +47,7 @@ impl RlweParamsBuilder {
     pub fn build(self) -> Result<RlweParams> {
         let ring = self
             .ring
-            .ok_or(CoreError::InvalidParameters("missing ring"))?;
+            .ok_or(LatticeError::InvalidParameters("missing ring"))?;
         RlweParams::new(ring)
     }
 }

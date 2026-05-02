@@ -90,12 +90,12 @@ Primary downstream use cases include encrypted analytics, privacy-preserving ML,
 - NTT: forward, inverse, lazy reduction
 - Sampling: uniform, Gaussian, ternary, secure byte sampling hooks
 
-## 5.2 RLWE Core (`phantom-core::rlwe`)
+## 5.2 RLWE Lattice Layer (`phantom-lattice::rlwe`)
 - Plaintext / Ciphertext structures
 - Keys: secret, public, evaluation
 - Operations: encrypt, decrypt, add, multiply foundations, relinearize, key switch, automorphisms, rotate, repack
 
-## 5.3 RGSW (`phantom-core::rgsw`)
+## 5.3 RGSW (`phantom-lattice::rgsw`)
 - RGSW ciphertexts
 - External product
 - Used for bootstrapping and advanced circuits
@@ -151,7 +151,7 @@ The library must preserve a strict acyclic hierarchy:
 phantom-ring
   |
   v
-phantom-core
+phantom-lattice
   |-- rlwe
   `-- rgsw
   |
@@ -188,7 +188,7 @@ phantom-fhe/
   crates/
     phantom-fhe
     phantom-ring
-    phantom-core
+    phantom-lattice
     phantom-schemes
     phantom-circuits
     phantom-bootstrapping

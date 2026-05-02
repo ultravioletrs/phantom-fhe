@@ -8,7 +8,7 @@ Build `phantom-fhe` as a best-of-breed Rust-native FHE library with broad featur
 phantom-ring
   |
   v
-phantom-core::{rlwe,rgsw}
+phantom-lattice::{rlwe,rgsw}
   |
   v
 phantom-schemes::{bfv,bgv,ckks}
@@ -32,19 +32,19 @@ Compatible open-source projects and public papers may be used for understanding 
 
 ## 2. Current Roadmap Status
 
-Current position: Phase 4 is implemented as a correctness scaffold. The next planned implementation phase is Phase 5, `phantom-schemes::bgv`.
+Current position: Phase 7 is implemented as a correctness scaffold. The next planned implementation phase is Phase 8, `phantom-circuits::common`.
 
 | Phase | Area | Status | Notes |
 | --- | --- | --- | --- |
 | 0 | Repository foundation | Partial | Workspace, README, `.gitignore`, and initial crates exist; CI/security/contributing/facade work remains. |
 | 1 | `phantom-utils` | Done | Minimal support crate with sampling, buffers, serialization helpers, and tests. |
 | 2 | `phantom-ring` | Done | Correctness-first ring arithmetic, RNS helpers, NTT backend, samplers, and tests. |
-| 3 | `phantom-core::rlwe` | Done | Scheme-agnostic RLWE scaffolding with toy exact encryption/decryption and evaluator surfaces. |
-| 4 | `phantom-core::rgsw` | Done | RGSW ciphertexts, gadget decomposition, and toy external product scaffolding. |
-| 5 | `phantom-schemes::bgv` | Next | Exact arithmetic scheme wrapper over RLWE. |
-| 6 | `phantom-schemes::bfv` | Pending | BFV API and internals, likely sharing BGV machinery where sound. |
-| 7 | `phantom-schemes::ckks` | Pending | Approximate arithmetic scheme, encoder, scale/rescale, precision tracking. |
-| 8 | `phantom-circuits::common` | Pending | Shared lintrans and polynomial evaluation planning. |
+| 3 | `phantom-lattice::rlwe` | Done | Scheme-agnostic RLWE scaffolding with toy exact encryption/decryption and evaluator surfaces. |
+| 4 | `phantom-lattice::rgsw` | Done | RGSW ciphertexts, gadget decomposition, and toy external product scaffolding. |
+| 5 | `phantom-schemes::bgv` | Done | Exact arithmetic scheme facade with BGV parameters, encoder, wrappers, evaluator, and tests. |
+| 6 | `phantom-schemes::bfv` | Done | Distinct BFV API over shared exact-arithmetic scaffold with signed/unsigned encoding and tests. |
+| 7 | `phantom-schemes::ckks` | Done | Approximate arithmetic scheme facade with complex/real encoding, scale/rescale, precision tracking, and tests. |
+| 8 | `phantom-circuits::common` | Next | Shared lintrans and polynomial evaluation planning. |
 | 9 | BGV circuits | Pending | BGV lintrans and polynomial evaluation. |
 | 10 | CKKS circuits | Pending | CKKS lintrans, polynomial, minimax, comparison, inverse, mod1, DFT. |
 | 11 | Bootstrapping | Pending | CKKS centralized bootstrapping first; BGV/BFV module locations reserved. |
@@ -205,7 +205,7 @@ Recommended first dependencies:
 
 ---
 
-## 7. Phase 3 - `phantom-core::rlwe`
+## 7. Phase 3 - `phantom-lattice::rlwe`
 
 ### Owned Areas
 
@@ -256,7 +256,7 @@ Recommended first dependencies:
 
 ---
 
-## 8. Phase 4 - `phantom-core::rgsw`
+## 8. Phase 4 - `phantom-lattice::rgsw`
 
 ### Owned Areas
 
@@ -831,13 +831,12 @@ Each phase is complete only when:
 
 ## 23. Immediate Next Coding Tasks
 
-Current next implementation target: Phase 5, `phantom-schemes::bgv`.
+Current next implementation target: Phase 8, `phantom-circuits::common`.
 
-1. Add the `phantom-schemes` crate and `bgv` module skeleton.
-2. Define `BgvParams`, `BgvContext`, plaintext/ciphertext wrappers, and encoder surfaces.
-3. Implement toy exact encode/decode over current ring/RLWE scaffolding.
-4. Add encrypt/decrypt/evaluator wrappers over `phantom-core::rlwe`.
-5. Add exact add/sub/mul tests for small parameters.
+1. Add the `phantom-circuits` crate and `common` module skeleton.
+2. Define linear transformation descriptors and diagonal matrix representations.
+3. Implement baby-step giant-step and Paterson-Stockmeyer planning structures.
+4. Add planning correctness tests independent of BGV/CKKS scheme arithmetic.
 5. Keep Phase 0 cleanup on the side: `SECURITY.md`, `CONTRIBUTING.md`, baseline CI, and eventually the facade crate.
 
-Completed implementation phases so far: Phase 1 (`phantom-utils`), Phase 2 (`phantom-ring`), Phase 3 (`phantom-core::rlwe`), and Phase 4 (`phantom-core::rgsw`).
+Completed implementation phases so far: Phase 1 (`phantom-utils`), Phase 2 (`phantom-ring`), Phase 3 (`phantom-lattice::rlwe`), Phase 4 (`phantom-lattice::rgsw`), Phase 5 (`phantom-schemes::bgv`), Phase 6 (`phantom-schemes::bfv`), and Phase 7 (`phantom-schemes::ckks`).

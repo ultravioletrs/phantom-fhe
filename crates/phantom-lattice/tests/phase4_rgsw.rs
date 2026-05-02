@@ -1,8 +1,8 @@
-use phantom_core::rgsw::{
+use phantom_lattice::rgsw::{
     external_product, GadgetDecomposition, GadgetDecompositionParams, RgswCiphertext, RgswKey,
     RgswParams,
 };
-use phantom_core::rlwe::{
+use phantom_lattice::rlwe::{
     Decryptor, Encryptor, KeyGenerator, Plaintext, RlweParams, SecretDistribution,
 };
 use phantom_ring::{Degree, Modulus, Poly, Ring};
@@ -14,7 +14,7 @@ fn params() -> RlweParams {
     RlweParams::builder().ring(ring).build().unwrap()
 }
 
-fn key_material() -> (RlweParams, phantom_core::rlwe::SecretKey) {
+fn key_material() -> (RlweParams, phantom_lattice::rlwe::SecretKey) {
     let params = params();
     let keygen = KeyGenerator::new(params.clone());
     let mut rng = ChaCha20Rng::from_seed([11u8; 32]);

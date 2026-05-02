@@ -1,7 +1,7 @@
 //! RGSW parameters.
 
 use crate::rlwe::RlweParams;
-use crate::{CoreError, Result};
+use crate::{LatticeError, Result};
 
 /// Ring-GSW parameters.
 #[derive(Clone, Debug)]
@@ -19,12 +19,12 @@ impl RgswParams {
         decomposition_levels: usize,
     ) -> Result<Self> {
         if decomposition_base_log == 0 || decomposition_base_log >= 63 {
-            return Err(CoreError::InvalidParameters(
+            return Err(LatticeError::InvalidParameters(
                 "decomposition_base_log must be in 1..63",
             ));
         }
         if decomposition_levels == 0 {
-            return Err(CoreError::InvalidParameters(
+            return Err(LatticeError::InvalidParameters(
                 "decomposition_levels must be non-zero",
             ));
         }

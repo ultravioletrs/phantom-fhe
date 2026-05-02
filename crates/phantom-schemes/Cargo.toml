@@ -1,0 +1,16 @@
+[package]
+name = "phantom-schemes"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+phantom-lattice = { path = "../phantom-lattice" }
+phantom-ring = { path = "../phantom-ring" }
+rand_core.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+rand_chacha.workspace = true

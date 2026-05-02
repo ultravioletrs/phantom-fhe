@@ -1,7 +1,7 @@
 //! RLWE decryption.
 
 use crate::rlwe::{Ciphertext, Plaintext, RlweParams, SecretKey};
-use crate::{CoreError, Result};
+use crate::{LatticeError, Result};
 
 /// RLWE decryptor.
 #[derive(Clone, Debug)]
@@ -19,7 +19,7 @@ impl Decryptor {
     /// Decrypts a ciphertext.
     pub fn decrypt(&self, ct: &Ciphertext) -> Result<Plaintext> {
         if ct.value().is_empty() {
-            return Err(CoreError::DimensionMismatch);
+            return Err(LatticeError::DimensionMismatch);
         }
         for component in ct.value() {
             self.params.ring().check_poly(component)?;

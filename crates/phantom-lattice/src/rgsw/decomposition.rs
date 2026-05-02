@@ -2,7 +2,7 @@
 
 use phantom_ring::Poly;
 
-use crate::{CoreError, Result};
+use crate::{LatticeError, Result};
 
 /// Gadget decomposition parameters.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -15,10 +15,10 @@ impl GadgetDecompositionParams {
     /// Creates decomposition parameters.
     pub fn new(base_log: u32, levels: usize) -> Result<Self> {
         if base_log == 0 || base_log >= 63 {
-            return Err(CoreError::InvalidParameters("base_log must be in 1..63"));
+            return Err(LatticeError::InvalidParameters("base_log must be in 1..63"));
         }
         if levels == 0 {
-            return Err(CoreError::InvalidParameters("levels must be non-zero"));
+            return Err(LatticeError::InvalidParameters("levels must be non-zero"));
         }
         Ok(Self { base_log, levels })
     }
@@ -73,12 +73,11 @@ impl GadgetDecomposition {
 
     /// Reconstructs the polynomial modulo the provided RNS moduli.
     pub fn recompose(&self, moduli: &[phantom_ring::Modulus]) -> Result<Poly> {
-        let first = self
-            .digits
-            .first()
-            .ok_or(CoreError::InvalidParameters("missing decomposition digits"))?;
+        let first = self.digits.first().ok_or(LatticeError::InvalidParameters(
+            "missing decomposition digits",
+        ))?;
         if first.moduli_count() != moduli.len() {
-            return Err(CoreError::DimensionMismatch);
+            return Err(LatticeError::DimensionMismatch);
         }
 
         let mut coeffs = vec![vec![0u64; first.degree()]; first.moduli_count()];

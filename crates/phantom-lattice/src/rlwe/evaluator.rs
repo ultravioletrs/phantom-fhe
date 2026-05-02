@@ -1,7 +1,7 @@
 //! RLWE evaluator operations.
 
 use crate::rlwe::{Ciphertext, Plaintext, RelinearizationKey, RlweParams};
-use crate::{CoreError, Result};
+use crate::{LatticeError, Result};
 
 /// Scheme-agnostic evaluator.
 #[derive(Clone, Debug)]
@@ -40,7 +40,7 @@ impl Evaluator {
         self.params.ring().check_poly(pt.value())?;
         let mut out = ct.clone();
         if out.value().is_empty() {
-            return Err(CoreError::DimensionMismatch);
+            return Err(LatticeError::DimensionMismatch);
         }
         self.params
             .ring()
@@ -89,7 +89,7 @@ impl Evaluator {
 
     fn check_ciphertext(&self, ct: &Ciphertext) -> Result<()> {
         if ct.value().is_empty() {
-            return Err(CoreError::DimensionMismatch);
+            return Err(LatticeError::DimensionMismatch);
         }
         for component in ct.value() {
             self.params.ring().check_poly(component)?;
@@ -108,7 +108,7 @@ impl Evaluator {
         self.check_ciphertext(lhs)?;
         self.check_ciphertext(rhs)?;
         if lhs.value().len() != rhs.value().len() {
-            return Err(CoreError::DimensionMismatch);
+            return Err(LatticeError::DimensionMismatch);
         }
 
         let mut out = Vec::with_capacity(lhs.value().len());
