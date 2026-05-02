@@ -24,3 +24,15 @@ pub enum BootstrappingError {
     #[error("circuit operation failed: {0}")]
     CircuitOperation(&'static str),
 }
+
+impl From<phantom_schemes::SchemesError> for BootstrappingError {
+    fn from(_: phantom_schemes::SchemesError) -> Self {
+        Self::SchemeOperation("serialization failure")
+    }
+}
+
+impl From<phantom_utils::UtilsError> for BootstrappingError {
+    fn from(_: phantom_utils::UtilsError) -> Self {
+        Self::InvalidParameters("serialization failure")
+    }
+}

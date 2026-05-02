@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 phantom-lattice = { path = "../phantom-lattice" }
 phantom-schemes = { path = "../phantom-schemes" }
+phantom-utils = { path = "../phantom-utils" }
 thiserror.workspace = true
 
 [dev-dependencies]

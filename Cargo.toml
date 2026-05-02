@@ -1,8 +1,10 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/phantom-benches",
     "crates/phantom-bootstrapping",
     "crates/phantom-circuits",
+    "crates/phantom-examples",
     "crates/phantom-lattice",
     "crates/phantom-multiparty",
     "crates/phantom-ring",

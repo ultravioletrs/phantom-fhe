@@ -44,9 +44,9 @@ impl<T> LinearTransform<T> {
         }
 
         let mut rows = vec![vec![zero; slot_count]; slot_count];
-        for out in 0..slot_count {
+        for (out, row) in rows.iter_mut().enumerate() {
             let input = wrap_index(out as isize + offset, slot_count);
-            rows[out][input] = one.clone();
+            row[input] = one.clone();
         }
 
         Ok(Self {

@@ -14,7 +14,7 @@ phantom-lattice::{rlwe,rgsw}
 phantom-schemes::{bfv,bgv,ckks}
   |
   v
-phantom-circuits::{common,bgv,ckks}
+phantom-circuits::{common,bgv,bfv,ckks}
   |
   v
 phantom-bootstrapping::{ckks,bgv,bfv}
@@ -32,7 +32,7 @@ Compatible open-source projects and public papers may be used for understanding 
 
 ## 2. Current Roadmap Status
 
-Current position: Phase 16 is implemented as a correctness scaffold. The next planned implementation phase is Phase 17, Serialization and compatibility.
+Current position: Phase 18 is implemented as a correctness scaffold. The roadmap implementation pass is complete; remaining work is production hardening and Phase 0 cleanup.
 
 | Phase | Area | Status | Notes |
 | --- | --- | --- | --- |
@@ -53,8 +53,8 @@ Current position: Phase 16 is implemented as a correctness scaffold. The next pl
 | 14 | `phantom-multiparty::mpbgv` | Done | Collective keygen, partial decryption, refresh/re-encryption. |
 | 15 | `phantom-multiparty::mpbfv` | Done | BFV threshold workflows and interactive bootstrapping. |
 | 16 | `phantom-multiparty::mpckks` | Done | CKKS threshold workflows and interactive bootstrapping. |
-| 17 | Serialization and compatibility | Next | Stable canonical encoding decisions for public objects. |
-| 18 | Examples, benches, release hardening | Pending | Examples, Criterion benches, docs, parameter presets. |
+| 17 | Serialization and compatibility | Done | Stable canonical encoding decisions for public objects. |
+| 18 | Examples, benches, release hardening | Done | Examples, smoke benches, docs, parameter presets. |
 
 Status labels:
 
@@ -760,6 +760,8 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
 
 ## 21. Phase 17 - Serialization and Compatibility
 
+Status: Done at the current scaffold/correctness level.
+
 ### Owned Areas
 
 - Canonical binary formats
@@ -770,11 +772,12 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
 
 ### Deliverables
 
-- Deterministic binary encoding for public objects.
+- Deterministic binary encoding for public scheme parameters, plaintexts, and ciphertexts.
 - Explicit versioning and domain separators.
-- Serialization for plaintexts, ciphertexts, public keys, evaluation keys, public protocol messages.
+- Serialization for RLWE public keys, evaluation-key markers, common circuit plans, and CKKS bootstrapping parameters.
+- Public protocol messages already use deterministic transcript/share encodings from Phase 13.
 - Secret serialization only behind explicit APIs and feature gates.
-- Fuzz/property tests for decode rejection.
+- Malformed-input tests for decode rejection.
 
 ### Tests
 
@@ -790,6 +793,8 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
 ---
 
 ## 22. Phase 18 - Examples, Benches, and Release Hardening
+
+Status: Done at the current scaffold/correctness level.
 
 ### Owned Areas
 
@@ -826,10 +831,10 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
   - `ckks_eval`
   - `ckks_bootstrapping`
   - `multiparty`
-- Parameter preset documentation.
-- API examples in Rustdoc.
-- Performance notes for CPU backend.
-- Release checklist for alpha, beta, and stable.
+- Parameter preset documentation in `docs/parameter-presets.md`.
+- Runnable API examples in `phantom-examples`.
+- Performance notes for CPU backend in `docs/performance-notes.md`.
+- Release checklist for alpha, beta, and stable in `docs/release-checklist.md`.
 
 ### Tests
 
@@ -908,12 +913,12 @@ Each phase is complete only when:
 
 ## 25. Immediate Next Coding Tasks
 
-Current next implementation target: Phase 17, Serialization and compatibility.
+Current next implementation target: production hardening and Phase 0 cleanup.
 
-1. Define stable canonical encoding decisions for public objects.
-2. Add serialization helpers for public parameters, keys, ciphertext/plaintext metadata, circuit plans, bootstrapping params, and multiparty public messages.
-3. Keep secret-bearing material hard to serialize accidentally.
-4. Add deterministic round-trip and malformed-input tests.
-5. Keep Phase 0 cleanup on the side: `SECURITY.md`, `CONTRIBUTING.md`, baseline CI, and eventually the facade crate.
+1. Add the `phantom-fhe` facade crate.
+2. Add `SECURITY.md`, `CONTRIBUTING.md`, baseline CI, and dependency policy.
+3. Replace smoke benchmarks with Criterion if dependency policy allows it.
+4. Continue production cryptography hardening: real noise management, optimized NTT/RNS, secure parameter sets, and protocol security review.
+5. Prepare alpha release notes once Phase 0 cleanup is complete.
 
-Completed implementation phases so far: Phase 1 (`phantom-utils`), Phase 2 (`phantom-ring`), Phase 3 (`phantom-lattice::rlwe`), Phase 4 (`phantom-lattice::rgsw`), Phase 5 (`phantom-schemes::bgv`), Phase 6 (`phantom-schemes::bfv`), Phase 7 (`phantom-schemes::ckks`), Phase 8 (`phantom-circuits::common`), Phase 9 (`phantom-circuits::bgv`), Phase 10 (`phantom-circuits::bfv`), Phase 11 (`phantom-circuits::ckks`), Phase 12 (`phantom-bootstrapping`), Phase 13 (`phantom-multiparty::common`), Phase 14 (`phantom-multiparty::mpbgv`), Phase 15 (`phantom-multiparty::mpbfv`), and Phase 16 (`phantom-multiparty::mpckks`).
+Completed implementation phases so far: Phase 1 (`phantom-utils`), Phase 2 (`phantom-ring`), Phase 3 (`phantom-lattice::rlwe`), Phase 4 (`phantom-lattice::rgsw`), Phase 5 (`phantom-schemes::bgv`), Phase 6 (`phantom-schemes::bfv`), Phase 7 (`phantom-schemes::ckks`), Phase 8 (`phantom-circuits::common`), Phase 9 (`phantom-circuits::bgv`), Phase 10 (`phantom-circuits::bfv`), Phase 11 (`phantom-circuits::ckks`), Phase 12 (`phantom-bootstrapping`), Phase 13 (`phantom-multiparty::common`), Phase 14 (`phantom-multiparty::mpbgv`), Phase 15 (`phantom-multiparty::mpbfv`), Phase 16 (`phantom-multiparty::mpckks`), Phase 17 (Serialization and compatibility), and Phase 18 (Examples, benches, and release hardening).

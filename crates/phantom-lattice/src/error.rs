@@ -23,4 +23,8 @@ pub enum LatticeError {
     /// Requested key material is not available.
     #[error("missing key: {0}")]
     MissingKey(&'static str),
+
+    /// Utility serialization or buffer failure.
+    #[error(transparent)]
+    Utils(#[from] phantom_utils::UtilsError),
 }

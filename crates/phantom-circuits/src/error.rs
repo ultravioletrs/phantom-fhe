@@ -24,3 +24,9 @@ pub enum CircuitsError {
     #[error("scheme operation failed: {0}")]
     SchemeOperation(&'static str),
 }
+
+impl From<phantom_utils::UtilsError> for CircuitsError {
+    fn from(_: phantom_utils::UtilsError) -> Self {
+        Self::InvalidParameters("serialization failure")
+    }
+}

@@ -21,4 +21,7 @@ pub enum SchemesError {
     /// Lattice RLWE/RGSW failure.
     #[error(transparent)]
     Lattice(#[from] phantom_lattice::LatticeError),
+    /// Utility serialization or buffer failure.
+    #[error(transparent)]
+    Utils(#[from] phantom_utils::UtilsError),
 }

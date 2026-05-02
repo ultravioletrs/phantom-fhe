@@ -9,6 +9,7 @@ rust-version.workspace = true
 [dependencies]
 phantom-circuits = { path = "../phantom-circuits" }
 phantom-schemes = { path = "../phantom-schemes" }
+phantom-utils = { path = "../phantom-utils" }
 thiserror.workspace = true
 
 [dev-dependencies]

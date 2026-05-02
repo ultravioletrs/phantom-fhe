@@ -31,11 +31,12 @@ Current crates:
 Planned crates:
 
 - `phantom-fhe` facade crate
-- examples and benchmarks crates
+- `phantom-examples`: runnable toy workflows and example binaries
+- `phantom-benches`: dependency-free smoke benchmarks for current hot paths
 
 ## Status
 
-Current position: Phase 16 is implemented as a correctness scaffold. The next planned implementation phase is Phase 17, Serialization and compatibility.
+Current position: Phase 18 is implemented as a correctness scaffold. The roadmap implementation pass is complete; remaining work is production hardening and Phase 0 cleanup.
 
 ## Roadmap
 
@@ -58,8 +59,8 @@ Current position: Phase 16 is implemented as a correctness scaffold. The next pl
 | 14 | `phantom-multiparty::mpbgv` | Done |
 | 15 | `phantom-multiparty::mpbfv` | Done |
 | 16 | `phantom-multiparty::mpckks` | Done |
-| 17 | Serialization and compatibility | Next |
-| 18 | Examples, benches, release hardening | Pending |
+| 17 | Serialization and compatibility | Done |
+| 18 | Examples, benches, release hardening | Done |
 
 Status labels:
 
@@ -176,6 +177,20 @@ Implemented:
   - interactive bootstrapping through the CKKS bootstrapping scaffold
   - tests covering decryptable collective public keys, evaluation key markers, approximate partial decryption, invalid share detection, re-encryption, and interactive bootstrap metadata refresh
 
+- Phase 17: Serialization and compatibility
+  - canonical binary encodings with crate-owned domain tags and version headers
+  - RLWE public-key and evaluation-key marker round trips
+  - BGV, BFV, and CKKS parameter, plaintext, and ciphertext round trips
+  - common circuit plan round trips for polynomial evaluation and BSGS schedules
+  - CKKS bootstrap parameter round trips
+  - tests covering malformed, truncated, and wrong-domain payload rejection
+
+- Phase 18: Examples, benches, and release hardening
+  - `phantom-examples` package with runnable BFV, BGV, CKKS, bootstrapping, and multiparty examples
+  - `phantom-benches` package with smoke benchmark targets for ring, RLWE, scheme, bootstrapping, and multiparty paths
+  - toy preset, performance, and release checklist documentation under `docs/`
+  - tests covering documented example workflows
+
 The current ring, RLWE, RGSW, BGV, BFV, CKKS, circuit, bootstrapping, and multiparty implementations prioritize correct APIs and testable behavior over production cryptographic hardness or performance. Fast NTT, production RNS basis extension, cryptographic-quality Gaussian sampling, real noise management, key switching, relinearization, encrypted RGSW rows, production BGV/BFV ciphertext semantics, production CKKS encoding/noise analysis, production bootstrapping parameters, and production threshold protocol security are future hardening work.
 
 ## Development
@@ -191,6 +206,13 @@ Run formatting and lint checks:
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
+```
+
+Run all example and benchmark smoke targets:
+
+```bash
+cargo test --workspace --all-targets
+cargo bench -p phantom-benches
 ```
 
 ## Authorship
