@@ -10,12 +10,12 @@ pub struct Ciphertext {
 
 impl Ciphertext {
     /// Creates a BFV ciphertext from the shared exact-arithmetic representation.
-    pub(crate) const fn new(inner: bgv::Ciphertext) -> Self {
+    pub const fn new(inner: bgv::Ciphertext) -> Self {
         Self { inner }
     }
 
     /// Returns the shared exact-arithmetic ciphertext.
-    pub(crate) const fn inner(&self) -> &bgv::Ciphertext {
+    pub const fn inner(&self) -> &bgv::Ciphertext {
         &self.inner
     }
 

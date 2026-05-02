@@ -10,12 +10,12 @@ pub struct Plaintext {
 
 impl Plaintext {
     /// Creates a BFV plaintext from the shared exact-arithmetic representation.
-    pub(crate) const fn new(inner: bgv::Plaintext) -> Self {
+    pub const fn new(inner: bgv::Plaintext) -> Self {
         Self { inner }
     }
 
     /// Returns the shared exact-arithmetic plaintext.
-    pub(crate) const fn inner(&self) -> &bgv::Plaintext {
+    pub const fn inner(&self) -> &bgv::Plaintext {
         &self.inner
     }
 }

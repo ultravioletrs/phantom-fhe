@@ -23,19 +23,19 @@ Current crates:
 - `phantom-utils`: minimal cross-cutting support utilities
 - `phantom-ring`: RNS polynomial ring arithmetic
 - `phantom-lattice`: scheme-agnostic RLWE and RGSW primitives
-- `phantom-schemes`: concrete scheme APIs, starting with BGV
+- `phantom-schemes`: concrete BGV, BFV, and CKKS scheme APIs
+- `phantom-circuits`: shared circuit planning plus scheme-specific circuit scaffolds
+- `phantom-bootstrapping`: CKKS bootstrapping scaffold plus reserved BGV/BFV module locations
 
 Planned crates:
 
-- `phantom-circuits`
-- `phantom-bootstrapping`
 - `phantom-multiparty`
 - `phantom-fhe` facade crate
 - examples and benchmarks crates
 
 ## Status
 
-Current position: Phase 9 is implemented as a correctness scaffold. The next planned implementation phase is Phase 10, BFV circuits.
+Current position: Phase 12 is implemented as a correctness scaffold. The next planned implementation phase is Phase 13, Multiparty common layer.
 
 ## Roadmap
 
@@ -50,11 +50,11 @@ Current position: Phase 9 is implemented as a correctness scaffold. The next pla
 | 6 | `phantom-schemes::bfv` | Done |
 | 7 | `phantom-schemes::ckks` | Done |
 | 8 | `phantom-circuits::common` | Done |
-| 9 | BGV circuits | Done |
-| 10 | BFV circuits | Next |
-| 11 | CKKS circuits | Pending |
-| 12 | Bootstrapping | Pending |
-| 13 | Multiparty common layer | Pending |
+| 9 | `phantom-circuits::bgv` | Done |
+| 10 | `phantom-circuits::bfv` | Done |
+| 11 | `phantom-circuits::ckks` | Done |
+| 12 | `phantom-bootstrapping` | Done |
+| 13 | Multiparty common layer | Next |
 | 14 | BGV multiparty | Pending |
 | 15 | CKKS multiparty | Pending |
 | 16 | Serialization and compatibility | Pending |
@@ -116,7 +116,38 @@ Implemented:
   - add, sub, neg, plaintext operations, multiplication, rescale, level alignment, rotation, and conjugation
   - conjugate-invariant real-slot validation and scale/level mismatch tests
 
-The current ring, RLWE, RGSW, BGV, BFV, and CKKS implementations prioritize correct APIs and testable behavior over production cryptographic hardness or performance. Fast NTT, production RNS basis extension, cryptographic-quality Gaussian sampling, real noise management, key switching, relinearization, encrypted RGSW rows, production BGV/BFV ciphertext semantics, and production CKKS encoding/noise analysis are future hardening work.
+- Phase 8: `phantom-circuits::common`
+  - linear transformation descriptors
+  - diagonal matrix representations
+  - baby-step giant-step planning
+  - polynomial evaluation planning, including power-basis and Paterson-Stockmeyer plans
+
+- Phase 9: `phantom-circuits::bgv`
+  - `phantom-circuits::bgv::lintrans`
+  - `phantom-circuits::bgv::polynomial`
+  - exact coefficient-slot linear transformations and polynomial evaluation for the current scaffold
+  - tests covering dense transforms, diagonal planning, BSGS planning, and modular polynomial evaluation
+
+- Phase 10: `phantom-circuits::bfv`
+  - `phantom-circuits::bfv::lintrans`
+  - `phantom-circuits::bfv::polynomial`
+  - exact coefficient-slot linear transformations and polynomial evaluation for the current scaffold
+  - tests covering dense transforms, diagonal planning, BSGS planning, modular polynomial evaluation, and signed BFV decoding semantics
+
+- Phase 11: `phantom-circuits::ckks`
+  - `phantom-circuits::ckks::lintrans`
+  - `phantom-circuits::ckks::polynomial`
+  - `phantom-circuits::ckks::{minimax,comparison,inverse,mod1,dft}`
+  - approximate slot linear transformations, polynomial/composite polynomial evaluation, comparison helpers, reciprocal, mod-one, and DFT scaffolds
+  - tests covering complex linear transforms, Paterson-Stockmeyer planning, minimax composition, comparison/inverse/mod1 helpers, conjugate-invariant validation, and DFT round trips
+
+- Phase 12: `phantom-bootstrapping`
+  - `phantom-bootstrapping::ckks`
+  - reserved `phantom-bootstrapping::{bgv,bfv}` module locations
+  - CKKS bootstrap parameters, key markers, coeffs-to-slots, slots-to-coeffs, eval-mod, batch bootstrap, and sparse pack/unpack scaffolds
+  - tests covering message preservation, metadata refresh, batch bootstrapping, sparse packing, invalid parameters, conjugate-invariant bootstrapping, and exact-scheme placeholders
+
+The current ring, RLWE, RGSW, BGV, BFV, CKKS, circuit, and bootstrapping implementations prioritize correct APIs and testable behavior over production cryptographic hardness or performance. Fast NTT, production RNS basis extension, cryptographic-quality Gaussian sampling, real noise management, key switching, relinearization, encrypted RGSW rows, production BGV/BFV ciphertext semantics, production CKKS encoding/noise analysis, and production bootstrapping parameters are future hardening work.
 
 ## Development
 

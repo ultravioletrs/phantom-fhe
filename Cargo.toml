@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
+    "crates/phantom-bootstrapping",
     "crates/phantom-circuits",
     "crates/phantom-lattice",
     "crates/phantom-ring",

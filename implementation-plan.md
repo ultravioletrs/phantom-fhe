@@ -32,7 +32,7 @@ Compatible open-source projects and public papers may be used for understanding 
 
 ## 2. Current Roadmap Status
 
-Current position: Phase 9 is implemented as a correctness scaffold. The next planned implementation phase is Phase 10, BFV circuits.
+Current position: Phase 12 is implemented as a correctness scaffold. The next planned implementation phase is Phase 13, Multiparty common layer.
 
 | Phase | Area | Status | Notes |
 | --- | --- | --- | --- |
@@ -45,11 +45,11 @@ Current position: Phase 9 is implemented as a correctness scaffold. The next pla
 | 6 | `phantom-schemes::bfv` | Done | Distinct BFV API over shared exact-arithmetic scaffold with signed/unsigned encoding and tests. |
 | 7 | `phantom-schemes::ckks` | Done | Approximate arithmetic scheme facade with complex/real encoding, scale/rescale, precision tracking, and tests. |
 | 8 | `phantom-circuits::common` | Done | Shared lintrans and polynomial evaluation planning. |
-| 9 | BGV circuits | Done | BGV lintrans and polynomial evaluation. |
-| 10 | BFV circuits | Next | BFV lintrans and polynomial evaluation. |
-| 11 | CKKS circuits | Pending | CKKS lintrans, polynomial, minimax, comparison, inverse, mod1, DFT. |
-| 12 | Bootstrapping | Pending | CKKS centralized bootstrapping first; BGV/BFV module locations reserved. |
-| 13 | Multiparty common layer | Pending | Participants, sessions, transcripts, shares, aggregation. |
+| 9 | `phantom-circuits::bgv` | Done | BGV lintrans and polynomial evaluation. |
+| 10 | `phantom-circuits::bfv` | Done | BFV lintrans and polynomial evaluation. |
+| 11 | `phantom-circuits::ckks` | Done | CKKS lintrans, polynomial, minimax, comparison, inverse, mod1, DFT. |
+| 12 | `phantom-bootstrapping` | Done | CKKS centralized bootstrapping first; BGV/BFV module locations reserved. |
+| 13 | Multiparty common layer | Next | Participants, sessions, transcripts, shares, aggregation. |
 | 14 | BGV multiparty | Pending | Collective keygen, partial decryption, refresh/re-encryption. |
 | 15 | CKKS multiparty | Pending | CKKS threshold workflows and interactive bootstrapping. |
 | 16 | Serialization and compatibility | Pending | Stable canonical encoding decisions for public objects. |
@@ -866,12 +866,12 @@ Each phase is complete only when:
 
 ## 24. Immediate Next Coding Tasks
 
-Current next implementation target: Phase 10, BFV circuits.
+Current next implementation target: Phase 13, Multiparty common layer.
 
-1. Add `phantom-circuits::bfv` module skeletons for `lintrans` and `polynomial`.
-2. Use common diagonal and BSGS plans for BFV linear transforms.
-3. Use common polynomial plans for exact modular BFV polynomial evaluation.
-4. Add BFV circuit correctness tests over the existing exact scheme scaffold, including signed and unsigned encoding behavior.
+1. Add the `phantom-multiparty` crate and common module skeleton.
+2. Define participants, sessions, transcripts, shares, and aggregation helpers.
+3. Add typed validation for duplicate participants, threshold settings, and transcript domains.
+4. Add tests independent of BGV/CKKS scheme arithmetic.
 5. Keep Phase 0 cleanup on the side: `SECURITY.md`, `CONTRIBUTING.md`, baseline CI, and eventually the facade crate.
 
-Completed implementation phases so far: Phase 1 (`phantom-utils`), Phase 2 (`phantom-ring`), Phase 3 (`phantom-lattice::rlwe`), Phase 4 (`phantom-lattice::rgsw`), Phase 5 (`phantom-schemes::bgv`), Phase 6 (`phantom-schemes::bfv`), Phase 7 (`phantom-schemes::ckks`), Phase 8 (`phantom-circuits::common`), and Phase 9 (BGV circuits).
+Completed implementation phases so far: Phase 1 (`phantom-utils`), Phase 2 (`phantom-ring`), Phase 3 (`phantom-lattice::rlwe`), Phase 4 (`phantom-lattice::rgsw`), Phase 5 (`phantom-schemes::bgv`), Phase 6 (`phantom-schemes::bfv`), Phase 7 (`phantom-schemes::ckks`), Phase 8 (`phantom-circuits::common`), Phase 9 (`phantom-circuits::bgv`), Phase 10 (`phantom-circuits::bfv`), Phase 11 (`phantom-circuits::ckks`), and Phase 12 (`phantom-bootstrapping`).
