@@ -26,16 +26,16 @@ Current crates:
 - `phantom-schemes`: concrete BGV, BFV, and CKKS scheme APIs
 - `phantom-circuits`: shared circuit planning plus scheme-specific circuit scaffolds
 - `phantom-bootstrapping`: CKKS bootstrapping scaffold plus reserved BGV/BFV module locations
+- `phantom-multiparty`: common threshold protocol scaffolds
 
 Planned crates:
 
-- `phantom-multiparty`
 - `phantom-fhe` facade crate
 - examples and benchmarks crates
 
 ## Status
 
-Current position: Phase 12 is implemented as a correctness scaffold. The next planned implementation phase is Phase 13, Multiparty common layer.
+Current position: Phase 16 is implemented as a correctness scaffold. The next planned implementation phase is Phase 17, Serialization and compatibility.
 
 ## Roadmap
 
@@ -54,11 +54,12 @@ Current position: Phase 12 is implemented as a correctness scaffold. The next pl
 | 10 | `phantom-circuits::bfv` | Done |
 | 11 | `phantom-circuits::ckks` | Done |
 | 12 | `phantom-bootstrapping` | Done |
-| 13 | Multiparty common layer | Next |
-| 14 | BGV multiparty | Pending |
-| 15 | CKKS multiparty | Pending |
-| 16 | Serialization and compatibility | Pending |
-| 17 | Examples, benches, release hardening | Pending |
+| 13 | `phantom-multiparty::common` | Done |
+| 14 | `phantom-multiparty::mpbgv` | Done |
+| 15 | `phantom-multiparty::mpbfv` | Done |
+| 16 | `phantom-multiparty::mpckks` | Done |
+| 17 | Serialization and compatibility | Next |
+| 18 | Examples, benches, release hardening | Pending |
 
 Status labels:
 
@@ -147,7 +148,35 @@ Implemented:
   - CKKS bootstrap parameters, key markers, coeffs-to-slots, slots-to-coeffs, eval-mod, batch bootstrap, and sparse pack/unpack scaffolds
   - tests covering message preservation, metadata refresh, batch bootstrapping, sparse packing, invalid parameters, conjugate-invariant bootstrapping, and exact-scheme placeholders
 
-The current ring, RLWE, RGSW, BGV, BFV, CKKS, circuit, and bootstrapping implementations prioritize correct APIs and testable behavior over production cryptographic hardness or performance. Fast NTT, production RNS basis extension, cryptographic-quality Gaussian sampling, real noise management, key switching, relinearization, encrypted RGSW rows, production BGV/BFV ciphertext semantics, production CKKS encoding/noise analysis, and production bootstrapping parameters are future hardening work.
+- Phase 13: `phantom-multiparty::common`
+  - participant IDs and participant sets
+  - protocol sessions, rounds, and threshold validation
+  - deterministic transcript message encoding and hashing
+  - typed public shares and share aggregation helpers
+  - tests covering deterministic transcripts, public-message round trips, share aggregation, and duplicate/missing/stale/malformed share rejection
+
+- Phase 14: `phantom-multiparty::mpbgv`
+  - collective public-key, relinearization-key, and Galois-key generation scaffolds
+  - partial decryption aggregation
+  - re-encryption from threshold shares
+  - interactive bootstrapping scaffold
+  - tests covering decryptable collective public keys, evaluation key markers, partial decryption, invalid share detection, re-encryption, and interactive bootstrap preservation
+
+- Phase 15: `phantom-multiparty::mpbfv`
+  - collective public-key, relinearization-key, and Galois-key generation scaffolds
+  - partial decryption aggregation with signed and unsigned BFV slots
+  - re-encryption from threshold shares
+  - interactive bootstrapping scaffold
+  - tests covering decryptable collective public keys, evaluation key markers, signed partial decryption, invalid share detection, re-encryption, and interactive bootstrap preservation
+
+- Phase 16: `phantom-multiparty::mpckks`
+  - collective public-key, relinearization-key, and Galois-key generation scaffolds
+  - partial decryption aggregation with approximate CKKS slots
+  - re-encryption from threshold shares
+  - interactive bootstrapping through the CKKS bootstrapping scaffold
+  - tests covering decryptable collective public keys, evaluation key markers, approximate partial decryption, invalid share detection, re-encryption, and interactive bootstrap metadata refresh
+
+The current ring, RLWE, RGSW, BGV, BFV, CKKS, circuit, bootstrapping, and multiparty implementations prioritize correct APIs and testable behavior over production cryptographic hardness or performance. Fast NTT, production RNS basis extension, cryptographic-quality Gaussian sampling, real noise management, key switching, relinearization, encrypted RGSW rows, production BGV/BFV ciphertext semantics, production CKKS encoding/noise analysis, production bootstrapping parameters, and production threshold protocol security are future hardening work.
 
 ## Development
 

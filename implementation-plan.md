@@ -20,7 +20,7 @@ phantom-circuits::{common,bgv,ckks}
 phantom-bootstrapping::{ckks,bgv,bfv}
   |
   v
-phantom-multiparty::{mpbgv,mpckks}
+phantom-multiparty::{mpbgv,mpbfv,mpckks}
 
 phantom-utils is a sidecar support crate.
 phantom-fhe is a thin facade crate.
@@ -32,7 +32,7 @@ Compatible open-source projects and public papers may be used for understanding 
 
 ## 2. Current Roadmap Status
 
-Current position: Phase 12 is implemented as a correctness scaffold. The next planned implementation phase is Phase 13, Multiparty common layer.
+Current position: Phase 16 is implemented as a correctness scaffold. The next planned implementation phase is Phase 17, Serialization and compatibility.
 
 | Phase | Area | Status | Notes |
 | --- | --- | --- | --- |
@@ -49,11 +49,12 @@ Current position: Phase 12 is implemented as a correctness scaffold. The next pl
 | 10 | `phantom-circuits::bfv` | Done | BFV lintrans and polynomial evaluation. |
 | 11 | `phantom-circuits::ckks` | Done | CKKS lintrans, polynomial, minimax, comparison, inverse, mod1, DFT. |
 | 12 | `phantom-bootstrapping` | Done | CKKS centralized bootstrapping first; BGV/BFV module locations reserved. |
-| 13 | Multiparty common layer | Next | Participants, sessions, transcripts, shares, aggregation. |
-| 14 | BGV multiparty | Pending | Collective keygen, partial decryption, refresh/re-encryption. |
-| 15 | CKKS multiparty | Pending | CKKS threshold workflows and interactive bootstrapping. |
-| 16 | Serialization and compatibility | Pending | Stable canonical encoding decisions for public objects. |
-| 17 | Examples, benches, release hardening | Pending | Examples, Criterion benches, docs, parameter presets. |
+| 13 | `phantom-multiparty::common` | Done | Participants, sessions, transcripts, shares, aggregation. |
+| 14 | `phantom-multiparty::mpbgv` | Done | Collective keygen, partial decryption, refresh/re-encryption. |
+| 15 | `phantom-multiparty::mpbfv` | Done | BFV threshold workflows and interactive bootstrapping. |
+| 16 | `phantom-multiparty::mpckks` | Done | CKKS threshold workflows and interactive bootstrapping. |
+| 17 | Serialization and compatibility | Next | Stable canonical encoding decisions for public objects. |
+| 18 | Examples, benches, release hardening | Pending | Examples, Criterion benches, docs, parameter presets. |
 
 Status labels:
 
@@ -676,7 +677,48 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
 
 ---
 
-## 19. Phase 15 - CKKS Multiparty
+## 19. Phase 15 - BFV Multiparty
+
+### Owned Areas
+
+- `mpbfv::ckg`
+- `mpbfv::rkg`
+- `mpbfv::gkg`
+- Partial decryption
+- Re-encryption from shares
+- Interactive bootstrapping where supported
+
+### Deliverables
+
+- Collective public key generation.
+- Collective relinearization key generation.
+- Collective Galois key generation.
+- Partial decryption.
+- Re-encryption from linear secret-sharing shares.
+- Interactive bootstrapping protocol scaffolding and implementation where supported by scheme components.
+
+### Tests
+
+- Collective public key encrypts decryptable ciphertexts.
+- Partial decryptions reconstruct the correct plaintext.
+- Signed BFV encoding behavior survives threshold workflows.
+- Invalid share detection.
+- Re-encryption from shares.
+- Interactive bootstrapping correctness where implemented.
+
+### Benchmarks
+
+- BFV collective key generation.
+- BFV partial decryption aggregation.
+- BFV re-encryption.
+
+### Exit Criteria
+
+- BFV threshold workflows are usable in examples.
+
+---
+
+## 20. Phase 16 - CKKS Multiparty
 
 ### Owned Areas
 
@@ -716,7 +758,7 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
 
 ---
 
-## 20. Phase 16 - Serialization and Compatibility
+## 21. Phase 17 - Serialization and Compatibility
 
 ### Owned Areas
 
@@ -747,7 +789,7 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
 
 ---
 
-## 21. Phase 17 - Examples, Benches, and Release Hardening
+## 22. Phase 18 - Examples, Benches, and Release Hardening
 
 ### Owned Areas
 
@@ -837,17 +879,17 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
 
 ### Beta 3 - Multiparty
 
-- Phases 13-15 complete.
-- BGV and CKKS multiparty workflows work end-to-end.
+- Phases 13-16 complete.
+- BGV, BFV, and CKKS multiparty workflows work end-to-end.
 
 ### Stable 1.0
 
-- Phases 16-17 complete.
+- Phases 17-18 complete.
 - Public APIs, serialization, examples, docs, and benchmarks are release-ready.
 
 ---
 
-## 23. Definition of Done for Every Phase
+## 24. Definition of Done for Every Phase
 
 Each phase is complete only when:
 
@@ -864,14 +906,14 @@ Each phase is complete only when:
 
 ---
 
-## 24. Immediate Next Coding Tasks
+## 25. Immediate Next Coding Tasks
 
-Current next implementation target: Phase 13, Multiparty common layer.
+Current next implementation target: Phase 17, Serialization and compatibility.
 
-1. Add the `phantom-multiparty` crate and common module skeleton.
-2. Define participants, sessions, transcripts, shares, and aggregation helpers.
-3. Add typed validation for duplicate participants, threshold settings, and transcript domains.
-4. Add tests independent of BGV/CKKS scheme arithmetic.
+1. Define stable canonical encoding decisions for public objects.
+2. Add serialization helpers for public parameters, keys, ciphertext/plaintext metadata, circuit plans, bootstrapping params, and multiparty public messages.
+3. Keep secret-bearing material hard to serialize accidentally.
+4. Add deterministic round-trip and malformed-input tests.
 5. Keep Phase 0 cleanup on the side: `SECURITY.md`, `CONTRIBUTING.md`, baseline CI, and eventually the facade crate.
 
-Completed implementation phases so far: Phase 1 (`phantom-utils`), Phase 2 (`phantom-ring`), Phase 3 (`phantom-lattice::rlwe`), Phase 4 (`phantom-lattice::rgsw`), Phase 5 (`phantom-schemes::bgv`), Phase 6 (`phantom-schemes::bfv`), Phase 7 (`phantom-schemes::ckks`), Phase 8 (`phantom-circuits::common`), Phase 9 (`phantom-circuits::bgv`), Phase 10 (`phantom-circuits::bfv`), Phase 11 (`phantom-circuits::ckks`), and Phase 12 (`phantom-bootstrapping`).
+Completed implementation phases so far: Phase 1 (`phantom-utils`), Phase 2 (`phantom-ring`), Phase 3 (`phantom-lattice::rlwe`), Phase 4 (`phantom-lattice::rgsw`), Phase 5 (`phantom-schemes::bgv`), Phase 6 (`phantom-schemes::bfv`), Phase 7 (`phantom-schemes::ckks`), Phase 8 (`phantom-circuits::common`), Phase 9 (`phantom-circuits::bgv`), Phase 10 (`phantom-circuits::bfv`), Phase 11 (`phantom-circuits::ckks`), Phase 12 (`phantom-bootstrapping`), Phase 13 (`phantom-multiparty::common`), Phase 14 (`phantom-multiparty::mpbgv`), Phase 15 (`phantom-multiparty::mpbfv`), and Phase 16 (`phantom-multiparty::mpckks`).

@@ -4,6 +4,7 @@ members = [
     "crates/phantom-bootstrapping",
     "crates/phantom-circuits",
     "crates/phantom-lattice",
+    "crates/phantom-multiparty",
     "crates/phantom-ring",
     "crates/phantom-schemes",
     "crates/phantom-utils",

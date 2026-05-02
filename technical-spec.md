@@ -80,6 +80,7 @@ bootstrapping
   v
 multiparty
   |-- mpbgv
+  |-- mpbfv
   `-- mpckks
 ```
 
@@ -907,6 +908,15 @@ phantom-multiparty/
       reencryption.rs
       interactive_bootstrap.rs
 
+    mpbfv/
+      mod.rs
+      ckg.rs
+      rkg.rs
+      gkg.rs
+      partial_decrypt.rs
+      reencryption.rs
+      interactive_bootstrap.rs
+
     mpckks/
       mod.rs
       ckg.rs
@@ -929,6 +939,15 @@ phantom-multiparty/
 - secret-shared secret key support
 
 ### BGV Multiparty
+
+- collective public key generation
+- collective relinearization key generation
+- collective Galois key generation
+- partial decryption
+- re-encryption from shares
+- interactive bootstrapping
+
+### BFV Multiparty
 
 - collective public key generation
 - collective relinearization key generation
