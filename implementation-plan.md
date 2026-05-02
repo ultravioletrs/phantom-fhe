@@ -32,7 +32,7 @@ Compatible open-source projects and public papers may be used for understanding 
 
 ## 2. Current Roadmap Status
 
-Current position: Phase 7 is implemented as a correctness scaffold. The next planned implementation phase is Phase 8, `phantom-circuits::common`.
+Current position: Phase 9 is implemented as a correctness scaffold. The next planned implementation phase is Phase 10, BFV circuits.
 
 | Phase | Area | Status | Notes |
 | --- | --- | --- | --- |
@@ -44,15 +44,16 @@ Current position: Phase 7 is implemented as a correctness scaffold. The next pla
 | 5 | `phantom-schemes::bgv` | Done | Exact arithmetic scheme facade with BGV parameters, encoder, wrappers, evaluator, and tests. |
 | 6 | `phantom-schemes::bfv` | Done | Distinct BFV API over shared exact-arithmetic scaffold with signed/unsigned encoding and tests. |
 | 7 | `phantom-schemes::ckks` | Done | Approximate arithmetic scheme facade with complex/real encoding, scale/rescale, precision tracking, and tests. |
-| 8 | `phantom-circuits::common` | Next | Shared lintrans and polynomial evaluation planning. |
-| 9 | BGV circuits | Pending | BGV lintrans and polynomial evaluation. |
-| 10 | CKKS circuits | Pending | CKKS lintrans, polynomial, minimax, comparison, inverse, mod1, DFT. |
-| 11 | Bootstrapping | Pending | CKKS centralized bootstrapping first; BGV/BFV module locations reserved. |
-| 12 | Multiparty common layer | Pending | Participants, sessions, transcripts, shares, aggregation. |
-| 13 | BGV multiparty | Pending | Collective keygen, partial decryption, refresh/re-encryption. |
-| 14 | CKKS multiparty | Pending | CKKS threshold workflows and interactive bootstrapping. |
-| 15 | Serialization and compatibility | Pending | Stable canonical encoding decisions for public objects. |
-| 16 | Examples, benches, release hardening | Pending | Examples, Criterion benches, docs, parameter presets. |
+| 8 | `phantom-circuits::common` | Done | Shared lintrans and polynomial evaluation planning. |
+| 9 | BGV circuits | Done | BGV lintrans and polynomial evaluation. |
+| 10 | BFV circuits | Next | BFV lintrans and polynomial evaluation. |
+| 11 | CKKS circuits | Pending | CKKS lintrans, polynomial, minimax, comparison, inverse, mod1, DFT. |
+| 12 | Bootstrapping | Pending | CKKS centralized bootstrapping first; BGV/BFV module locations reserved. |
+| 13 | Multiparty common layer | Pending | Participants, sessions, transcripts, shares, aggregation. |
+| 14 | BGV multiparty | Pending | Collective keygen, partial decryption, refresh/re-encryption. |
+| 15 | CKKS multiparty | Pending | CKKS threshold workflows and interactive bootstrapping. |
+| 16 | Serialization and compatibility | Pending | Stable canonical encoding decisions for public objects. |
+| 17 | Examples, benches, release hardening | Pending | Examples, Criterion benches, docs, parameter presets. |
 
 Status labels:
 
@@ -435,7 +436,7 @@ Recommended first dependencies:
 
 ### Exit Criteria
 
-- BGV and CKKS circuits can share planning without sharing scheme-specific arithmetic incorrectly.
+- BGV, BFV, and CKKS circuits can share planning without sharing scheme-specific arithmetic incorrectly.
 
 ---
 
@@ -471,7 +472,41 @@ Recommended first dependencies:
 
 ---
 
-## 14. Phase 10 - CKKS Circuits
+## 14. Phase 10 - BFV Circuits
+
+### Owned Areas
+
+- `phantom-circuits::bfv::lintrans`
+- `phantom-circuits::bfv::polynomial`
+
+### Deliverables
+
+- Packed-slot linear transformations.
+- Slot permutations.
+- Exact modular polynomial evaluation over BFV plaintext slots.
+- Rotation-key requirement planning.
+- BFV-specific validation for plaintext modulus and signed/unsigned encoding semantics.
+
+### Tests
+
+- Linear transformation exactness.
+- Slot permutation exactness.
+- Polynomial evaluation exactness.
+- Signed and unsigned BFV encoding behavior through circuits.
+- Missing-key errors are clear.
+
+### Benchmarks
+
+- BFV linear transform.
+- BFV polynomial evaluation.
+
+### Exit Criteria
+
+- BFV exact-arithmetic circuit layer is usable and documented without relying on BGV APIs.
+
+---
+
+## 15. Phase 11 - CKKS Circuits
 
 ### Owned Areas
 
@@ -517,7 +552,7 @@ Recommended first dependencies:
 
 ---
 
-## 15. Phase 11 - CKKS Bootstrapping
+## 16. Phase 12 - CKKS Bootstrapping
 
 This phase implements centralized CKKS bootstrapping first and establishes the crate structure for future BGV/BFV centralized bootstrapping. BGV and CKKS interactive refresh/bootstrapping are multiparty protocols handled in later multiparty phases.
 
@@ -568,7 +603,7 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
 
 ---
 
-## 16. Phase 12 - Multiparty Common Layer
+## 17. Phase 13 - Multiparty Common Layer
 
 ### Owned Areas
 
@@ -601,7 +636,7 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
 
 ---
 
-## 17. Phase 13 - BGV Multiparty
+## 18. Phase 14 - BGV Multiparty
 
 ### Owned Areas
 
@@ -641,7 +676,7 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
 
 ---
 
-## 18. Phase 14 - CKKS Multiparty
+## 19. Phase 15 - CKKS Multiparty
 
 ### Owned Areas
 
@@ -681,7 +716,7 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
 
 ---
 
-## 19. Phase 15 - Serialization and Compatibility
+## 20. Phase 16 - Serialization and Compatibility
 
 ### Owned Areas
 
@@ -712,7 +747,7 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
 
 ---
 
-## 20. Phase 16 - Examples, Benches, and Release Hardening
+## 21. Phase 17 - Examples, Benches, and Release Hardening
 
 ### Owned Areas
 
@@ -791,28 +826,28 @@ This phase implements centralized CKKS bootstrapping first and establishes the c
 
 ### Beta 1 - Circuits
 
-- Phases 8-10 complete.
-- BGV and CKKS circuits work with documented examples.
+- Phases 8-11 complete.
+- BGV, BFV, and CKKS circuits work with documented examples.
 
 ### Beta 2 - Bootstrapping
 
-- Phase 11 complete.
+- Phase 12 complete.
 - CKKS bootstrapping works with documented presets.
 - BGV/BFV centralized bootstrapping module locations exist behind experimental gates if not yet implemented.
 
 ### Beta 3 - Multiparty
 
-- Phases 12-14 complete.
+- Phases 13-15 complete.
 - BGV and CKKS multiparty workflows work end-to-end.
 
 ### Stable 1.0
 
-- Phases 15-16 complete.
+- Phases 16-17 complete.
 - Public APIs, serialization, examples, docs, and benchmarks are release-ready.
 
 ---
 
-## 22. Definition of Done for Every Phase
+## 23. Definition of Done for Every Phase
 
 Each phase is complete only when:
 
@@ -829,14 +864,14 @@ Each phase is complete only when:
 
 ---
 
-## 23. Immediate Next Coding Tasks
+## 24. Immediate Next Coding Tasks
 
-Current next implementation target: Phase 8, `phantom-circuits::common`.
+Current next implementation target: Phase 10, BFV circuits.
 
-1. Add the `phantom-circuits` crate and `common` module skeleton.
-2. Define linear transformation descriptors and diagonal matrix representations.
-3. Implement baby-step giant-step and Paterson-Stockmeyer planning structures.
-4. Add planning correctness tests independent of BGV/CKKS scheme arithmetic.
+1. Add `phantom-circuits::bfv` module skeletons for `lintrans` and `polynomial`.
+2. Use common diagonal and BSGS plans for BFV linear transforms.
+3. Use common polynomial plans for exact modular BFV polynomial evaluation.
+4. Add BFV circuit correctness tests over the existing exact scheme scaffold, including signed and unsigned encoding behavior.
 5. Keep Phase 0 cleanup on the side: `SECURITY.md`, `CONTRIBUTING.md`, baseline CI, and eventually the facade crate.
 
-Completed implementation phases so far: Phase 1 (`phantom-utils`), Phase 2 (`phantom-ring`), Phase 3 (`phantom-lattice::rlwe`), Phase 4 (`phantom-lattice::rgsw`), Phase 5 (`phantom-schemes::bgv`), Phase 6 (`phantom-schemes::bfv`), and Phase 7 (`phantom-schemes::ckks`).
+Completed implementation phases so far: Phase 1 (`phantom-utils`), Phase 2 (`phantom-ring`), Phase 3 (`phantom-lattice::rlwe`), Phase 4 (`phantom-lattice::rgsw`), Phase 5 (`phantom-schemes::bgv`), Phase 6 (`phantom-schemes::bfv`), Phase 7 (`phantom-schemes::ckks`), Phase 8 (`phantom-circuits::common`), and Phase 9 (BGV circuits).

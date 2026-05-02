@@ -119,7 +119,7 @@ phantom-fhe             Public facade crate that re-exports stable modules
 phantom-ring            Low-level RNS polynomial arithmetic, NTT, sampling
 phantom-lattice         RLWE and RGSW primitives
 phantom-schemes         BFV, BGV, CKKS implementations
-phantom-circuits        Homomorphic circuits for BGV and CKKS
+phantom-circuits        Homomorphic circuits for BGV, BFV, and CKKS
 phantom-bootstrapping   Scheme bootstrapping crate: CKKS first, BGV/BFV-capable architecture
 phantom-multiparty      Distributed / threshold protocols
 phantom-utils           Minimal cross-cutting support crate
@@ -666,7 +666,7 @@ let values = ctx.encoder().decode_real(&out)?;
 
 ## 9.1 Purpose
 
-`phantom-circuits` implements reusable homomorphic circuits for BGV and CKKS.
+`phantom-circuits` implements reusable homomorphic circuits for BGV, BFV, and CKKS.
 
 ## 9.2 Structure
 
@@ -682,6 +682,11 @@ phantom-circuits/
       polynomial.rs
 
     bgv/
+      mod.rs
+      lintrans.rs
+      polynomial.rs
+
+    bfv/
       mod.rs
       lintrans.rs
       polynomial.rs
@@ -732,7 +737,24 @@ Features:
 
 ---
 
-## 9.5 CKKS Circuits
+## 9.5 BFV Circuits
+
+Required modules:
+
+```text
+bfv/lintrans
+bfv/polynomial
+```
+
+Features:
+
+- linear transformations over packed BFV slots
+- polynomial evaluation over exact modular integer plaintext space
+- signed and unsigned BFV encoding semantics through circuit evaluation
+
+---
+
+## 9.6 CKKS Circuits
 
 Required modules:
 
@@ -761,7 +783,7 @@ Features:
 
 ---
 
-## 9.6 Acceptance Tests
+## 9.7 Acceptance Tests
 
 - linear transformation correctness
 - slot permutation correctness

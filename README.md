@@ -35,7 +35,7 @@ Planned crates:
 
 ## Status
 
-Current position: Phase 7 is implemented as a correctness scaffold. The next planned implementation phase is Phase 8, `phantom-circuits::common`.
+Current position: Phase 9 is implemented as a correctness scaffold. The next planned implementation phase is Phase 10, BFV circuits.
 
 ## Roadmap
 
@@ -49,15 +49,16 @@ Current position: Phase 7 is implemented as a correctness scaffold. The next pla
 | 5 | `phantom-schemes::bgv` | Done |
 | 6 | `phantom-schemes::bfv` | Done |
 | 7 | `phantom-schemes::ckks` | Done |
-| 8 | `phantom-circuits::common` | Next |
-| 9 | BGV circuits | Pending |
-| 10 | CKKS circuits | Pending |
-| 11 | Bootstrapping | Pending |
-| 12 | Multiparty common layer | Pending |
-| 13 | BGV multiparty | Pending |
-| 14 | CKKS multiparty | Pending |
-| 15 | Serialization and compatibility | Pending |
-| 16 | Examples, benches, release hardening | Pending |
+| 8 | `phantom-circuits::common` | Done |
+| 9 | BGV circuits | Done |
+| 10 | BFV circuits | Next |
+| 11 | CKKS circuits | Pending |
+| 12 | Bootstrapping | Pending |
+| 13 | Multiparty common layer | Pending |
+| 14 | BGV multiparty | Pending |
+| 15 | CKKS multiparty | Pending |
+| 16 | Serialization and compatibility | Pending |
+| 17 | Examples, benches, release hardening | Pending |
 
 Status labels:
 

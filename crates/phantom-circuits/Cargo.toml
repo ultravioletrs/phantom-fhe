@@ -1,0 +1,16 @@
+[package]
+name = "phantom-circuits"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+phantom-lattice = { path = "../phantom-lattice" }
+phantom-schemes = { path = "../phantom-schemes" }
+thiserror.workspace = true
+
+[dev-dependencies]
+phantom-ring = { path = "../phantom-ring" }
+rand_chacha.workspace = true
