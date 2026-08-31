@@ -913,7 +913,7 @@ Each phase is complete only when:
 
 ## 25. Immediate Next Coding Tasks
 
-Current next implementation target: Alpha Hardening Workstream 2 (scaffold boundary and API honesty). Workstream 1 (Phase 0 cleanup) is complete - see below.
+Current next implementation target: Alpha Hardening Workstream 3 (ring and RNS foundation hardening) - the first workstream that changes cryptographic behavior rather than API/documentation surface. Workstreams 1 (Phase 0 cleanup) and 2 (scaffold boundary and API honesty) are complete - see below.
 
 ## 26. Next Release Plan - Alpha Hardening
 
@@ -982,22 +982,21 @@ Owned areas:
 
 Tasks:
 
-1. Mark the current implementation as alpha/scaffold in all user-facing docs.
-2. Separate toy/test presets from future production presets.
-3. Consider a `toy` or `experimental` feature flag for APIs that should not be mistaken for secure production cryptography.
-4. Hide or rename helpers that are only present to support toy semantics.
-5. Add warnings to examples and parameter docs that current presets are not secure.
-6. Audit public APIs and decide:
-   - stable alpha API
-   - experimental API
-   - crate-private/internal API
-7. Improve error conversions that currently collapse lower-level failures into generic messages.
+1. [Done] Mark the current implementation status in all user-facing docs. Reframed from repeated "alpha scaffold / do not use" alarm banners to a single, professional TRL-framed status (`SECURITY.md`, one README status line) plus the precise per-operation account in `docs/technical-manual.md` — see the "Consolidate security messaging" commit. Same underlying facts, stated once rather than repeated as warnings on every page.
+2. Separate toy/test presets from future production presets — still deferred. No production preset exists yet to separate from; adding one is explicitly gated on the noise-management/RNS/security-review work in Workstreams 3-7 landing first (see `docs/user-guide.md#choosing-parameters`).
+3. Consider a `toy`/`experimental` feature flag for APIs that should not be mistaken for secure production cryptography — still open. Deferred per the new `docs/architecture.md#api-stability` section: worth doing once there's a large-enough stable tier that gating the rest behind a flag is more signal than noise, not before.
+4. Hide or rename helpers that are only present to support toy semantics — partially done (rustdoc/user-facing wording swept from "toy" to neutral terms alongside item 1); no visibility changes made, per the API-audit decision in item 6 below.
+5. [Done] Add warnings to examples and parameter docs that current presets are not secure — same consolidation as item 1; `docs/user-guide.md#choosing-parameters` and `docs/getting-started.md` both point to `SECURITY.md`.
+6. [Done] Audit public APIs and decide: stable alpha API / experimental API / crate-private/internal API. Delivered as a documented tiering in `docs/architecture.md#api-stability` (stable-shape / experimental-placeholder / internal-not-advertised) rather than a mechanical `pub`/`pub(crate)` pass across the ~150 public items found — Workstreams 4-7 are expected to substantially rewrite the experimental tier, so a visibility refactor now would need redoing once real implementations land. No genuine encapsulation gaps were found (the public struct fields that exist are all plain data-transfer types, appropriately public).
+7. [Done] Improve error conversions that currently collapse lower-level failures into generic messages. `CircuitsError`/`BootstrappingError`'s `From<UtilsError>`/`From<SchemesError>` impls now wrap the source error via `#[from]`/`#[error(transparent)]` (matching `LatticeError`/`SchemesError`'s existing pattern) instead of discarding it into a generic `&'static str` variant; both error enums dropped their `PartialEq`/`Eq` derives as a result (their new wrapped variants aren't comparable), with the one affected test (`phantom-circuits/tests/phase8_common.rs::invalid_inputs_are_rejected`) switched from `assert_eq!` to `assert!(matches!(...))`. Remaining coarser-grained error handling — call-site `.map_err(|_| SomeVariant("label"))` in circuit/bootstrapping evaluators, which labels *where* a failure happened but still discards the specific lower-layer error — is a smaller follow-up, not yet scheduled as its own item.
 
 Exit criteria:
 
-- Users cannot reasonably confuse the current alpha with production-secure FHE.
-- Public API boundaries are documented.
-- Toy examples remain easy to run but are clearly labeled.
+- [Met] Users cannot reasonably confuse the current status with production-secure FHE (SECURITY.md, technical-manual.md).
+- [Met] Public API boundaries are documented (`docs/architecture.md#api-stability`).
+- [Met] Examples remain easy to run (`make examples`, `docs/user-guide.md#runnable-examples`) and are clearly scoped to development parameters (`docs/user-guide.md#choosing-parameters`).
+
+Workstream 2 is now effectively complete; items 2 and 3 remain intentionally deferred (see above) rather than outstanding work.
 
 ### Workstream 3 - Ring and RNS Foundation Hardening
 

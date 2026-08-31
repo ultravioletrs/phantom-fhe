@@ -6,7 +6,7 @@ use thiserror::Error;
 pub type Result<T> = core::result::Result<T, CircuitsError>;
 
 /// Errors emitted by circuit planners.
-#[derive(Debug, Error, PartialEq, Eq)]
+#[derive(Debug, Error)]
 pub enum CircuitsError {
     /// Parameters or descriptor contents are invalid.
     #[error("invalid parameters: {0}")]
@@ -23,10 +23,8 @@ pub enum CircuitsError {
     /// A scheme-level circuit operation failed.
     #[error("scheme operation failed: {0}")]
     SchemeOperation(&'static str),
-}
 
-impl From<phantom_utils::UtilsError> for CircuitsError {
-    fn from(_: phantom_utils::UtilsError) -> Self {
-        Self::InvalidParameters("serialization failure")
-    }
+    /// Utility serialization or buffer failure.
+    #[error(transparent)]
+    Utils(#[from] phantom_utils::UtilsError),
 }

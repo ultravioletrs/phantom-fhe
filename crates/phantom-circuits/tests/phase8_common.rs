@@ -141,17 +141,17 @@ fn paterson_stockmeyer_plan_covers_all_coefficients() {
 
 #[test]
 fn invalid_inputs_are_rejected() {
-    assert_eq!(
+    assert!(matches!(
         LinearTransform::<u64>::dense(vec![vec![1, 2], vec![3]]).unwrap_err(),
         CircuitsError::DimensionMismatch
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         DiagonalMatrix::new(0, Vec::<phantom_circuits::common::Diagonal<u64>>::new()).unwrap_err(),
         CircuitsError::InvalidParameters("slot count must be nonzero")
-    );
-    assert_eq!(
+    ));
+    assert!(matches!(
         PolynomialEvalPlan::for_coefficients::<u64>(&[]).unwrap_err(),
         CircuitsError::EmptyPolynomial
-    );
+    ));
     assert!(PatersonStockmeyerPlan::new(0, None).is_err());
 }

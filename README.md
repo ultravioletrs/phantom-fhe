@@ -83,7 +83,7 @@ More workflows (BGV, CKKS, bootstrapping, multiparty) are runnable from [`crates
 
 ## Status
 
-All 18 roadmap phases are implemented — every crate above compiles, is tested, and its examples run end-to-end. The project is now executing an **Alpha Hardening** plan to progress cryptographic hardness toward production strength: Phase 0 (release infrastructure) is complete, and remaining work is tracked as a sequence of workstreams — API/documentation clarity, ring hardening, production RLWE/RGSW, production BFV/BGV/CKKS, bootstrapping/circuits hardening, and multiparty protocol security. See [SECURITY.md](SECURITY.md) for current cryptographic status.
+All 18 roadmap phases are implemented — every crate above compiles, is tested, and its examples run end-to-end. The project is now executing an **Alpha Hardening** plan to progress cryptographic hardness toward production strength: release infrastructure and API/documentation clarity are complete, and remaining work is tracked as a sequence of workstreams — ring hardening, production RLWE/RGSW, production BFV/BGV/CKKS, bootstrapping/circuits hardening, and multiparty protocol security. See [SECURITY.md](SECURITY.md) for current cryptographic status.
 
 The full phase-by-phase and workstream-by-workstream detail lives in [`docs/internal/implementation-plan.md`](docs/internal/implementation-plan.md).
 

@@ -158,13 +158,13 @@ flowchart BT
     Utils -->|from| Schemes["SchemesError"]
     Ring -->|from| Schemes
     Lattice -->|from| Schemes
-    Utils -->|collapsed into| Circuits["CircuitsError"]
-    Utils -->|collapsed into| Bootstrapping["BootstrappingError"]
-    Schemes -->|collapsed into| Bootstrapping
+    Utils -->|from| Circuits["CircuitsError"]
+    Utils -->|from| Bootstrapping["BootstrappingError"]
+    Schemes -->|from| Bootstrapping
     Multiparty["MultipartyError<br/>standalone, wraps nothing"]
 ```
 
-Every "from" edge above is a `#[from]`/`#[error(transparent)]` conversion that preserves the original error as a variant payload. Every "collapsed into" edge is a `From` impl that discards the structured error and maps it to a generic `&'static str` variant instead — see the note below the table for where. `RingError` does not itself wrap anything (it's the bottom of the stack — `phantom-ring` has no crate dependencies below it that could fail). `MultipartyError` is the one error type that wraps nothing at all: every multiparty failure is a protocol-level condition (duplicate participant, stale share, threshold not met, ...) rather than a propagated lower-layer error.
+Every edge above is a `#[from]`/`#[error(transparent)]` conversion that preserves the original error as a variant payload — a `?` across a crate boundary never discards the source error. `RingError` does not itself wrap anything (it's the bottom of the stack — `phantom-ring` has no crate dependencies below it that could fail). `MultipartyError` is the one error type that wraps nothing at all: every multiparty failure is a protocol-level condition (duplicate participant, stale share, threshold not met, ...) rather than a propagated lower-layer error.
 
 | Crate | Error type | Variants |
 | --- | --- | --- |
@@ -172,11 +172,11 @@ Every "from" edge above is a `#[from]`/`#[error(transparent)]` conversion that p
 | `phantom-ring` | `RingError` | `InvalidDegree(usize)`, `InvalidModulus(u64)`, `InvalidNttModulus { modulus, two_n }`, `DimensionMismatch`, `LevelOutOfBounds { level, moduli }`, `CrtOverflow`, `MissingRoot(u64)` |
 | `phantom-lattice` | `LatticeError` | `Ring(RingError)`, `DimensionMismatch`, `InvalidParameters(&str)`, `MissingKey(&str)`, `Utils(UtilsError)` |
 | `phantom-schemes` | `SchemesError` | `InvalidParameters(&str)`, `DimensionMismatch`, `InvalidSlotCount`, `Ring(RingError)`, `Lattice(LatticeError)`, `Utils(UtilsError)` |
-| `phantom-circuits` | `CircuitsError` | `InvalidParameters(&str)`, `DimensionMismatch`, `EmptyPolynomial`, `SchemeOperation(&str)` (plus a `From<UtilsError>` collapsing serialization failures into `InvalidParameters`) |
-| `phantom-bootstrapping` | `BootstrappingError` | `InvalidParameters(&str)`, `DimensionMismatch`, `SchemeOperation(&str)`, `CircuitOperation(&str)` (plus `From<SchemesError>`/`From<UtilsError>` collapsing into `SchemeOperation`/`InvalidParameters`) |
+| `phantom-circuits` | `CircuitsError` | `InvalidParameters(&str)`, `DimensionMismatch`, `EmptyPolynomial`, `SchemeOperation(&str)`, `Utils(UtilsError)` |
+| `phantom-bootstrapping` | `BootstrappingError` | `InvalidParameters(&str)`, `DimensionMismatch`, `SchemeOperation(&str)`, `CircuitOperation(&str)`, `Schemes(SchemesError)`, `Utils(UtilsError)` |
 | `phantom-multiparty` | `MultipartyError` | `InvalidParameters(&str)`, `DuplicateParticipant`, `MissingShare`, `UnknownParticipant`, `StaleShare`, `MalformedMessage`, `ThresholdNotMet` |
 
-The `CircuitsError`/`BootstrappingError` collapsing conversions (turning a structured lower-layer error into a generic `&'static str` variant) are one of the "improve error conversions" items tracked under Alpha Hardening Workstream 2 in [`internal/implementation-plan.md`](internal/implementation-plan.md) — expect these to become more granular over time.
+`CircuitsError`/`BootstrappingError` used to collapse `UtilsError`/`SchemesError` into a generic `&'static str` variant (losing the original error); both now wrap them with `#[from]` like every other crate, closing that Alpha Hardening Workstream 2 item. What's still coarse-grained is call-site error mapping rather than the crate-boundary conversions — several circuit/bootstrapping functions (e.g. `phantom_circuits::bgv::polynomial::PolynomialEvaluator::evaluate`, `phantom_bootstrapping::ckks::{CoeffsToSlots, SlotsToCoeffs, EvalMod}`) use `.map_err(|_| SomeVariant("label"))` at a specific call site, which gives a precise, meaningful label (e.g. `"coefficients-to-slots"`) but still discards the specific lower-layer error that triggered it. That's a smaller, lower-priority refinement than the crate-boundary fix above, not yet scheduled as its own workstream item.
 
 ## Performance
 

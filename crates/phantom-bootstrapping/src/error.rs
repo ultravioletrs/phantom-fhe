@@ -6,7 +6,7 @@ use thiserror::Error;
 pub type Result<T> = core::result::Result<T, BootstrappingError>;
 
 /// Errors emitted by bootstrapping components.
-#[derive(Debug, Error, PartialEq)]
+#[derive(Debug, Error)]
 pub enum BootstrappingError {
     /// Parameters are invalid.
     #[error("invalid parameters: {0}")]
@@ -23,16 +23,12 @@ pub enum BootstrappingError {
     /// A circuit-level operation failed.
     #[error("circuit operation failed: {0}")]
     CircuitOperation(&'static str),
-}
 
-impl From<phantom_schemes::SchemesError> for BootstrappingError {
-    fn from(_: phantom_schemes::SchemesError) -> Self {
-        Self::SchemeOperation("serialization failure")
-    }
-}
+    /// Scheme-layer failure.
+    #[error(transparent)]
+    Schemes(#[from] phantom_schemes::SchemesError),
 
-impl From<phantom_utils::UtilsError> for BootstrappingError {
-    fn from(_: phantom_utils::UtilsError) -> Self {
-        Self::InvalidParameters("serialization failure")
-    }
+    /// Utility serialization or buffer failure.
+    #[error(transparent)]
+    Utils(#[from] phantom_utils::UtilsError),
 }
