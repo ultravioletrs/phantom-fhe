@@ -25,4 +25,5 @@ Thumbs.db
 /coverage/
 /criterion/
 /tmp/
+.private/
 

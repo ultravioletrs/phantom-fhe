@@ -102,6 +102,35 @@ fn ntt_multiplication_matches_schoolbook() {
 }
 
 #[test]
+fn ring_multiplication_is_correct_even_for_unreduced_coefficients() {
+    // Poly's type does not enforce coefficients < modulus; Ring's multiplication
+    // hot paths (which now route through BarrettReducer, valid only for already-
+    // reduced operands) must stay correct regardless, falling back for anything
+    // out of range rather than silently producing a wrong result.
+    let ring = Ring::new(Degree::new(2).unwrap(), vec![Modulus::new(17).unwrap()]).unwrap();
+    let huge = u64::MAX - 1; // far outside [0, 17), and (huge as u128)^2 >> 17^2
+    let a = Poly::from_coeffs(vec![vec![huge, 5]]).unwrap();
+    let b = Poly::from_coeffs(vec![vec![3, huge]]).unwrap();
+
+    let product = ring.coeffwise_mul(&a, &b).unwrap();
+    assert_eq!(product.coeffs()[0][0], mul_mod(huge, 3, 17));
+    assert_eq!(product.coeffs()[0][1], mul_mod(5, huge, 17));
+
+    // schoolbook_mul routes through the same mul_residue helper via a different path;
+    // check it against the negacyclic formula computed with the unconditionally-correct
+    // free functions: (a0+a1X)(b0+b1X) = (a0*b0 - a1*b1) + (a0*b1 + a1*b0)X, mod X^2=-1.
+    let school = ring.schoolbook_mul(&a, &b).unwrap();
+    let expected_c0 = sub_mod(mul_mod(huge, 3, 17), mul_mod(5, huge, 17), 17);
+    let expected_c1 = add_mod(mul_mod(huge, huge, 17), mul_mod(5, 3, 17), 17);
+    assert_eq!(school.coeffs()[0][0], expected_c0);
+    assert_eq!(school.coeffs()[0][1], expected_c1);
+
+    let scaled = ring.scalar_mul(&a, huge).unwrap();
+    assert_eq!(scaled.coeffs()[0][0], mul_mod(huge, huge % 17, 17));
+    assert_eq!(scaled.coeffs()[0][1], mul_mod(5, huge % 17, 17));
+}
+
+#[test]
 fn crt_reconstructs_and_extends_basis() {
     let source = RnsBasis::new(vec![Modulus::new(17).unwrap(), Modulus::new(97).unwrap()]).unwrap();
     let target = RnsBasis::new(vec![

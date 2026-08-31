@@ -2,7 +2,7 @@
 
 use crate::modulus::Modulus;
 use crate::poly::Poly;
-use crate::reduce::{add_mod, mul_mod, neg_mod, sub_mod};
+use crate::reduce::{add_mod, mul_mod, neg_mod, sub_mod, BarrettReducer};
 use crate::{Degree, Result, RingError};
 
 /// RNS polynomial ring context.
@@ -10,6 +10,13 @@ use crate::{Degree, Result, RingError};
 pub struct Ring {
     degree: Degree,
     moduli: Vec<Modulus>,
+    /// One precomputed [`BarrettReducer`] per modulus, for the multiplication
+    /// hot paths below - `None` for moduli at or above
+    /// [`crate::reduce::FAST_REDUCER_MAX_MODULUS`], which fall back to the
+    /// widened-`u128` path in [`mul_mod`] instead. Computed once here so
+    /// every `*_mul*` call reuses the same precomputed constant rather than
+    /// re-deriving it per coefficient.
+    reducers: Vec<Option<BarrettReducer>>,
 }
 
 impl Ring {
@@ -18,7 +25,15 @@ impl Ring {
         if moduli.is_empty() {
             return Err(RingError::DimensionMismatch);
         }
-        Ok(Self { degree, moduli })
+        let reducers = moduli
+            .iter()
+            .map(|modulus| BarrettReducer::new(modulus.value()).ok())
+            .collect();
+        Ok(Self {
+            degree,
+            moduli,
+            reducers,
+        })
     }
 
     /// Creates a ring and validates all moduli for negacyclic NTT.
@@ -55,6 +70,22 @@ impl Ring {
             return Err(RingError::DimensionMismatch);
         }
         Ok(())
+    }
+
+    /// Multiplies two residues modulo the `j`-th modulus, using the
+    /// precomputed [`BarrettReducer`] for that modulus when available.
+    ///
+    /// Correct for any `u64` inputs, matching [`mul_mod`]'s unconditional
+    /// correctness - `BarrettReducer::reduce`'s precondition (`a*b <
+    /// modulus^2`) only holds when both operands are already properly
+    /// reduced, which nothing in `Poly`'s type enforces, so this checks that
+    /// before taking the fast path rather than assuming it.
+    fn mul_residue(&self, j: usize, a: u64, b: u64) -> u64 {
+        let modulus = self.moduli[j].value();
+        match self.reducers[j] {
+            Some(reducer) if a < modulus && b < modulus => reducer.reduce(a as u128 * b as u128),
+            _ => mul_mod(a, b, modulus),
+        }
     }
 
     /// Adds `rhs` into `lhs`.
@@ -120,9 +151,9 @@ impl Ring {
     pub fn scalar_mul_assign(&self, poly: &mut Poly, scalar: u64) -> Result<()> {
         self.check_poly(poly)?;
         for (j, modulus) in self.moduli.iter().enumerate() {
-            let q = modulus.value();
+            let scalar = scalar % modulus.value();
             for coeff in &mut poly.coeffs_mut()[j] {
-                *coeff = mul_mod(*coeff, scalar % q, q);
+                *coeff = self.mul_residue(j, *coeff, scalar);
             }
         }
         Ok(())
@@ -140,10 +171,10 @@ impl Ring {
         self.check_poly(lhs)?;
         self.check_poly(rhs)?;
         let mut out = self.zero();
-        for (j, modulus) in self.moduli.iter().enumerate() {
-            let q = modulus.value();
+        for j in 0..self.moduli.len() {
             for i in 0..self.degree() {
-                out.coeffs_mut()[j][i] = mul_mod(lhs.coeffs()[j][i], rhs.coeffs()[j][i], q);
+                out.coeffs_mut()[j][i] =
+                    self.mul_residue(j, lhs.coeffs()[j][i], rhs.coeffs()[j][i]);
             }
         }
         Ok(out)
@@ -159,7 +190,7 @@ impl Ring {
             let q = modulus.value();
             for a in 0..n {
                 for b in 0..n {
-                    let prod = mul_mod(lhs.coeffs()[j][a], rhs.coeffs()[j][b], q);
+                    let prod = self.mul_residue(j, lhs.coeffs()[j][a], rhs.coeffs()[j][b]);
                     let idx = a + b;
                     if idx < n {
                         out.coeffs_mut()[j][idx] = add_mod(out.coeffs()[j][idx], prod, q);

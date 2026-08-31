@@ -1014,11 +1014,15 @@ Tasks:
 2. Add larger randomized tests for basis extension, rescale, and modulus dropping.
 3. Replace placeholder Gaussian-like sampling with a documented, cryptographically appropriate path or keep it explicitly toy-gated.
 4. Replace the current O(N²) direct-evaluation NTT (`ntt::cpu::forward_component`/`inverse_component`) with a real Cooley-Tukey-style O(N log N) butterfly network, and measure against schoolbook multiplication and against `Ring::schoolbook_mul` (the O(N²) path everything above `phantom-ring` currently uses for ciphertext multiplication).
-5. [Done] Implement real Barrett and Montgomery reduction in `phantom_ring::reduce`. `BarrettReducer` now does precomputed multiply-and-shift with correction (`mu = ⌊2⁶⁴/modulus⌋`); `MontgomeryReducer` implements real REDC with a Newton-Raphson 2-adic inverse, plus `to_montgomery`/`from_montgomery`/`mul_montgomery` for staying in Montgomery form across a chain of operations. Both are currently restricted to moduli `< FAST_REDUCER_MAX_MODULUS` (`2^32`) so every intermediate product stays within `u128` without wide-multiplication tricks — full 64-bit range is follow-up work (needs either wide multiplication or the "drop the lowest partial product" technique). Validated by exhaustive tests (all moduli 3-199, full value range) plus thousands of randomized large-modulus cases (`crates/phantom-ring/tests/phase2.rs`), and a standalone unit test for the Newton-Raphson inverse. Neither reducer is wired into `Ring`'s actual arithmetic yet (`add_mod`/`mul_mod`/`Ring::*` still use widened `u128` directly) — that hot-path swap is a natural next step, not yet scheduled as its own item.
-6. Replace `rns::extension::extend_basis`'s `u128`-based CRT round trip with a production RNS-native basis-extension algorithm (e.g. Bajard-Eynard-Hasan-Zucca or Halevi-Polyakov-Shoup style) that doesn't overflow for realistic multi-modulus bases; its own doc comment already flags it as debug/small-parameter-only.
+5. [Done] Implement real Barrett and Montgomery reduction in `phantom_ring::reduce`. `BarrettReducer` now does precomputed multiply-and-shift with correction (`mu = ⌊2⁶⁴/modulus⌋`); `MontgomeryReducer` implements real REDC with a Newton-Raphson 2-adic inverse, plus `to_montgomery`/`from_montgomery`/`mul_montgomery` for staying in Montgomery form across a chain of operations. Both are currently restricted to moduli `< FAST_REDUCER_MAX_MODULUS` (`2^32`) so every intermediate product stays within `u128` without wide-multiplication tricks — full 64-bit range is follow-up work (needs either wide multiplication or the "drop the lowest partial product" technique). Validated by exhaustive tests (all moduli 3-199, full value range) plus thousands of randomized large-modulus cases (`crates/phantom-ring/tests/phase2.rs`), and a standalone unit test for the Newton-Raphson inverse.
+5a. [Done] Wire `BarrettReducer` into `Ring`'s actual arithmetic: one reducer is precomputed per modulus at `Ring` construction (`None` for moduli at or above `FAST_REDUCER_MAX_MODULUS`), and `coeffwise_mul`/`schoolbook_mul`/`scalar_mul_assign` route through a new `mul_residue` helper. That helper checks both operands are already `< modulus` before taking the fast path — `Poly`'s type doesn't enforce that invariant, and `BarrettReducer::reduce`'s precondition (`a*b < modulus²`) is narrower than `mul_mod`'s unconditional correctness, so anything out of range falls back to the widened `u128` path rather than risking a wrong result. Covered by a dedicated regression test constructing deliberately out-of-range coefficients (`ring_multiplication_is_correct_even_for_unreduced_coefficients`). `add_assign`/`sub_assign`/`neg_assign` are unchanged (addition doesn't benefit the way multiplication does). `MontgomeryReducer` is not wired in yet — it needs a hot path that stays in Montgomery domain across a whole chain of operations (e.g. the real NTT in item 4) to be worth its conversion overhead, not a single-multiplication swap.
+5b. Add lazy/deferred-correction reducer variants (returning `[0, 2·modulus)` rather than fully reducing) for the tight-loop performance a real NTT (item 4) needs.
+5c. Extend `BarrettReducer`/`MontgomeryReducer` past `FAST_REDUCER_MAX_MODULUS` via real wide (128×128→256-bit) multiplication (four partial products combined with carries) once there's a concrete need for larger single-modulus RNS limbs.
+6. Replace `rns::extension::extend_basis`'s `u128`-based CRT round trip with a production RNS-native basis-extension algorithm (e.g. Bajard-Eynard-Hasan-Zucca or Halevi-Polyakov-Shoup style) that doesn't overflow for realistic multi-modulus bases; its own doc comment already flags it as debug/small-parameter-only. This is also what real RNS-based key-switching (Workstream 4) needs underneath it.
 7. Audit allocation patterns in polynomial operations.
 8. Add in-place variants where they remove meaningful allocation in hot paths.
 9. Extend smoke benchmarks or replace them with Criterion once dependency policy is settled.
+10. Replace the placeholder uniform-in-range Gaussian sampler with a real discrete Gaussian sampler (e.g. a Ziggurat algorithm), deciding deliberately whether it needs to be constant-time for this project's threat model. Overlaps with item 3 above; tracked separately since it's now a specifically-scoped algorithm choice rather than an open "replace the placeholder" task.
 
 Exit criteria:
 
@@ -1026,6 +1030,7 @@ Exit criteria:
 - The CPU backend has baseline performance data.
 - Sampling status is explicit and not silently production-claimed.
 - The NTT is a real O(N log N) transform, and Barrett/Montgomery reducers implement their named algorithms.
+- [Met] Barrett reduction is wired into `Ring`'s actual arithmetic, not a standalone unused type (item 5a).
 
 ### Workstream 4 - Production RLWE/RGSW Track
 
@@ -1038,19 +1043,21 @@ Tasks:
 
 1. Replace toy exact encryption internals with real RLWE encryption semantics — `KeyGenerator::generate_public_key` currently adds no error term (a noiseless RLWE-of-zero), and `Encryptor` performs real RLWE arithmetic but likewise with no error sampled in.
 2. Add noise tracking and correctness bounds.
-3. Implement production key switching (`keyswitch::key_switch_identity` is currently a literal identity function).
+3. Implement production key switching (`keyswitch::key_switch_identity` is currently a literal identity function) — target real RNS **hybrid key-switching** specifically (gadget-decompose the input, apply against key-switching material, then mod-down from an extended auxiliary-modulus basis back to the working modulus), the standard modern (RNS-CKKS-era) technique, not a simpler textbook scheme description. This is what Workstream 3 item 6's real RNS basis extension needs to feed into.
 4. Implement production relinearization (`Evaluator::relinearize` is currently a literal identity function, not a real degree reduction).
 5. Implement production automorphism/Galois key behavior, replacing `Evaluator::rotate_coefficients`'s raw coefficient rotation with real Galois-automorphism-based slot rotation.
 6. Implement production repacking (`repacking::repack_identity` is currently a literal identity function).
 7. Improve RGSW ciphertext representation beyond plaintext-backed scaffolding — `RgswCiphertext` currently stores the message polynomial directly rather than an encrypted gadget matrix, and `external_product` is a plain polynomial multiplication by that plaintext message.
 8. Implement real gadget decomposition/external product paths suitable for higher layers (decomposition/recomposition themselves are already production-shaped; what's missing is a real encrypted RGSW ciphertext for them to operate on).
 9. Add randomized decryptability and homomorphic-operation tests.
+10. Add a `security` module grounding standard deviation, noise bound, and secret-distribution choices in literature-standard values (the homomorphicencryption.org security standard and the BFV/BGV/CKKS papers converge on σ≈3.2, a 6σ noise bound, and a ternary secret distribution) rather than leaving every parameter set an ungrounded development preset. Needed before Workstream 2 item 2 (separating toy from production presets) can mean anything — there's currently nothing to ground a "production preset" in.
 
 Exit criteria:
 
 - RLWE operations are no longer transparent/toy.
 - Key switching and relinearization have meaningful cryptographic behavior.
 - Higher scheme crates can build production BFV/BGV/CKKS semantics on top.
+- A parameter set's standard deviation/bound/distribution choices are traceable to a documented security rationale, not just a number that happens to work in tests.
 
 ### Workstream 5 - Production BFV/BGV/CKKS Track
 
@@ -1115,6 +1122,7 @@ Tasks:
 3. Replace `common::transcript::stable_hash_256` — currently a small hand-rolled XOR/multiply/rotate mixer with no cryptanalysis behind it — with a vetted cryptographic hash function (e.g. SHA-256 or BLAKE3) before any transcript hash is relied on for collision or preimage resistance.
 4. Tie collective key generation, relinearization-key generation, and Galois-key generation (`ckg`/`rkg`/`gkg` across `mpbgv`/`mpbfv`/`mpckks`) to production key material once RLWE is hardened — today all three `aggregate_*` functions ignore collected share content and return placeholder key material (e.g. `CollectiveKeyGen::aggregate_public_key` returns an all-zero public key regardless of shares).
 5. Replace share aggregation's current byte-equality check (`ensure_equal_payloads`, used by `PartialDecryptor`/`ReEncryptor`/`InteractiveBootstrap`) with real threshold secret-share reconstruction (e.g. Lagrange interpolation) once ciphertext semantics are production-grade — there is currently no actual secret sharing of a decryption/re-encryption computation happening, only agreement-checking on identical cleartext-equivalent payloads.
+5a. Add noise flooding/smudging on top of that reconstruction: each participant's share needs extra calibrated noise added specifically to statistically hide their exact contribution from the other parties, not just correct secret-sharing arithmetic — a standard technique from the threshold-decryption literature, combining the ciphertext's existing fresh-encryption noise with an explicit smudging term. Depends on Workstream 4 item 2 (real noise tracking) to know what that fresh noise actually is.
 6. Document security assumptions for threshold and interactive bootstrapping protocols.
 7. Add adversarial tests for malformed shares and protocol confusion.
 
