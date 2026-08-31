@@ -17,8 +17,13 @@ The following components are not yet at production cryptographic strength:
   across a real evaluation circuit the way production key switching would.
   Noise tracking itself is a sound-but-loose worst-case bound, not a tight
   probabilistic one.
-- `phantom-lattice::rgsw` uses a plaintext-backed ciphertext representation
-  rather than an encrypted one.
+- `phantom-lattice::rgsw` now encrypts real gadget matrices (the standard
+  GSW/RGSW construction) instead of the earlier plaintext-backed scaffold,
+  with a real external product and its own noise bound in
+  `phantom_lattice::noise::external_product_noise_bound` - but RGSW
+  ciphertexts aren't yet consumed anywhere (no bootstrapping construction
+  built on top), and, like the rest of `phantom-lattice::rlwe`, its noise
+  tracking is a sound-but-loose worst-case bound.
 - `phantom-schemes::bgv` and `phantom-schemes::bfv` use transparent
   (non-encrypted) ciphertext semantics.
 - `phantom-schemes::ckks` implements approximate encoding and rescale

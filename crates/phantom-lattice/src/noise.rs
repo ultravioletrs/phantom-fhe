@@ -72,6 +72,35 @@ pub fn mul_noise_bound(degree: usize, plaintext_bound: u64, noise_bound: u64) ->
     2 * pt_times_noise + noise_times_noise
 }
 
+/// Worst-case noise bound for a real RGSW `external_product(RGSW(m), ct)`,
+/// given the **RGSW-encrypted message `m`'s** coefficient bound
+/// `message_bound`, the **input ciphertext `ct`'s** own decryption-noise
+/// bound `ct_noise_bound`, and the RGSW ciphertext's gadget decomposition
+/// `levels`/`base_log`.
+///
+/// Deriving `m * mu` from `ct = (c0, c1)` (`c0 + c1*s = mu + e_ct`) via
+/// `sum_i c0_i * RLWE_s(B^i*m) + sum_i c1_i * RLWE_s(B^i*m*s)` (`c0_i`/`c1_i`
+/// the gadget digits of `c0`/`c1`) gives decryption noise `m*e_ct + sum_i
+/// c0_i*e_i + sum_i c1_i*e'_i`, where `e_i`/`e'_i` are each RGSW row's own
+/// fresh secret-key-encryption noise. The first term (`m*e_ct`) is one ring
+/// product of `m` against `ct`'s noise ([`ring_product_bound`]); the sum is
+/// `2 * levels` more ring products, each of a gadget digit (bounded by
+/// `2^base_log - 1`) against a fresh noise term (bounded by
+/// [`crate::security::fresh_error_bound`]).
+pub fn external_product_noise_bound(
+    degree: usize,
+    message_bound: u64,
+    ct_noise_bound: u64,
+    levels: usize,
+    base_log: u32,
+) -> u64 {
+    let digit_bound = (1u64 << base_log) - 1;
+    let message_term = ring_product_bound(degree, message_bound, ct_noise_bound);
+    let gadget_term =
+        2 * levels as u64 * ring_product_bound(degree, digit_bound, fresh_error_bound());
+    message_term + gadget_term
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,5 +136,15 @@ mod tests {
         let fresh = fresh_public_key_noise_bound(degree);
         let after_mul = mul_noise_bound(degree, 4, fresh);
         assert!(after_mul > fresh);
+    }
+
+    #[test]
+    fn external_product_noise_bound_matches_hand_worked_case() {
+        // degree=4, ct_plaintext_bound=3, ct_noise_bound=20, levels=2, base_log=4:
+        // digit_bound = 2^4 - 1 = 15
+        // message_term = ring_product_bound(4, 3, 20) = 4*3*20 = 240
+        // gadget_term = 2*2*ring_product_bound(4, 15, fresh_error_bound()=20) = 4*(4*15*20) = 4*1200 = 4800
+        // total = 240 + 4800 = 5040
+        assert_eq!(external_product_noise_bound(4, 3, 20, 2, 4), 5040);
     }
 }

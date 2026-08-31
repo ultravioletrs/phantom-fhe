@@ -1,4 +1,4 @@
-use phantom_lattice::noise::{fresh_secret_key_noise_bound, ring_product_bound};
+use phantom_lattice::noise::{external_product_noise_bound, fresh_secret_key_noise_bound};
 use phantom_lattice::rgsw::{
     external_product, GadgetDecomposition, GadgetDecompositionParams, RgswCiphertext, RgswKey,
     RgswParams,
@@ -15,22 +15,17 @@ fn params() -> RlweParams {
     RlweParams::builder().ring(ring).build().unwrap()
 }
 
-fn key_material() -> (RlweParams, phantom_lattice::rlwe::SecretKey) {
-    let params = params();
-    let keygen = KeyGenerator::new(params.clone());
-    let mut rng = ChaCha20Rng::from_seed([11u8; 32]);
-    let sk = keygen.generate_secret_key(&mut rng, SecretDistribution::Ternary);
-    (params, sk)
-}
-
-// Real RLWE encryption now carries real noise, which modulus=97 above has no
-// room for (fresh_secret_key_noise_bound() alone can reach 20, comparable to
-// the whole modulus) - params()/key_material() stay small for the
-// noise-free structural tests below (gadget decomposition, boundary values
-// tied to modulus=97 specifically), and external_product_multiplies_
-// underlying_plaintexts gets its own noise-tolerant ring instead.
-const NOISY_DEGREE: usize = 4;
-const NOISY_MODULUS: u64 = 5009; // prime, (NOISY_MODULUS - 1) % (2 * NOISY_DEGREE) == 0
+// Real RLWE/RGSW encryption both now carry real noise, which modulus=97
+// above has no room for (fresh_secret_key_noise_bound() alone can reach 20,
+// comparable to the whole modulus) - params() stays small for the
+// noise-free structural tests below (gadget decomposition, boundary
+// values tied to modulus=97 specifically), and the encryption-carrying
+// tests get their own noise-tolerant ring, matching phase3_rlwe.rs's
+// degree/modulus exactly (chosen there with real headroom over even the
+// worst-case post-multiplication bound, comfortably enough for RGSW's own
+// larger worst-case bound too).
+const NOISY_DEGREE: usize = 8;
+const NOISY_MODULUS: u64 = 4_000_081; // prime, (NOISY_MODULUS - 1) % (2 * NOISY_DEGREE) == 0
 
 fn noisy_params() -> RlweParams {
     let ring = Ring::new_ntt(
@@ -47,6 +42,12 @@ fn noisy_key_material() -> (RlweParams, phantom_lattice::rlwe::SecretKey) {
     let mut rng = ChaCha20Rng::from_seed([11u8; 32]);
     let sk = keygen.generate_secret_key(&mut rng, SecretDistribution::Ternary);
     (params, sk)
+}
+
+fn noisy_plaintext(values: &[u64]) -> Poly {
+    let mut coeffs = values.to_vec();
+    coeffs.resize(NOISY_DEGREE, 0);
+    Poly::from_coeffs(vec![coeffs]).unwrap()
 }
 
 /// See `phase3_rlwe.rs`'s identical helper for why centered-residue
@@ -87,15 +88,22 @@ fn gadget_decomposition_recomposes_small_polynomial() {
 }
 
 #[test]
-fn rgsw_ciphertext_keeps_plaintext_backed_message_for_toy_semantics() {
-    let (_, sk) = key_material();
+fn rgsw_encrypt_produces_a_two_block_gadget_matrix_of_the_right_shape() {
+    let (params, sk) = noisy_key_material();
     let key = RgswKey::new(sk);
-    let message = Poly::from_coeffs(vec![vec![1, 0, 0, 0]]).unwrap();
-    let ct = RgswCiphertext::from_message(message.clone());
+    let mut rng = ChaCha20Rng::from_seed([13u8; 32]);
+    let message = noisy_plaintext(&[1, 0, 0, 0]);
+    let decomposition_params = GadgetDecompositionParams::new(8, 3).unwrap();
 
-    assert_eq!(key.secret().value().degree(), 4);
-    assert_eq!(ct.message(), &message);
-    assert!(ct.rows().is_empty());
+    let ct =
+        RgswCiphertext::encrypt(&params, &message, &key, decomposition_params, &mut rng).unwrap();
+
+    assert_eq!(ct.rows()[0].len(), decomposition_params.levels());
+    assert_eq!(ct.rows()[1].len(), decomposition_params.levels());
+    for row in ct.rows().iter().flatten() {
+        // Each row is a real (c0, c1) RLWE ciphertext, not a bare polynomial.
+        assert_eq!(row.value().len(), 2);
+    }
 }
 
 #[test]
@@ -103,25 +111,31 @@ fn external_product_multiplies_underlying_plaintexts() {
     let (params, sk) = noisy_key_material();
     let mut rng = ChaCha20Rng::from_seed([12u8; 32]);
     let encryptor = Encryptor::with_secret_key(params.clone(), sk.clone());
-    let decryptor = Decryptor::new(params.clone(), sk);
+    let decryptor = Decryptor::new(params.clone(), sk.clone());
+    let key = RgswKey::new(sk);
+    let decomposition_params = GadgetDecompositionParams::new(8, 3).unwrap();
 
-    let pt = Plaintext::new(Poly::from_coeffs(vec![vec![1, 2, 0, 0]]).unwrap());
-    let multiplier = Poly::from_coeffs(vec![vec![3, 1, 0, 0]]).unwrap();
-    let rgsw = RgswCiphertext::from_message(multiplier.clone());
+    let pt = Plaintext::new(noisy_plaintext(&[1, 2, 0, 0]));
+    let multiplier = noisy_plaintext(&[3, 1, 0, 0]);
+    let rgsw = RgswCiphertext::encrypt(&params, &multiplier, &key, decomposition_params, &mut rng)
+        .unwrap();
     let ct = encryptor.encrypt(&pt, &mut rng).unwrap();
 
-    let product_ct = external_product(&params, &ct, &rgsw).unwrap();
+    let product_ct = external_product(&params, decomposition_params, &ct, &rgsw).unwrap();
     let product_pt = decryptor.decrypt(&product_ct).unwrap();
     let expected = params
         .ring()
         .schoolbook_mul(pt.value(), &multiplier)
         .unwrap();
 
-    // external_product multiplies every RLWE component (including the
-    // noise-carrying one) by the plaintext-known multiplier polynomial, so
-    // the resulting noise is that same ring product applied to the fresh
-    // secret-key encryption's own noise bound (multiplier's max coefficient
-    // is 3 here).
-    let bound = ring_product_bound(NOISY_DEGREE, 3, fresh_secret_key_noise_bound());
+    // multiplier's max coefficient is 3; ct's own noise bound is a fresh
+    // secret-key encryption's.
+    let bound = external_product_noise_bound(
+        NOISY_DEGREE,
+        3,
+        fresh_secret_key_noise_bound(),
+        decomposition_params.levels(),
+        decomposition_params.base_log(),
+    );
     assert_noise_bounded(&product_pt, &Plaintext::new(expected), bound, NOISY_MODULUS);
 }
