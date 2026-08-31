@@ -1,13 +1,16 @@
 //! Minimal exact unsigned big integer.
 //!
-//! Just enough operations for exact CRT reconstruction in
-//! [`super::extension::extend_basis`]: build from a `u64`, add, subtract
-//! (non-negative results only), multiply by a `u64` scalar, compare, and
-//! divide-by-`u64` (returning quotient and remainder). No general
-//! bignum/bignum division - `extend_basis` structurally never needs one (see
-//! its doc comment), which is what keeps this small and easy to verify
-//! exactly rather than approximately. `pub(crate)` only: this is an
-//! implementation detail, not a general-purpose bignum type.
+//! Two call sites: exact CRT reconstruction in
+//! [`crate::rns::extension::extend_basis`] (build from a `u64`, add,
+//! subtract, multiply by a `u64` scalar, divide-by-`u64`), and computing
+//! [`crate::reduce::BarrettReducer`]'s precomputed constant for the full
+//! 64-bit modulus range (needs `2^128` represented exactly, hence
+//! `from_u128`/`to_u128`/`shl_limbs`). `mul` (general bignum multiplication)
+//! is used only as an independent test oracle for `BarrettReducer`'s
+//! stack-only wide-multiply hot path, not on any hot path itself - nothing
+//! here needs general bignum/bignum division, which is what keeps this small
+//! and easy to verify exactly rather than approximately. `pub(crate)` only:
+//! this is an implementation detail, not a general-purpose bignum type.
 
 use core::cmp::Ordering;
 
@@ -30,8 +33,54 @@ impl BigUint {
         }
     }
 
+    /// Test-only: used to build oracle values for `BarrettReducer`'s
+    /// wide-multiply tests and this module's own `mul`/`to_u128` tests. No
+    /// production code path needs a `u128 -> BigUint` conversion today.
+    #[cfg(test)]
+    pub(crate) fn from_u128(value: u128) -> Self {
+        let lo = value as u64;
+        let hi = (value >> 64) as u64;
+        Self::normalized(vec![lo, hi])
+    }
+
+    /// Converts back to a `u128`. Precondition: the value fits (at most two
+    /// limbs) - checked with `debug_assert!` since every call site here
+    /// controls its own operand sizes to guarantee this.
+    pub(crate) fn to_u128(&self) -> u128 {
+        debug_assert!(
+            self.0.len() <= 2,
+            "BigUint::to_u128: value exceeds u128 range"
+        );
+        let lo = *self.0.first().unwrap_or(&0) as u128;
+        let hi = *self.0.get(1).unwrap_or(&0) as u128;
+        lo | (hi << 64)
+    }
+
     pub(crate) fn is_zero(&self) -> bool {
         self.0.is_empty()
+    }
+
+    /// Multiplies by `2^(64*n)`, i.e. prepends `n` zero limbs.
+    pub(crate) fn shl_limbs(&self, n: usize) -> Self {
+        if self.is_zero() {
+            return Self::zero();
+        }
+        let mut limbs = vec![0u64; n];
+        limbs.extend_from_slice(&self.0);
+        Self(limbs)
+    }
+
+    /// General bignum multiplication: `self` times each limb of `other`,
+    /// shifted into position and summed (schoolbook). Test-only today - see
+    /// the module doc comment; used as an oracle for `BarrettReducer`'s
+    /// stack-only wide-multiply hot path, not on any hot path itself.
+    #[cfg(test)]
+    pub(crate) fn mul(&self, other: &Self) -> Self {
+        let mut result = Self::zero();
+        for (i, &limb) in other.0.iter().enumerate() {
+            result = result.add(&self.mul_u64(limb).shl_limbs(i));
+        }
+        result
     }
 
     fn normalized(mut limbs: Vec<u64>) -> Self {
@@ -319,5 +368,76 @@ mod tests {
             .fold(BigUint::from_u64(1), |acc, &m| acc.mul_u64(m));
         let (_, remainder) = product.divmod_u64(12289);
         assert_eq!(remainder, 729);
+    }
+
+    #[test]
+    fn from_u128_to_u128_round_trips_for_small_and_large_values() {
+        let mut rng_state = 0x1122_3344_5566_7788u64;
+        for _ in 0..2000 {
+            rng_state ^= rng_state >> 12;
+            rng_state ^= rng_state << 25;
+            rng_state ^= rng_state >> 27;
+            let hi = rng_state;
+            rng_state ^= rng_state >> 12;
+            rng_state ^= rng_state << 25;
+            rng_state ^= rng_state >> 27;
+            let lo = rng_state;
+            let value = ((hi as u128) << 64) | lo as u128;
+            assert_eq!(BigUint::from_u128(value).to_u128(), value, "value={value}");
+        }
+        assert_eq!(BigUint::from_u128(0).to_u128(), 0);
+        assert_eq!(BigUint::from_u128(u128::MAX).to_u128(), u128::MAX);
+    }
+
+    #[test]
+    fn shl_limbs_multiplies_by_the_right_power_of_two_64() {
+        // 2^128, built the way BarrettReducer::new does: 1 shifted by 2 limbs.
+        let two_pow_128 = BigUint::from_u64(1).shl_limbs(2);
+        // Divide back down: (2^128) / (2^64 - 1) should match native u128
+        // division of the closest representable quantity - cross-checked via
+        // divmod_u64 instead of a direct comparison since 2^128 itself
+        // doesn't fit in a u128 constant to compare against directly.
+        let (quotient, remainder) = two_pow_128.divmod_u64(u64::MAX);
+        // 2^128 = (2^64-1) * (2^64+1) + 1, i.e. quotient = 2^64+1, remainder = 1.
+        assert_eq!(
+            quotient,
+            BigUint::from_u128(1u128 << 64).add(&BigUint::from_u64(1))
+        );
+        assert_eq!(remainder, 1);
+
+        assert!(BigUint::zero().shl_limbs(5).is_zero());
+    }
+
+    #[test]
+    fn mul_matches_native_u128_multiplication_when_the_product_fits() {
+        let mut rng_state = 0x8899_AABB_CCDD_EEFFu64;
+        for _ in 0..2000 {
+            rng_state ^= rng_state >> 12;
+            rng_state ^= rng_state << 25;
+            rng_state ^= rng_state >> 27;
+            // Keep both operands under 2^64 so the product (< 2^128) fits a
+            // native u128 oracle for direct comparison.
+            let a = rng_state;
+            rng_state ^= rng_state >> 12;
+            rng_state ^= rng_state << 25;
+            rng_state ^= rng_state >> 27;
+            let b = rng_state;
+
+            let product = BigUint::from_u64(a).mul(&BigUint::from_u64(b));
+            let expected = a as u128 * b as u128;
+            assert_eq!(product, BigUint::from_u128(expected), "a={a}, b={b}");
+        }
+    }
+
+    #[test]
+    fn mul_matches_mul_u64_chain_for_multi_limb_operands() {
+        // Cross-check mul (general bignum x bignum) against mul_u64 chained
+        // twice, an independently-written and already-tested path, for
+        // operands that themselves exceed a single limb.
+        let a = BigUint::from_u64(u64::MAX).mul_u64(u64::MAX); // ~128 bits
+        let b = BigUint::from_u64(3);
+        let via_mul = a.mul(&b);
+        let via_mul_u64 = a.mul_u64(3);
+        assert_eq!(via_mul, via_mul_u64);
     }
 }

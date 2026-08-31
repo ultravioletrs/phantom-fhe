@@ -46,14 +46,16 @@ pub enum RingError {
     #[error("no root of unity found for modulus {0}")]
     MissingRoot(u64),
 
-    /// Modulus exceeds the range the fast reducers currently support.
-    #[error(
-        "modulus {modulus} exceeds the maximum {max} supported by BarrettReducer/MontgomeryReducer"
-    )]
+    /// Modulus exceeds the range [`crate::reduce::MontgomeryReducer`] currently supports.
+    #[error("modulus {modulus} exceeds the maximum {max} supported by MontgomeryReducer")]
     ModulusTooLargeForReducer {
         /// The requested modulus.
         modulus: u64,
         /// The largest modulus currently supported.
         max: u64,
     },
+
+    /// Modulus is too small for a reducer to operate on (needs at least 2).
+    #[error("modulus must be at least 2, got {0}")]
+    ModulusTooSmall(u64),
 }

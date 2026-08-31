@@ -2,8 +2,8 @@
 
 use core::cmp::Ordering;
 
+use crate::bignum::BigUint;
 use crate::reduce::{inv_mod, mul_mod};
-use crate::rns::bignum::BigUint;
 use crate::{Poly, Result, RingError, RnsBasis};
 
 /// Extends `poly` from `source` basis into `target` basis.

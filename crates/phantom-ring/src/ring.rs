@@ -12,11 +12,14 @@ pub struct Ring {
     degree: Degree,
     moduli: Vec<Modulus>,
     /// One precomputed [`BarrettReducer`] per modulus, for the multiplication
-    /// hot paths below - `None` for moduli at or above
-    /// [`crate::reduce::FAST_REDUCER_MAX_MODULUS`], which fall back to the
-    /// widened-`u128` path in [`mul_mod`] instead. Computed once here so
-    /// every `*_mul*` call reuses the same precomputed constant rather than
-    /// re-deriving it per coefficient.
+    /// hot paths below - `BarrettReducer` supports the full 64-bit modulus
+    /// range, so this is `None` only if `BarrettReducer::new` itself ever
+    /// rejects a modulus (currently just `modulus < 2`, which a valid
+    /// [`Modulus`] can never be); kept as `Option` defensively rather than
+    /// assuming that invariant here too. Falls back to the widened-`u128`
+    /// path in [`mul_mod`] on `None`. Computed once here so every `*_mul*`
+    /// call reuses the same precomputed constant rather than re-deriving it
+    /// per coefficient.
     reducers: Vec<Option<BarrettReducer>>,
     /// One precomputed [`NttTable`] per modulus, for [`mul`](Self::mul) -
     /// `None` for moduli that don't support a negacyclic NTT at this ring's

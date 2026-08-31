@@ -7,12 +7,16 @@
 //! modulus` for `t < modulus * R`, the primitive every other operation here
 //! is built from.
 //!
-//! Current range: moduli below [`FAST_REDUCER_MAX_MODULUS`] (`2^32`), the
-//! same bound [`super::barrett::BarrettReducer`] uses, for the same
-//! `u128`-only-arithmetic reason and to keep both fast reducers under one
-//! easy-to-remember limit - `redc`'s own headroom would in fact tolerate
-//! moduli up to just under `2^63`, so this is a shared-limit choice, not a
-//! Montgomery-specific one.
+//! Current range: moduli below [`MONTGOMERY_MAX_MODULUS`] (`2^63`). `redc`'s
+//! `t2 = t + u * modulus` step needs `t2 < 2^128` to fit its `u128`
+//! accumulator: with `t < modulus * 2^64` (the precondition) and
+//! `u * modulus < 2^64 * modulus`, `t2 < 2 * 2^64 * modulus = 2^65 *
+//! modulus`, which stays under `2^128` exactly when `modulus < 2^63` - the
+//! bound is derived from that headroom, not chosen arbitrarily. Going past
+//! `2^63` would need a genuinely wider (192+ bit) accumulator for this step,
+//! which is real follow-up work, not implemented here. Unlike
+//! [`super::barrett::BarrettReducer`], which now supports the full 64-bit
+//! range via wide multiplication.
 //!
 //! `mul` round-trips plain inputs through Montgomery form and back on every
 //! call (four `redc` calls total), which is correct but not the efficient
@@ -21,7 +25,7 @@
 //! `to_montgomery`/`from_montgomery`/`mul_montgomery` expose that lower-level
 //! path for callers (e.g. a future NTT butterfly hot path) that can do so.
 
-use super::FAST_REDUCER_MAX_MODULUS;
+use super::MONTGOMERY_MAX_MODULUS;
 use crate::{Result, RingError};
 
 /// Montgomery reducer for one modulus.
@@ -35,13 +39,13 @@ pub struct MontgomeryReducer {
 }
 
 impl MontgomeryReducer {
-    /// Creates a reducer, rejecting moduli at or above [`FAST_REDUCER_MAX_MODULUS`]
+    /// Creates a reducer, rejecting moduli at or above [`MONTGOMERY_MAX_MODULUS`]
     /// or even moduli (Montgomery form requires `modulus` coprime to `R = 2^64`).
     pub fn new(modulus: u64) -> Result<Self> {
-        if modulus == 0 || modulus % 2 == 0 || modulus >= FAST_REDUCER_MAX_MODULUS {
+        if modulus == 0 || modulus % 2 == 0 || modulus >= MONTGOMERY_MAX_MODULUS {
             return Err(RingError::ModulusTooLargeForReducer {
                 modulus,
-                max: FAST_REDUCER_MAX_MODULUS,
+                max: MONTGOMERY_MAX_MODULUS,
             });
         }
         let m_prime = neg_inv_mod_pow2_64(modulus);

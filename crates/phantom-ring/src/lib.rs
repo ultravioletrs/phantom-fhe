@@ -1,5 +1,6 @@
 //! RNS polynomial ring arithmetic for `phantom-fhe`.
 
+mod bignum;
 pub mod error;
 pub mod modulus;
 pub mod ntt;

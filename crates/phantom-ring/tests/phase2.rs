@@ -1,5 +1,5 @@
 use phantom_ring::ntt::{CpuNttBackend, NttBackend};
-use phantom_ring::reduce::{add_mod, mul_mod, neg_mod, sub_mod, FAST_REDUCER_MAX_MODULUS};
+use phantom_ring::reduce::{add_mod, mul_mod, neg_mod, sub_mod, MONTGOMERY_MAX_MODULUS};
 use phantom_ring::reduce::{BarrettReducer, MontgomeryReducer};
 use phantom_ring::rns::crt::{decompose_value, reconstruct_poly, reconstruct_residue};
 use phantom_ring::rns::extension::extend_basis;
@@ -388,10 +388,12 @@ fn barrett_matches_naive_reduction_exhaustively_for_small_moduli() {
 
 #[test]
 fn barrett_matches_naive_reduction_for_random_large_moduli() {
+    // Covers the full 64-bit modulus range, not just the old <2^32
+    // restriction - this is exactly what changed: BarrettReducer now handles
+    // realistic RNS-CKKS/BGV moduli (~40-60 bits), not just small ones.
     let mut rng = ChaCha20Rng::from_seed([11u8; 32]);
     for _ in 0..2000 {
-        let modulus = (rng.next_u64() % (FAST_REDUCER_MAX_MODULUS - 3)) | 1;
-        let modulus = modulus.max(3);
+        let modulus = rng.next_u64().max(2);
         let reducer = BarrettReducer::new(modulus).unwrap();
         let bound = modulus as u128 * modulus as u128;
         let x = (((rng.next_u64() as u128) << 64) | rng.next_u64() as u128) % bound;
@@ -399,6 +401,62 @@ fn barrett_matches_naive_reduction_for_random_large_moduli() {
             reducer.reduce(x),
             (x % modulus as u128) as u64,
             "mismatch for modulus={modulus}, x={x}"
+        );
+    }
+}
+
+#[test]
+fn barrett_matches_naive_reduction_for_realistic_ntt_friendly_primes() {
+    // The ~61-bit primes also used in the large-basis extend_basis
+    // regression test (crates/phantom-ring/tests/phase2.rs's own
+    // extend_basis_is_exact_for_a_realistic_multi_prime_basis_that_overflows_u128) -
+    // a realistic RNS-CKKS/BGV modulus size, previously far outside
+    // BarrettReducer's <2^32 range.
+    let primes: [u64; 4] = [
+        2305843009213693951,
+        2305843009213693907,
+        2305843009213693881,
+        2305843009213693829,
+    ];
+    let mut rng = ChaCha20Rng::from_seed([19u8; 32]);
+    for modulus in primes {
+        let reducer = BarrettReducer::new(modulus).unwrap();
+        for _ in 0..500 {
+            let a = rng.next_u64() % modulus;
+            let b = rng.next_u64() % modulus;
+            let x = a as u128 * b as u128;
+            assert_eq!(
+                reducer.reduce(x),
+                mul_mod(a, b, modulus),
+                "mismatch for modulus={modulus}, a={a}, b={b}"
+            );
+        }
+    }
+}
+
+#[test]
+fn barrett_reduce_holds_up_to_modulus_times_2_pow_64_not_just_below_modulus_squared() {
+    // BarrettReducer's doc comment proves reduce is correct up to the wider
+    // bound `value < modulus * 2^64` (not just `value < modulus^2`), since
+    // that's exactly the bound under which the estimated quotient still fits
+    // a u64. Exercise the gap between the two bounds directly - values here
+    // are deliberately >= modulus^2 (the crate's normal precondition) but
+    // still < modulus * 2^64. This does not call `reduce` outside its
+    // documented precondition; it uses the wider one the doc comment proves.
+    let mut rng = ChaCha20Rng::from_seed([29u8; 32]);
+    for _ in 0..2000 {
+        let modulus = rng.next_u64().max(2);
+        let reducer = BarrettReducer::new(modulus).unwrap();
+        let wide_bound = modulus as u128 * (1u128 << 64);
+        let squared_bound = modulus as u128 * modulus as u128;
+        // A value in [modulus^2, modulus*2^64) - always nonempty since
+        // modulus < 2^64 implies modulus^2 < modulus*2^64.
+        let span = wide_bound - squared_bound;
+        let x = squared_bound + (((rng.next_u64() as u128) << 64) | rng.next_u64() as u128) % span;
+        assert_eq!(
+            reducer.reduce(x),
+            (x % modulus as u128) as u64,
+            "mismatch for modulus={modulus}, x={x} (x is in [modulus^2, modulus*2^64))"
         );
     }
 }
@@ -418,10 +476,11 @@ fn barrett_covers_boundary_values() {
 }
 
 #[test]
-fn barrett_rejects_modulus_out_of_range() {
+fn barrett_rejects_modulus_too_small_but_accepts_the_full_64_bit_range() {
     assert!(BarrettReducer::new(0).is_err());
-    assert!(BarrettReducer::new(FAST_REDUCER_MAX_MODULUS).is_err());
-    assert!(BarrettReducer::new(FAST_REDUCER_MAX_MODULUS - 1).is_ok());
+    assert!(BarrettReducer::new(1).is_err());
+    assert!(BarrettReducer::new(2).is_ok());
+    assert!(BarrettReducer::new(u64::MAX).is_ok());
 }
 
 #[test]
@@ -444,7 +503,7 @@ fn montgomery_mul_matches_naive_reduction_exhaustively_for_small_moduli() {
 fn montgomery_mul_matches_naive_reduction_for_random_large_moduli() {
     let mut rng = ChaCha20Rng::from_seed([13u8; 32]);
     for _ in 0..5000 {
-        let modulus = (rng.next_u64() % (FAST_REDUCER_MAX_MODULUS - 3)) | 1;
+        let modulus = (rng.next_u64() % (MONTGOMERY_MAX_MODULUS - 3)) | 1;
         let modulus = modulus.max(3);
         let reducer = MontgomeryReducer::new(modulus).unwrap();
         let a = rng.next_u64() % modulus;
@@ -461,7 +520,7 @@ fn montgomery_mul_matches_naive_reduction_for_random_large_moduli() {
 fn montgomery_round_trip_preserves_value() {
     let mut rng = ChaCha20Rng::from_seed([17u8; 32]);
     for _ in 0..2000 {
-        let modulus = (rng.next_u64() % (FAST_REDUCER_MAX_MODULUS - 3)) | 1;
+        let modulus = (rng.next_u64() % (MONTGOMERY_MAX_MODULUS - 3)) | 1;
         let modulus = modulus.max(3);
         let reducer = MontgomeryReducer::new(modulus).unwrap();
         let a = rng.next_u64() % modulus;
@@ -478,6 +537,6 @@ fn montgomery_round_trip_preserves_value() {
 fn montgomery_rejects_invalid_moduli() {
     assert!(MontgomeryReducer::new(0).is_err());
     assert!(MontgomeryReducer::new(4).is_err()); // even
-    assert!(MontgomeryReducer::new(FAST_REDUCER_MAX_MODULUS).is_err());
-    assert!(MontgomeryReducer::new(FAST_REDUCER_MAX_MODULUS - 1).is_ok());
+    assert!(MontgomeryReducer::new(MONTGOMERY_MAX_MODULUS).is_err());
+    assert!(MontgomeryReducer::new(MONTGOMERY_MAX_MODULUS - 1).is_ok());
 }
