@@ -370,6 +370,46 @@ fn samplers_return_valid_dimensions_and_ranges() {
 }
 
 #[test]
+fn ternary_and_gaussian_samples_are_crt_coherent_across_rns_components() {
+    // Regression test for a real bug: sample_ternary/sample_discrete_gaussian
+    // used to draw an independent random choice per (RNS component,
+    // coefficient) pair rather than one true value per coefficient reduced
+    // consistently into every component. That's invisible on a
+    // single-modulus ring (nothing to be inconsistent with), but on this
+    // ring's two moduli, a coefficient's true CRT-reconstructed value must
+    // land in {0, 1, product-1} for ternary (not some unrelated residue that
+    // happens to satisfy each component's own range check independently),
+    // and within the Gaussian's tail cut for the error sampler.
+    let ring = test_ring();
+    let basis = RnsBasis::new(ring.moduli().to_vec()).unwrap();
+    let product: u128 = ring.moduli().iter().map(|m| m.value() as u128).product();
+    let mut rng = ChaCha20Rng::from_seed([9u8; 32]);
+
+    let ternary = sample_ternary(&ring, &mut rng);
+    let reconstructed = reconstruct_poly(&ternary, &basis).unwrap();
+    for &value in &reconstructed {
+        assert!(
+            value == 0 || value == 1 || value == product - 1,
+            "ternary coefficient reconstructed to {value}, not in {{0, 1, {}}} - components are not CRT-coherent",
+            product - 1
+        );
+    }
+
+    let sigma = 3.2;
+    let tail_cut = 6.0f64;
+    let bound = (sigma * tail_cut).ceil() as u128;
+    let gaussian = sample_discrete_gaussian(&ring, &mut rng, sigma);
+    let reconstructed = reconstruct_poly(&gaussian, &basis).unwrap();
+    for &value in &reconstructed {
+        let centered = value.min(product - value);
+        assert!(
+            centered <= bound,
+            "gaussian coefficient reconstructed to {value} (centered {centered}), outside the tail-cut bound {bound} - components are not CRT-coherent"
+        );
+    }
+}
+
+#[test]
 fn barrett_matches_naive_reduction_exhaustively_for_small_moduli() {
     for modulus in (3u64..200).step_by(2) {
         let reducer = BarrettReducer::new(modulus).unwrap();

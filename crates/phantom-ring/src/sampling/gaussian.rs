@@ -89,16 +89,25 @@ impl DiscreteGaussianTable {
 /// a uniform-range bound. A typical FHE noise standard deviation is
 /// `sigma ~= 3.2`, the homomorphicencryption.org community-standard default
 /// error width.
+///
+/// Each *true* error value is drawn once per coefficient and then reduced
+/// into every RNS component identically - not sampled independently per
+/// component. See [`crate::sampling::sample_ternary`]'s doc comment for why
+/// this matters for any ring with more than one modulus (the same
+/// CRT-coherence requirement applies to error terms as to secret keys).
 pub fn sample_discrete_gaussian<R>(ring: &Ring, rng: &mut R, sigma: f64) -> Poly
 where
     R: RngCore + CryptoRng,
 {
     let table = DiscreteGaussianTable::new(sigma);
+    let degree = ring.degree();
+    let samples: Vec<i64> = (0..degree).map(|_| table.sample(rng)).collect();
+
     let mut poly = ring.zero();
     for (j, modulus) in ring.moduli().iter().enumerate() {
         let q = modulus.value();
-        for coeff in &mut poly.coeffs_mut()[j] {
-            let sample = table.sample(rng);
+        for (i, coeff) in poly.coeffs_mut()[j].iter_mut().enumerate() {
+            let sample = samples[i];
             *coeff = if sample < 0 {
                 q - ((-sample) as u64 % q)
             } else {
