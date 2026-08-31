@@ -12,11 +12,16 @@ The following components are not yet at production cryptographic strength:
   (`phantom_lattice::security::STANDARD_ERROR_STD_DEV`, the
   homomorphicencryption.org community-standard σ≈3.2) into both key
   generation and encryption, with worst-case noise-growth bounds in
-  `phantom_lattice::noise` — but key switching and relinearization are still
-  placeholders (identity functions), so noise growth isn't yet controlled
-  across a real evaluation circuit the way production key switching would.
-  Noise tracking itself is a sound-but-loose worst-case bound, not a tight
-  probabilistic one.
+  `phantom_lattice::noise`. `phantom_lattice::rlwe::{generate_key_switch_key,
+  key_switch}` are now a real RNS hybrid key-switch (the modern
+  RNS-CKKS-era technique, not a textbook simplification) - but
+  relinearization still calls the identity-function placeholder
+  (`key_switch_identity`), not this real primitive yet, so noise growth
+  isn't yet controlled across a real evaluation circuit the way production
+  relinearization/rotation would once they're built on top of it. Noise
+  tracking itself is a sound-but-loose worst-case bound, not a tight
+  probabilistic one, and key-switching's own noise contribution doesn't yet
+  have a formally-derived bound (only an empirically-set test threshold).
 - `phantom-lattice::rgsw` now encrypts real gadget matrices (the standard
   GSW/RGSW construction) instead of the earlier plaintext-backed scaffold,
   with a real external product and its own noise bound in

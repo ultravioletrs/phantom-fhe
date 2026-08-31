@@ -22,7 +22,9 @@ pub use encryptor::Encryptor;
 pub use evaluation_key::{EvaluationKey, GaloisKey, RelinearizationKey};
 pub use evaluator::Evaluator;
 pub use keygen::{KeyGenerator, SecretDistribution};
-pub use keyswitch::key_switch_identity;
+pub use keyswitch::{
+    generate_key_switch_key, key_switch, key_switch_identity, rebase_ternary_secret, KeySwitchKey,
+};
 pub use params::RlweParams;
 pub use plaintext::Plaintext;
 pub use public_key::PublicKey;
