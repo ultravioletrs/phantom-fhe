@@ -45,4 +45,15 @@ pub enum RingError {
     /// A required root of unity could not be found.
     #[error("no root of unity found for modulus {0}")]
     MissingRoot(u64),
+
+    /// Modulus exceeds the range the fast reducers currently support.
+    #[error(
+        "modulus {modulus} exceeds the maximum {max} supported by BarrettReducer/MontgomeryReducer"
+    )]
+    ModulusTooLargeForReducer {
+        /// The requested modulus.
+        modulus: u64,
+        /// The largest modulus currently supported.
+        max: u64,
+    },
 }

@@ -1,12 +1,13 @@
 use phantom_ring::ntt::{CpuNttBackend, NttBackend};
-use phantom_ring::reduce::{add_mod, mul_mod, neg_mod, sub_mod};
+use phantom_ring::reduce::{add_mod, mul_mod, neg_mod, sub_mod, FAST_REDUCER_MAX_MODULUS};
+use phantom_ring::reduce::{BarrettReducer, MontgomeryReducer};
 use phantom_ring::rns::crt::{decompose_value, reconstruct_poly, reconstruct_residue};
 use phantom_ring::rns::extension::extend_basis;
 use phantom_ring::rns::rescale::drop_last_modulus;
 use phantom_ring::sampling::{sample_discrete_gaussian, sample_ternary, sample_uniform};
 use phantom_ring::{Degree, Modulus, Poly, Ring, RnsBasis};
 use rand_chacha::ChaCha20Rng;
-use rand_core::SeedableRng;
+use rand_core::{RngCore, SeedableRng};
 
 fn test_ring() -> Ring {
     Ring::new_ntt(
@@ -151,4 +152,117 @@ fn samplers_return_valid_dimensions_and_ranges() {
         let q = modulus.value();
         assert!(component.iter().all(|&x| x == 0 || x == 1 || x == q - 1));
     }
+}
+
+#[test]
+fn barrett_matches_naive_reduction_exhaustively_for_small_moduli() {
+    for modulus in (3u64..200).step_by(2) {
+        let reducer = BarrettReducer::new(modulus).unwrap();
+        let mut x = 0u128;
+        let bound = modulus as u128 * modulus as u128;
+        while x < bound {
+            assert_eq!(
+                reducer.reduce(x),
+                (x % modulus as u128) as u64,
+                "mismatch for modulus={modulus}, x={x}"
+            );
+            x += 1;
+        }
+    }
+}
+
+#[test]
+fn barrett_matches_naive_reduction_for_random_large_moduli() {
+    let mut rng = ChaCha20Rng::from_seed([11u8; 32]);
+    for _ in 0..2000 {
+        let modulus = (rng.next_u64() % (FAST_REDUCER_MAX_MODULUS - 3)) | 1;
+        let modulus = modulus.max(3);
+        let reducer = BarrettReducer::new(modulus).unwrap();
+        let bound = modulus as u128 * modulus as u128;
+        let x = (((rng.next_u64() as u128) << 64) | rng.next_u64() as u128) % bound;
+        assert_eq!(
+            reducer.reduce(x),
+            (x % modulus as u128) as u64,
+            "mismatch for modulus={modulus}, x={x}"
+        );
+    }
+}
+
+#[test]
+fn barrett_covers_boundary_values() {
+    let modulus = 97u64;
+    let reducer = BarrettReducer::new(modulus).unwrap();
+    let m = modulus as u128;
+    assert_eq!(reducer.reduce(0), 0);
+    assert_eq!(reducer.reduce(m - 1), (m - 1) as u64 % modulus);
+    assert_eq!(
+        reducer.reduce((modulus - 1) as u128 * (modulus - 1) as u128),
+        1
+    ); // (m-1)^2 mod m == 1
+    assert_eq!(reducer.reduce(m * m - 1), (m * m - 1) as u64 % modulus);
+}
+
+#[test]
+fn barrett_rejects_modulus_out_of_range() {
+    assert!(BarrettReducer::new(0).is_err());
+    assert!(BarrettReducer::new(FAST_REDUCER_MAX_MODULUS).is_err());
+    assert!(BarrettReducer::new(FAST_REDUCER_MAX_MODULUS - 1).is_ok());
+}
+
+#[test]
+fn montgomery_mul_matches_naive_reduction_exhaustively_for_small_moduli() {
+    for modulus in (3u64..200).step_by(2) {
+        let reducer = MontgomeryReducer::new(modulus).unwrap();
+        for a in 0..modulus {
+            for b in 0..modulus {
+                assert_eq!(
+                    reducer.mul(a, b),
+                    ((a as u128 * b as u128) % modulus as u128) as u64,
+                    "mismatch for modulus={modulus}, a={a}, b={b}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn montgomery_mul_matches_naive_reduction_for_random_large_moduli() {
+    let mut rng = ChaCha20Rng::from_seed([13u8; 32]);
+    for _ in 0..5000 {
+        let modulus = (rng.next_u64() % (FAST_REDUCER_MAX_MODULUS - 3)) | 1;
+        let modulus = modulus.max(3);
+        let reducer = MontgomeryReducer::new(modulus).unwrap();
+        let a = rng.next_u64() % modulus;
+        let b = rng.next_u64() % modulus;
+        assert_eq!(
+            reducer.mul(a, b),
+            ((a as u128 * b as u128) % modulus as u128) as u64,
+            "mismatch for modulus={modulus}, a={a}, b={b}"
+        );
+    }
+}
+
+#[test]
+fn montgomery_round_trip_preserves_value() {
+    let mut rng = ChaCha20Rng::from_seed([17u8; 32]);
+    for _ in 0..2000 {
+        let modulus = (rng.next_u64() % (FAST_REDUCER_MAX_MODULUS - 3)) | 1;
+        let modulus = modulus.max(3);
+        let reducer = MontgomeryReducer::new(modulus).unwrap();
+        let a = rng.next_u64() % modulus;
+        let mont = reducer.to_montgomery(a);
+        assert_eq!(
+            reducer.from_montgomery(mont),
+            a,
+            "round trip failed for modulus={modulus}, a={a}"
+        );
+    }
+}
+
+#[test]
+fn montgomery_rejects_invalid_moduli() {
+    assert!(MontgomeryReducer::new(0).is_err());
+    assert!(MontgomeryReducer::new(4).is_err()); // even
+    assert!(MontgomeryReducer::new(FAST_REDUCER_MAX_MODULUS).is_err());
+    assert!(MontgomeryReducer::new(FAST_REDUCER_MAX_MODULUS - 1).is_ok());
 }

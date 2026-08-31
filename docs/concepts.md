@@ -113,7 +113,7 @@ Every ring operation needs fast reduction modulo each `q_i`. The standard techni
 - **Montgomery reduction** — represents values in a transformed domain where reduction is cheap, at the cost of transforming in and out.
 - **Lazy reduction** — defers full reduction across a chain of additions, only reducing once the accumulator risks overflow.
 
-`phantom_ring::reduce` exposes `BarrettReducer`, `MontgomeryReducer`, and `reduce_once` (lazy) as the shape for these — see [`technical-manual.md`](technical-manual.md#ring-internals) for their current (placeholder) implementations.
+`phantom_ring::reduce` exposes `BarrettReducer`, `MontgomeryReducer`, and `reduce_once` (lazy) implementing these — see [`technical-manual.md`](technical-manual.md#ring-internals) for the current range restriction and why `Ring`'s hot paths don't use them yet.
 
 ### NTT: fast polynomial multiplication
 

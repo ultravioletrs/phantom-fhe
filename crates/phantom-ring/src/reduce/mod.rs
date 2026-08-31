@@ -4,6 +4,13 @@ pub mod barrett;
 pub mod lazy;
 pub mod montgomery;
 
+pub use barrett::BarrettReducer;
+pub use montgomery::MontgomeryReducer;
+
+/// The largest modulus [`BarrettReducer`] and [`MontgomeryReducer`] currently
+/// support (exclusive). See their module docs for why this bound exists.
+pub const FAST_REDUCER_MAX_MODULUS: u64 = 1 << 32;
+
 /// Adds two residues modulo `modulus`.
 pub fn add_mod(lhs: u64, rhs: u64, modulus: u64) -> u64 {
     let sum = lhs as u128 + rhs as u128;
