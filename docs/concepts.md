@@ -21,6 +21,23 @@ This is also why a *transparent* ciphertext (no error at all — see [`technical
 
 Plain **LWE** (no ring structure) works over vectors: a secret key is a length-`n` vector, and each ciphertext component is its own independent sample, giving `O(n)` or `O(n²)` sized keys/ciphertexts and no fast multiplication. **RLWE** packs an entire vector's worth of structure into *one* ring element (a degree-`N` polynomial) by working over `R_q = Z_q[X]/(X^N+1)` instead of `Z_q^N`: a single polynomial secret key does the job of an `N`-element vector, ciphertexts are one or two ring elements instead of `O(N)` scalars, and — critically — the ring structure is exactly what makes the NTT applicable, turning polynomial multiplication from `O(N²)` into `O(N log N)`. This efficiency gain is *why* every practical FHE scheme today is ring-based rather than plain-LWE-based.
 
+## A brief history
+
+FHE didn't appear all at once — it's worth knowing the lineage, because the vocabulary ("leveled," "bootstrapping," "generation") throughout this document comes directly from it.
+
+| Year | Who | What | Why it mattered |
+| --- | --- | --- | --- |
+| 2005 | Regev | LWE (*On Lattices, Learning with Errors, ..., and Cryptography*, STOC 2005) | The hardness assumption everything below eventually builds on — no ring structure yet. |
+| 2009 | Gentry | The first FHE construction (PhD thesis, Stanford) | Proved FHE was *possible at all*, via ideal lattices and a technique called **bootstrapping** (see [Bootstrapping](#bootstrapping)) — but many orders of magnitude too slow to use. This is "first-generation" FHE. |
+| 2010 | Lyubashevsky, Peikert, Regev | RLWE (*On Ideal Lattices and Learning with Errors over Rings*, EUROCRYPT 2010) | Moved the hardness assumption onto the ring structure described [above](#why-a-ring-not-just-lwe), the efficiency unlock every scheme here depends on. |
+| 2012 | Brakerski, Gentry, Vaikuntanathan | **BGV** (*(Leveled) Fully Homomorphic Encryption without Bootstrapping*, ITCS 2012) | "Second-generation" FHE: practical, RLWE-based, exact integer arithmetic, usable for a *bounded* ("leveled") circuit depth without needing to bootstrap after every operation. |
+| 2012 | Fan, Vercauteren | **BFV** (*Somewhat Practical Fully Homomorphic Encryption*) | A second, closely related second-generation scheme with a different noise-management strategy — see [BGV and BFV](#bgv-and-bfv--exact-integer-arithmetic) for how close the two actually are. |
+| 2016–2017 | Chillotti, Gama, Georgieva, Izabachène | **TFHE** | "Third-generation," fast per-gate bootstrapping for Boolean/small-integer circuits — a different design point (bootstrap every gate, cheaply) than the BGV/BFV/CKKS family. Not implemented in Phantom-FHE; mentioned here for context. |
+| 2017 | Cheon, Kim, Kim, Song | **CKKS** (*Homomorphic Encryption for Arithmetic of Approximate Numbers*, ASIACRYPT 2017) | Approximate real/complex arithmetic — the scheme that made FHE practical for machine learning and numerical computation. |
+| 2018 | Cheon, Han, Kim, Kim, Song | CKKS bootstrapping (*Bootstrapping for Approximate Homomorphic Encryption*, EUROCRYPT 2018) | Established the coefficients→slots→EvalMod→slots→coefficients pipeline that [`phantom-bootstrapping::ckks`](architecture.md#phantom-bootstrapping) mirrors the shape of. |
+
+Mature open-source implementations — Microsoft SEAL, HElib, PALISADE/OpenFHE, Lattigo, and others — turned these papers into production-shaped libraries over the following years, establishing the RNS-based engineering patterns (parameter presets, RNS variants of BFV/BGV, batching conventions) that inform this project's design; see [`internal/technical-spec.md`](internal/technical-spec.md) and the [Authorship](../README.md#contributing) policy for how that influence is scoped. See [Further reading](#further-reading) at the end of this document for the full citation list.
+
 ## Ring arithmetic
 
 Every scheme in this family works over the polynomial ring:
@@ -71,6 +88,20 @@ flowchart LR
 ```
 
 (each `R1`/`R2`/`R3` above is one `component[j]` of a `phantom_ring::Poly`, for one coefficient position; `Poly` stores one such tuple per coefficient index)
+
+#### Worked example: CRT by hand
+
+Take `q = 15 = 3 × 5` (tiny, so `q1 = 3`, `q2 = 5`) and `x = 11`.
+
+**Decompose** (`x mod q1`, `x mod q2`): `11 mod 3 = 2`, `11 mod 5 = 1`. So `x` is stored as the pair `(2, 1)`.
+
+**Reconstruct**, using the CRT formula above: for `q1 = 3`, `q/q1 = 5`, and we need `5⁻¹ mod 3`: since `5 ≡ 2 (mod 3)` and `2 × 2 = 4 ≡ 1 (mod 3)`, that inverse is `2`. For `q2 = 5`, `q/q2 = 3`, and `3⁻¹ mod 5`: `3 × 2 = 6 ≡ 1 (mod 5)`, so that inverse is also `2`. Plugging in:
+
+$$
+x \equiv \big(2 \cdot 5 \cdot 2\big) + \big(1 \cdot 3 \cdot 2\big) \pmod{15} \;=\; 20 + 6 \;=\; 26 \equiv 11 \pmod{15}
+$$
+
+Reconstructed value: `11` — matches. Every polynomial coefficient in `phantom_ring::Poly` is stored the same way: as several small residues, reconstructed only when something (a test, a debug print, basis extension) actually needs the true value back.
 
 RNS also gives you **modulus switching / rescaling**: dropping the last modulus `q_k` from the basis divides the represented value by (approximately) `q_k`, which is how BGV modulus switching and CKKS rescaling manage noise growth and, for CKKS, the fixed-point scale. `phantom_ring::rns::rescale::drop_last_modulus` is the primitive; `phantom_ring::rns::extension::extend_basis` goes the other way (extending into a larger basis, needed for e.g. RGSW external products and multiplication).
 
@@ -158,6 +189,71 @@ $$
 
 satisfying `d_0 + d_1·s + d_2·s² ≈ m·m'` — a third component, needing `s²` at decryption — hence `Decryptor::decrypt` accumulates `sum_i c_i * s^i` over however many components the ciphertext has.
 
+#### Encoding an integer as a ring element
+
+Everything above treats "the plaintext" as already being a ring element `m`. Turning an actual integer into that ring element is a separate step, and different schemes do it differently (CKKS's version, `round(v·Δ)`, is already given [below](#ckks--approximate-realcomplex-arithmetic)). BFV's version — worth seeing once at the RLWE level, since it's what makes noise-tolerant *exact* decryption work at all — embeds an integer message `v ∈ Z_t` with a gap around it:
+
+$$
+m = v \cdot \Delta, \qquad \Delta = \left\lfloor \frac{q}{t} \right\rfloor
+$$
+
+Decoding reverses this by dividing back down and rounding to the nearest integer, before reducing mod `t`:
+
+$$
+v = \left\lfloor \frac{c_0 + c_1 s}{\Delta} \right\rceil \bmod t
+$$
+
+The point of the gap: as long as the accumulated error `e` stays smaller than `Δ/2` in magnitude, `round((v·Δ + e)/Δ)` still lands on exactly `v` — the rounding step absorbs the error completely. Once `|e| ≥ Δ/2`, rounding can land on the wrong integer and decryption silently returns garbage. This *is* the "noise budget" from [Security intuition](#security-intuition-why-noise-makes-this-hard-to-break) made concrete: it's exactly the room between `0` and `Δ/2`.
+
+#### Worked example: encrypting and decrypting one integer by hand
+
+Tiny parameters, chosen only so the arithmetic fits on one screen: ring degree `N = 2` (so `R_q = Z_q[X]/(X²+1)`), ciphertext modulus `q = 17`, plaintext modulus `t = 3`, giving `Δ = ⌊17/3⌋ = 5`. Represent a ring element as its coefficient pair `(a₀, a₁)` for `a₀ + a₁X`.
+
+- Secret key: `s = 1 - X`, i.e. `(1, -1)`.
+- Message: `v = 2` (so `2 ∈ Z_3`). Encoded: `m = v·Δ = (10, 0)`.
+- Fresh randomness for secret-key encryption: `a = 3 + 5X`, i.e. `(3, 5)`, and a *small* error `e = 1`, i.e. `(1, 0)`.
+
+**Encrypt** (`c_0 = m - a·s + e`, `c_1 = a`). First, `a·s` in `R_q` — using `(a₀+a₁X)(b₀+b₁X) = (a₀b₀ - a₁b₁) + (a₀b₁ + a₁b₀)X` since `X² = -1`:
+
+$$
+a \cdot s = \big(3 \cdot 1 - 5 \cdot(-1)\big) + \big(3\cdot(-1) + 5\cdot 1\big)X = 8 + 2X
+$$
+
+So:
+
+$$
+c_0 = (10, 0) - (8, 2) + (1, 0) = (3, -2) \equiv (3, 15) \pmod{17}, \qquad c_1 = a = (3, 5)
+$$
+
+**Decrypt** (`c_0 + c_1·s`). Since `c_1 = a` exactly, `c_1·s = a·s = (8, 2)` — already computed above:
+
+$$
+c_0 + c_1 s = (3, 15) + (8, 2) = (11, 17) \equiv (11, 0) \pmod{17}
+$$
+
+**Decode**: only the constant term carries the message here, so take `11`, divide by `Δ = 5`, round, reduce mod `t = 3`:
+
+$$
+\left\lfloor \frac{11}{5} \right\rceil \bmod 3 = \mathrm{round}(2.2) \bmod 3 = 2 \bmod 3 = 2
+$$
+
+Recovered `v = 2` — the original message. Sanity check the failure mode too: this only worked because the error `e = 1` is comfortably under `Δ/2 = 2.5`. Had the accumulated error been `e = 3` instead, decryption would compute `⌊13/5⌉ mod 3 = round(2.6) mod 3 = 3 mod 3 = 0` — silently wrong. That threshold, `Δ/2`, *is* the noise budget for this parameter set.
+
+### Noise growth: why depth matters more than count
+
+Every homomorphic operation changes the hidden error term, and not by the same amount:
+
+- **Addition** grows the error *additively*: adding two ciphertexts with errors `e_a` and `e_b` gives a result with error `e_a + e_b`. Continuing the worked example above, homomorphically doubling the ciphertext (`ct + ct`, representing `v + v`) is linear in every component, so the new error is simply `2e = 2`:
+
+  $$
+  c_0 + c_1 s \;=\; 2 \cdot (11, 0) \;=\; (22, 0) \equiv (5, 0) \pmod{17}
+  $$
+
+  Decoding: `round(5/5) mod 3 = 1 mod 3 = 1` — and indeed `v + v = 2 + 2 = 4 ≡ 1 (mod 3)`. Correct — but notice the error just grew from `1` to `2`, and the safety margin was `Δ/2 = 2.5`. One more doubling would push the error to `4`, past the threshold, and silently break decryption.
+- **Multiplication** grows the error *multiplicatively*, roughly proportional to the *plaintext magnitude* of the other operand, not just the noise itself — a ciphertext encrypting a large value, multiplied by a ciphertext with error `e`, produces error roughly `(large value) × e`, not `e + e`. This is why multiplicative depth (the longest chain of sequential multiplications in a circuit) is the number that determines how large `q` needs to be, not the total count of multiplications — two multiplications in *parallel* (on independent ciphertexts, then added) cost far less noise budget than two multiplications *in sequence* on the same growing ciphertext.
+
+This is exactly the quantity [relinearization](#relinearization-and-key-switching) and [bootstrapping](#bootstrapping) exist to control: relinearization keeps ciphertext *size* from growing (which would otherwise also inflate noise on every subsequent operation), and bootstrapping resets the noise term back down to a small value once the budget is nearly exhausted, letting a circuit run deeper than any fixed parameter set could otherwise tolerate.
+
 ### Relinearization and key switching
 
 A degree-2 (or higher) ciphertext works but grows with every multiplication, and needs increasing powers of the secret key to decrypt. **Relinearization** brings it back down to degree 1 using a public **relinearization key** (an encryption of `s²` under `s`, decomposed for noise control). **Key switching** is the general version: transform a ciphertext encrypted under one key into an encryption of the same message under a *different* key — relinearization is key switching from `s²` back to `s`; rotations use key switching from `s` under a Galois automorphism back to `s` under the identity.
@@ -173,6 +269,20 @@ x = \sum_{i=0}^{l-1} d_i \cdot B^i, \qquad d_i = \left\lfloor \frac{x}{B^i} \rig
 $$
 
 To multiply, the RLWE input is first decomposed into its own base-`B` digits `d_i` this way, then each digit is matched against the corresponding RGSW row and summed — keeping every intermediate value small (`< B`) rather than letting a full-size `x` multiply a full-size ciphertext component directly. `phantom_lattice::rgsw::decomposition::GadgetDecomposition` implements exactly this, with `B = 2^{\text{base\_log}}`: `decompose(poly, params)` splits each coefficient into `levels` digits; `recompose` reconstructs via the same weighted sum.
+
+#### Worked example: gadget decomposition by hand
+
+Base `B = 4` (`base_log = 2`, so each digit is 2 bits), `levels = 3` (covers values up to `B³ - 1 = 63`), and `x = 53`.
+
+Digit `i` is `⌊x / Bⁱ⌋ mod B` — in the code, `(coeff >> (i·base_log)) & (B-1)`, since shifting/masking by a power of two *is* dividing/mod-ing by that power of two:
+
+| `i` | `⌊53 / 4ⁱ⌋` | `mod 4` | digit `d_i` |
+| --- | --- | --- | --- |
+| 0 | ⌊53/1⌋ = 53 | 53 mod 4 | **1** |
+| 1 | ⌊53/4⌋ = 13 | 13 mod 4 | **1** |
+| 2 | ⌊53/16⌋ = 3 | 3 mod 4 | **3** |
+
+Reconstruct: `d_0·B⁰ + d_1·B¹ + d_2·B² = 1·1 + 1·4 + 3·16 = 1 + 4 + 48 = 53` — matches. Every digit is `< 4`, so an RGSW row can be sized for values that small regardless of how large `x` itself is; that's the whole trick.
 
 ## BGV, BFV, CKKS: the three schemes
 
@@ -349,6 +459,22 @@ Every public wire type (keys, parameters, plaintexts, ciphertexts, bootstrap par
 | **Threshold / participant / share** | Multiparty protocol vocabulary: a secret distributed so any `threshold`-sized subset of `n` participants can cooperate via their shares. |
 | **Domain tag** | The 8-byte type identifier every serialized Phantom-FHE value starts with, rejecting cross-type decoding. |
 | **IND-CPA / semantic security** | The standard security notion these schemes target: ciphertexts of chosen plaintexts are computationally indistinguishable from each other. |
+
+## Further reading
+
+The primary literature behind every concept above, in roughly the order you'd want to read them:
+
+- Regev, O. *On Lattices, Learning with Errors, Random Linear Codes, and Cryptography.* STOC 2005. — the original LWE hardness assumption.
+- Lyubashevsky, V., Peikert, C., Regev, O. *On Ideal Lattices and Learning with Errors over Rings.* EUROCRYPT 2010. — RLWE, the assumption every scheme here reduces to.
+- Gentry, C. *A Fully Homomorphic Encryption Scheme.* PhD thesis, Stanford University, 2009. — the first FHE construction; introduces bootstrapping.
+- Brakerski, Z., Gentry, C., Vaikuntanathan, V. *(Leveled) Fully Homomorphic Encryption without Bootstrapping.* ITCS 2012. — BGV.
+- Fan, J., Vercauteren, F. *Somewhat Practical Fully Homomorphic Encryption.* IACR ePrint 2012/144. — BFV/FV.
+- Halevi, S., Polyakov, Y., Shoup, V. *An Improved RNS Variant of the BFV Homomorphic Encryption Scheme.* CT-RSA 2019. — the RNS-friendly variant of BFV that `phantom-ring`'s RNS design is oriented toward.
+- Cheon, J.H., Kim, A., Kim, M., Song, Y. *Homomorphic Encryption for Arithmetic of Approximate Numbers.* ASIACRYPT 2017. — CKKS.
+- Cheon, J.H., Han, K., Kim, A., Kim, M., Song, Y. *Bootstrapping for Approximate Homomorphic Encryption.* EUROCRYPT 2018. — the coefficients→slots→EvalMod→slots→coefficients pipeline `phantom-bootstrapping::ckks` mirrors the shape of.
+- Chillotti, I., Gama, N., Georgieva, M., Izabachène, M. *TFHE: Fast Fully Homomorphic Encryption over the Torus.* Journal of Cryptology, 2020. — fast per-gate bootstrapping; a different design point than BGV/BFV/CKKS, not implemented here, but useful context for the field as a whole.
+
+For engineering patterns and reference implementations (not copied from — see the [Contributing](../README.md#contributing) authorship policy — but useful for cross-checking understanding): Microsoft SEAL, HElib, OpenFHE (formerly PALISADE), and Lattigo are the widely-used open-source FHE libraries a further-reading path would naturally lead to next.
 
 ## Where this stands today
 
