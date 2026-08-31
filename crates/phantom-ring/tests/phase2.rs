@@ -353,7 +353,7 @@ fn samplers_return_valid_dimensions_and_ranges() {
 
     let uniform = sample_uniform(&ring, &mut rng);
     let ternary = sample_ternary(&ring, &mut rng);
-    let gaussian = sample_discrete_gaussian(&ring, &mut rng, 3);
+    let gaussian = sample_discrete_gaussian(&ring, &mut rng, 3.0);
 
     for poly in [&uniform, &ternary, &gaussian] {
         assert_eq!(poly.degree(), ring.degree());

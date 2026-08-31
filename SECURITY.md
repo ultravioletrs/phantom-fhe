@@ -6,8 +6,9 @@ Phantom-FHE is a research-stage implementation, roughly **TRL 2–3** (technolog
 
 The following components are not yet at production cryptographic strength:
 
-- `phantom-ring` sampling includes a placeholder Gaussian-like sampler that
-  is not cryptographically appropriate.
+- `phantom-ring::sampling::sample_discrete_gaussian` is a real discrete
+  Gaussian (CDT-based) but is not constant-time, and no scheme wires it into
+  encryption noise yet — see the next bullet.
 - `phantom-lattice::rlwe` uses exact (noiseless) secret-key/public-key
   encryption, placeholder relinearization, and placeholder key switching.
 - `phantom-lattice::rgsw` uses a plaintext-backed ciphertext representation

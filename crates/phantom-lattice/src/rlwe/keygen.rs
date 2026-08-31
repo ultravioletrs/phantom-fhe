@@ -7,12 +7,12 @@ use crate::rlwe::{GaloisKey, PublicKey, RelinearizationKey, RlweParams, SecretKe
 use crate::Result;
 
 /// Secret key distribution.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SecretDistribution {
     /// Ternary coefficients {-1, 0, 1}.
     Ternary,
-    /// Narrow Gaussian-like placeholder with the provided bound.
-    Gaussian { bound: u64 },
+    /// Discrete Gaussian with the given standard deviation.
+    Gaussian { sigma: f64 },
 }
 
 /// RLWE key generator.
@@ -39,8 +39,8 @@ impl KeyGenerator {
     {
         let value = match distribution {
             SecretDistribution::Ternary => sample_ternary(self.params.ring(), rng),
-            SecretDistribution::Gaussian { bound } => {
-                sample_discrete_gaussian(self.params.ring(), rng, bound)
+            SecretDistribution::Gaussian { sigma } => {
+                sample_discrete_gaussian(self.params.ring(), rng, sigma)
             }
         };
         SecretKey::new(value)
