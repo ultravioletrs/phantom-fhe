@@ -71,7 +71,7 @@ For a circuit family instead of a whole scheme: follow `phantom_circuits::bgv`/`
 
 ## Performance work
 
-See [`technical-manual.md#performance`](technical-manual.md#performance) for the precise current state (an O(N²) direct-evaluation NTT, `Ring::schoolbook_mul` as the multiplication path everywhere above `phantom-ring`, dependency-free smoke benchmarking). In short: don't optimize prematurely — the current priority order (per [`internal/implementation-plan.md`](internal/implementation-plan.md) Workstream 3) is a real NTT and RNS basis extension before allocation-level tuning, since those are the changes that actually move the needle at production ring sizes.
+See [`technical-manual.md#performance`](technical-manual.md#performance) for the precise current state (a real O(N log N) NTT wired into `Ring::mul`, which every real call site above `phantom-ring` now uses in place of the always-O(N²) `Ring::schoolbook_mul`; dependency-free smoke benchmarking). In short: don't optimize prematurely — the current priority order (per [`internal/implementation-plan.md`](internal/implementation-plan.md) Workstream 3) is lazy/deferred reduction and allocation-reduction passes before micro-tuning, since those are the changes that actually move the needle at production ring sizes.
 
 If you're adding a benchmark target: follow the shape in `crates/phantom-benches/benches/` (a `fn main()` calling `phantom_benches::time_iterations(|| { ... }, iterations)` then `print_result(name, iterations, elapsed)`), add the corresponding `[[bench]] name = "..." harness = false` entry to `phantom-benches/Cargo.toml`, and run it with `cargo bench -p <bench-name>` or `make bench` for the full set.
 

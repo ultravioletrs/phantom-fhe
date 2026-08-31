@@ -275,6 +275,70 @@ fn crt_reconstructs_and_extends_basis() {
 }
 
 #[test]
+fn extend_basis_is_exact_for_a_realistic_multi_prime_basis_that_overflows_u128() {
+    // 8 distinct ~61-bit primes: a realistic RNS-CKKS/BGV source basis size.
+    // Their product is ~489 bits, far beyond u128 (128 bits) - this is
+    // exactly the scenario the old u128-based reconstruction silently
+    // overflowed on. All expected values below were computed independently
+    // in Python (arbitrary-precision integers, hand-rolled Miller-Rabin for
+    // primality - no dependency on this crate or its BigUint), not derived
+    // from this crate's own output.
+    let source_moduli = [
+        2305843009213693967u64,
+        2305843009213693973,
+        2305843009213694009,
+        2305843009213694017,
+        2305843009213694087,
+        2305843009213694149,
+        2305843009213694173,
+        2305843009213694207,
+    ];
+    let source = RnsBasis::new(
+        source_moduli
+            .iter()
+            .map(|&q| Modulus::new(q).unwrap())
+            .collect(),
+    )
+    .unwrap();
+    let target = RnsBasis::new(vec![
+        Modulus::new(1_048_583).unwrap(),     // target_modulus
+        Modulus::new(1_073_741_827).unwrap(), // target_modulus2
+    ])
+    .unwrap();
+
+    // v0 = 123456789012345678901234567890123456789012345 (147 bits, > u128::MAX)
+    let r0 = [
+        342893574864583285u64,
+        959742221355242309,
+        49148116979906131,
+        1640227331347129390,
+        1150651776253986770,
+        1375840191547803060,
+        1537391981174416543,
+        1958410646369059455,
+    ];
+    // v1 = 42 (small value, sanity check the same machinery on a trivial case)
+    let r1 = [42u64; 8];
+
+    let poly = Poly::from_coeffs(vec![
+        vec![r0[0], r1[0]],
+        vec![r0[1], r1[1]],
+        vec![r0[2], r1[2]],
+        vec![r0[3], r1[3]],
+        vec![r0[4], r1[4]],
+        vec![r0[5], r1[5]],
+        vec![r0[6], r1[6]],
+        vec![r0[7], r1[7]],
+    ])
+    .unwrap();
+
+    let extended = extend_basis(&poly, &source, &target).unwrap();
+
+    assert_eq!(extended.coeffs()[0], vec![844_573, 42]);
+    assert_eq!(extended.coeffs()[1], vec![1_010_884_516, 42]);
+}
+
+#[test]
 fn modulus_drop_removes_last_component() {
     let poly = Poly::from_coeffs(vec![vec![1, 2], vec![3, 4], vec![5, 6]]).unwrap();
     let dropped = drop_last_modulus(&poly).unwrap();
