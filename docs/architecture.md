@@ -41,6 +41,50 @@ phantom-examples    -- workspace-only, depends on everything
 phantom-benches      -- workspace-only, depends on everything
 ```
 
+Rendered as a graph (arrow = "depends on"):
+
+```mermaid
+graph TD
+    utils["phantom-utils"]
+    ring["phantom-ring"]
+    lattice["phantom-lattice"]
+    schemes["phantom-schemes"]
+    circuits["phantom-circuits"]
+    bootstrapping["phantom-bootstrapping"]
+    multiparty["phantom-multiparty"]
+    fhe["phantom-fhe (facade)"]
+    examples["phantom-examples"]
+    benches["phantom-benches"]
+
+    ring --> utils
+    lattice --> ring
+    lattice --> utils
+    schemes --> lattice
+    schemes --> ring
+    schemes --> utils
+    circuits --> lattice
+    circuits --> schemes
+    circuits --> utils
+    bootstrapping --> circuits
+    bootstrapping --> schemes
+    bootstrapping --> utils
+    multiparty --> bootstrapping
+    multiparty --> lattice
+    multiparty --> ring
+    multiparty --> schemes
+
+    fhe -.re-exports.-> ring
+    fhe -.re-exports.-> lattice
+    fhe -.re-exports.-> schemes
+    fhe -.re-exports.-> circuits
+    fhe -.re-exports.-> bootstrapping
+    fhe -.re-exports.-> multiparty
+    fhe -.re-exports.-> utils
+
+    examples --> multiparty
+    benches --> multiparty
+```
+
 `phantom-utils` sits outside the crypto hierarchy: every layer may depend on it, but it must never depend on any of them. Concretely, the workspace's `Cargo.toml` path dependencies are:
 
 | Crate | Depends on |
@@ -95,7 +139,7 @@ Scheme-agnostic RLWE and RGSW primitives — the crate every scheme is built on.
 
 Concrete BGV, BFV, and CKKS APIs, each as its own module (`bgv`, `bfv`, `ckks`) with a parallel shape: `Params`/`ParamsBuilder`, `Context` (the entry point — creates encoders/keygen/encryptor/decryptor/evaluator), `Plaintext`, `Ciphertext`, `Encoder`, `Encryptor`, `Decryptor`, `Evaluator`, `KeyGenerator`.
 
-The one structural wrinkle worth knowing: **`bfv` is built as a thin wrapper around `bgv`**, not an independent implementation. `BfvParams` wraps a `bgv::BgvParams`; `bfv::Encryptor`, `Decryptor`, `Evaluator` all delegate to the corresponding `bgv::*` type; `bfv::BatchEncoder` adds signed (`encode_i64`/`decode_i64`) encoding on top of `bgv::BatchEncoder`'s unsigned path. CKKS is independent of both — see [`concepts.md`](concepts.md#ckks) for why its ciphertext representation (transparent complex slots plus scale/level/precision metadata) looks nothing like BGV/BFV's.
+The one structural wrinkle worth knowing: **`bfv` is built as a thin wrapper around `bgv`**, not an independent implementation. `BfvParams` wraps a `bgv::BgvParams`; `bfv::Encryptor`, `Decryptor`, `Evaluator` all delegate to the corresponding `bgv::*` type; `bfv::BatchEncoder` adds signed (`encode_i64`/`decode_i64`) encoding on top of `bgv::BatchEncoder`'s unsigned path. CKKS is independent of both — see [`concepts.md`](concepts.md#ckks--approximate-realcomplex-arithmetic) for why its ciphertext representation (transparent complex slots plus scale/level/precision metadata) looks nothing like BGV/BFV's.
 
 ### `phantom-circuits`
 
@@ -125,6 +169,32 @@ pub use phantom_utils as utils;
 
 `utils` is included even though it isn't part of the cryptographic hierarchy, because `phantom_utils::UtilsError` leaks into the public error enums of `phantom-lattice` and `phantom-schemes` (via `#[from]`) — a consumer catching those errors needs the type in scope. The facade carries no logic of its own beyond these re-exports; ownership of every implementation stays in its focused crate. `phantom-examples` and `phantom-benches` deliberately depend on the individual `phantom-*` crates directly rather than the facade (see the README's [Workspace](../README.md#workspace) section for why).
 
+## Construction pattern
+
+Every scheme in `phantom-schemes` (and `BootstrapParams`/`Bootstrapper` in `phantom-bootstrapping`) is built from the same object graph: validated `Params` produce a `Context`, and the `Context` is the one place that hands out every other collaborator. Nothing outside a `Context` constructs an `Encoder`/`Encryptor`/`Decryptor`/`Evaluator` directly — this is deliberate, so a context is always the single source of truth for "which parameters is this operation running under."
+
+```mermaid
+flowchart LR
+    P["XxxParams via XxxParamsBuilder"] --> CTX["XxxContext::new(params)"]
+    CTX -->|encoder| ENC[Encoder]
+    CTX -->|keygen| KG[KeyGenerator]
+    KG -->|generate_keypair| KP["SecretKey + PublicKey"]
+    KP --> ENCR[Encryptor]
+    KP --> DEC[Decryptor]
+    CTX -->|evaluator| EV[Evaluator]
+
+    ENC -->|encode| PT1[Plaintext]
+    PT1 --> ENCR
+    ENCR -->|encrypt| CT1[Ciphertext]
+    CT1 --> EV
+    EV -->|"add / sub / mul / rotate_slots / ..."| CT2[Ciphertext]
+    CT2 --> DEC
+    DEC -->|decrypt| PT2[Plaintext]
+    PT2 -->|decode| ENC
+```
+
+The same shape repeats at every layer: `phantom_lattice::rlwe::KeyGenerator`/`Encryptor`/`Decryptor`/`Evaluator` underneath each scheme's own types (see [`concepts.md#rlwe-the-shared-foundation`](concepts.md#rlwe-the-shared-foundation)), and `phantom_bootstrapping::ckks::{BootstrapKeyGenerator, Bootstrapper}` following the same `Params → key material → operation` flow one level up. Learning this once pattern is largely enough to navigate any scheme's public API — see every code sample in [`user-guide.md`](user-guide.md).
+
 ## Data flow example: encrypting and evaluating
 
 To make the layering concrete, here's what happens underneath a BFV `encrypt` → `mul` → `decrypt` call, top to bottom:
@@ -134,7 +204,28 @@ To make the layering concrete, here's what happens underneath a BFV `encrypt` �
 3. **`phantom-ring`** — `schoolbook_mul` runs O(N²) negacyclic polynomial multiplication per RNS component using `reduce::{mul_mod, add_mod, sub_mod}`.
 4. Back up through `phantom-lattice` → `phantom-schemes::bgv` → `phantom-schemes::bfv`, each layer wrapping the lower layer's type in its own newtype (`bgv::Ciphertext(rlwe::Ciphertext)`, `bfv::Ciphertext(bgv::Ciphertext)`... — actually `bfv::Ciphertext` wraps `rlwe::Ciphertext` directly, delegating through `bgv::Evaluator`).
 
-The point of walking this: every operation you call on a scheme type ultimately bottoms out in `phantom-ring`'s modular polynomial arithmetic. Nothing above `phantom-ring` implements its own arithmetic from scratch.
+The point of walking this: every operation you call on a scheme type ultimately bottoms out in `phantom-ring`'s modular polynomial arithmetic. Nothing above `phantom-ring` implements its own arithmetic from scratch. As a sequence diagram, one `mul` call:
+
+```mermaid
+sequenceDiagram
+    participant App as Caller
+    participant BFV as bfv::Evaluator
+    participant BGV as bgv::Evaluator
+    participant RLWE as rlwe::Evaluator
+    participant Ring as phantom_ring::Ring
+
+    App->>BFV: mul(ct_a, ct_b, None)
+    BFV->>BGV: mul(ct_a, ct_b, None)
+    BGV->>RLWE: mul(ct_a, ct_b)
+    loop each (i, j) component pair
+        RLWE->>Ring: schoolbook_mul(a_i, b_j)
+        Ring-->>RLWE: product polynomial
+        RLWE->>RLWE: accumulate into out[i+j]
+    end
+    RLWE-->>BGV: degree-2 Ciphertext
+    BGV-->>BFV: degree-2 Ciphertext
+    BFV-->>App: degree-2 Ciphertext
+```
 
 ## Serialization
 
@@ -145,6 +236,28 @@ Every crate that defines a public wire format (`phantom-lattice`, `phantom-schem
 3. `decode_xxx(&[u8]) -> Result<Type>` reads and validates the header (`SerializationHeader::read_expected`, which rejects a wrong domain tag or wrong version) before reading fields back via `BufferReader`.
 
 This means a payload for the wrong type, or an old-format payload, fails fast with a typed error instead of silently misparsing. The full domain-tag catalog and byte layout are in [`technical-manual.md`](technical-manual.md#serialization-format).
+
+## Design decisions
+
+Short rationale for the choices that most shape the codebase, for anyone wondering "why not just...":
+
+**Why a separate `phantom-bootstrapping` crate instead of a module inside `phantom-schemes`?**
+Bootstrapping is optional (most workloads never call it), scheme-specialized (a CKKS bootstrap pipeline shares almost nothing with a hypothetical BGV one), and pulls in `phantom-circuits` as a dependency (for the DFT/eval-mod building blocks) — which `phantom-schemes` itself must not depend on, or the layering in [Crate dependency graph](#crate-dependency-graph) would grow a cycle (`schemes → circuits → schemes`). A separate crate one layer up avoids that while keeping bootstrapping's cost (compile time, API surface) opt-in for consumers who don't need it.
+
+**Why does `bfv` wrap `bgv` instead of being independent?**
+BFV and BGV differ mainly in *when* plaintext/ciphertext scaling happens, not in the batched-integer-arithmetic shape of their public API (see [`concepts.md#bgv-and-bfv--exact-integer-arithmetic`](concepts.md#bgv-and-bfv--exact-integer-arithmetic)). Given that, and given the current scaffold's transparent ciphertext semantics (see [`technical-manual.md#bgv--bfv`](technical-manual.md#bgv--bfv)) make that difference not yet observable, implementing BFV as BGV's mechanics plus a signed-encoding layer avoids duplicating the same evaluator/keygen/context logic twice. This is a call that Alpha Hardening Workstream 5 (production BFV/BGV/CKKS) may revisit once real scaling semantics make the schemes' behavior genuinely diverge.
+
+**Why hand-rolled serialization instead of `serde`?**
+Two reasons tracked in [`internal/dependency-policy.md`](internal/dependency-policy.md): keeping the trusted core crates' dependency surface minimal, and wanting an explicit, auditable wire format (domain tag + version header, checked on every decode) rather than a format whose exact byte layout is a `serde`-backend implementation detail. `serde` support is planned as an optional, off-by-default feature — see the dependency policy for the constraint that secret-bearing types must never gain a `Serialize`/`Deserialize` impl even then.
+
+**Why one error enum per crate instead of a single workspace-wide error type?**
+So each crate's public API surface is self-contained and its `Result<T>` alias documents exactly what can go wrong at that layer, while `#[from]` wrapping still lets errors propagate upward without manual conversion at every call site. The tradeoff — a caller matching on, say, `SchemesError` needs to know its `Ring`/`Lattice`/`Utils` variants nest a lower-layer error — is documented explicitly in [`technical-manual.md#error-reference`](technical-manual.md#error-reference).
+
+**Why does the facade only re-export, instead of defining a simplified top-level API?**
+Two reasons: it keeps exactly one implementation of every type (no facade-level wrapper types to keep in sync with the crates underneath), and it keeps `phantom-examples`/`phantom-benches` free to depend on individual crates directly for finer-grained dependency graphs in the workspace's own dev-tooling, without that choice constraining what the *published* facade looks like. See the facade's own doc comment (`crates/phantom-fhe/src/lib.rs`) and the README's [Workspace](../README.md#workspace) section.
+
+**Why strong domain types (`Degree`, `Modulus`, `Scale`, ...) instead of validating at the top of every function?**
+Validate-once-at-construction means every function past the constructor can assume its inputs are already valid — no redundant bounds/parity checks scattered through the arithmetic hot paths, and no way to accidentally construct, say, a `Ring` with a non-power-of-two degree and have that surface as a confusing failure three calls later instead of at the point of construction.
 
 ## Where to go next
 

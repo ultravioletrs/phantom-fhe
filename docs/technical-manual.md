@@ -77,6 +77,22 @@ CKKS's ciphertext (`ckks::Ciphertext`) stores `slots: Vec<Complex64>` **directly
 
 ## Bootstrapping internals
 
+The pipeline shape (see [`concepts.md#bootstrapping`](concepts.md#bootstrapping)) is faithfully implemented; only the middle stage is a stand-in:
+
+```mermaid
+flowchart LR
+    IN["Ciphertext"] --> C2S["CoeffsToSlots<br/>REAL: DftEvaluator forward"]
+    C2S --> EM["EvalMod<br/>SCAFFOLD: identity (preserve_message)"]
+    EM --> S2C["SlotsToCoeffs<br/>REAL: DftEvaluator inverse"]
+    S2C --> RM["refresh_metadata<br/>REAL bookkeeping: resets scale/level/precision"]
+    RM --> OUT["Ciphertext"]
+
+    style EM fill:#f96,stroke:#900,stroke-width:2px
+    style RM fill:#9c6,stroke:#360,stroke-width:1px
+    style C2S fill:#9c6,stroke:#360,stroke-width:1px
+    style S2C fill:#9c6,stroke:#360,stroke-width:1px
+```
+
 The CKKS bootstrapping pipeline (`Bootstrapper::bootstrap`) really does run coefficients→slots (`CoeffsToSlots`, via `DftEvaluator::transform(..., Forward)`) then eval-mod then slots→coefficients (`SlotsToCoeffs`, via `DftEvaluator::transform(..., Inverse)`) — the pipeline *shape* is faithful. But `EvalMod::preserve_message`, the function the bootstrapper actually calls for the middle stage, is an **identity function** (`Ok(input.clone())`) — not the real modular-reduction polynomial approximation described in [`concepts.md#bootstrapping`](concepts.md#bootstrapping). (`EvalMod::centered_fractional_part`, which *does* call the real `Mod1Evaluator`, exists on the type but is not what the bootstrapper's `bootstrap()` method calls.) After the pipeline, `refresh_metadata` resets scale to the CKKS context's default, level to `BootstrapParams::target_level`, and precision to `BootstrapParams::target_precision_bits` — i.e. the metadata genuinely gets "refreshed" to look like a fresh ciphertext, which is the observable effect a real bootstrap should have, even though no actual noise reduction occurred (because there's no noise to reduce in a transparent ciphertext).
 
 `BootstrapKeyGenerator::generate` produces a `BootstrapKey` that's just `{ params, rotation_elements }` — no actual key material, consistent with the transparent scheme layer beneath it not needing any.
@@ -133,7 +149,23 @@ Every crate's test suite includes malformed/truncated/wrong-domain payload rejec
 
 ## Error reference
 
-Every crate exports one `Result<T>` alias and one `#[derive(thiserror::Error)]` enum from its root. Lower-layer errors are wrapped via `#[from]`/`#[error(transparent)]`, so a `SchemesError` can originate from `phantom-ring`, `phantom-lattice`, or `phantom-utils` as well as from the schemes layer itself.
+Every crate exports one `Result<T>` alias and one `#[derive(thiserror::Error)]` enum from its root. Lower-layer errors are wrapped via `#[from]`/`#[error(transparent)]`, so a `SchemesError` can originate from `phantom-ring`, `phantom-lattice`, or `phantom-utils` as well as from the schemes layer itself:
+
+```mermaid
+flowchart BT
+    Utils["UtilsError"] -->|from| Ring["RingError"]
+    Utils -->|from| Lattice["LatticeError"]
+    Ring -->|from| Lattice
+    Utils -->|from| Schemes["SchemesError"]
+    Ring -->|from| Schemes
+    Lattice -->|from| Schemes
+    Utils -->|collapsed into| Circuits["CircuitsError"]
+    Utils -->|collapsed into| Bootstrapping["BootstrappingError"]
+    Schemes -->|collapsed into| Bootstrapping
+    Multiparty["MultipartyError<br/>standalone, wraps nothing"]
+```
+
+Every "from" edge above is a `#[from]`/`#[error(transparent)]` conversion that preserves the original error as a variant payload. Every "collapsed into" edge is a `From` impl that discards the structured error and maps it to a generic `&'static str` variant instead — see the note below the table for where. `RingError` does not itself wrap anything (it's the bottom of the stack — `phantom-ring` has no crate dependencies below it that could fail). `MultipartyError` is the one error type that wraps nothing at all: every multiparty failure is a protocol-level condition (duplicate participant, stale share, threshold not met, ...) rather than a propagated lower-layer error.
 
 | Crate | Error type | Variants |
 | --- | --- | --- |
