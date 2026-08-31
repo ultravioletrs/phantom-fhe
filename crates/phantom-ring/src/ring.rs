@@ -1,6 +1,7 @@
 //! Ring context and polynomial operations.
 
 use crate::modulus::Modulus;
+use crate::ntt::table::NttTable;
 use crate::poly::Poly;
 use crate::reduce::{add_mod, mul_mod, neg_mod, sub_mod, BarrettReducer};
 use crate::{Degree, Result, RingError};
@@ -17,6 +18,12 @@ pub struct Ring {
     /// every `*_mul*` call reuses the same precomputed constant rather than
     /// re-deriving it per coefficient.
     reducers: Vec<Option<BarrettReducer>>,
+    /// One precomputed [`NttTable`] per modulus, for [`mul`](Self::mul) -
+    /// `None` for moduli that don't support a negacyclic NTT at this ring's
+    /// degree (see [`Modulus::supports_ntt`]), which fall back to
+    /// [`schoolbook_mul`](Self::schoolbook_mul) instead. Computed once here
+    /// (a primitive-root search) rather than per multiplication.
+    ntt_tables: Vec<Option<NttTable>>,
 }
 
 impl Ring {
@@ -29,10 +36,15 @@ impl Ring {
             .iter()
             .map(|modulus| BarrettReducer::new(modulus.value()).ok())
             .collect();
+        let ntt_tables = moduli
+            .iter()
+            .map(|modulus| NttTable::new(degree.get(), *modulus).ok())
+            .collect();
         Ok(Self {
             degree,
             moduli,
             reducers,
+            ntt_tables,
         })
     }
 
@@ -180,27 +192,61 @@ impl Ring {
         Ok(out)
     }
 
-    /// Schoolbook negacyclic multiplication for correctness tests and small rings.
-    pub fn schoolbook_mul(&self, lhs: &Poly, rhs: &Poly) -> Result<Poly> {
+    /// Negacyclic polynomial multiplication, using the O(N log N) NTT for
+    /// any RNS component whose modulus supports it at this ring's degree,
+    /// and falling back to [`schoolbook_mul`](Self::schoolbook_mul)'s O(N²)
+    /// approach per-component otherwise. This is the multiplication to call
+    /// for anything except tests that specifically want the reference
+    /// implementation.
+    pub fn mul(&self, lhs: &Poly, rhs: &Poly) -> Result<Poly> {
         self.check_poly(lhs)?;
         self.check_poly(rhs)?;
         let n = self.degree();
         let mut out = self.zero();
-        for (j, modulus) in self.moduli.iter().enumerate() {
-            let q = modulus.value();
-            for a in 0..n {
-                for b in 0..n {
-                    let prod = self.mul_residue(j, lhs.coeffs()[j][a], rhs.coeffs()[j][b]);
-                    let idx = a + b;
-                    if idx < n {
-                        out.coeffs_mut()[j][idx] = add_mod(out.coeffs()[j][idx], prod, q);
-                    } else {
-                        let idx = idx - n;
-                        out.coeffs_mut()[j][idx] = sub_mod(out.coeffs()[j][idx], prod, q);
+        for j in 0..self.moduli.len() {
+            match &self.ntt_tables[j] {
+                Some(table) => {
+                    let mut a = crate::ntt::cpu::forward_component(&lhs.coeffs()[j], table);
+                    let b = crate::ntt::cpu::forward_component(&rhs.coeffs()[j], table);
+                    for i in 0..n {
+                        a[i] = self.mul_residue(j, a[i], b[i]);
                     }
+                    out.coeffs_mut()[j] = crate::ntt::cpu::inverse_component(&a, table);
                 }
+                None => self.schoolbook_mul_component(j, lhs, rhs, &mut out),
             }
         }
         Ok(out)
+    }
+
+    /// Schoolbook (O(N²)) negacyclic multiplication. Always correct
+    /// regardless of whether this ring's moduli support an NTT; kept as the
+    /// reference implementation for tests to check [`mul`](Self::mul)'s NTT
+    /// path against, and as [`mul`](Self::mul)'s own fallback for unsupported moduli.
+    pub fn schoolbook_mul(&self, lhs: &Poly, rhs: &Poly) -> Result<Poly> {
+        self.check_poly(lhs)?;
+        self.check_poly(rhs)?;
+        let mut out = self.zero();
+        for j in 0..self.moduli.len() {
+            self.schoolbook_mul_component(j, lhs, rhs, &mut out);
+        }
+        Ok(out)
+    }
+
+    fn schoolbook_mul_component(&self, j: usize, lhs: &Poly, rhs: &Poly, out: &mut Poly) {
+        let n = self.degree();
+        let q = self.moduli[j].value();
+        for a in 0..n {
+            for b in 0..n {
+                let prod = self.mul_residue(j, lhs.coeffs()[j][a], rhs.coeffs()[j][b]);
+                let idx = a + b;
+                if idx < n {
+                    out.coeffs_mut()[j][idx] = add_mod(out.coeffs()[j][idx], prod, q);
+                } else {
+                    let idx = idx - n;
+                    out.coeffs_mut()[j][idx] = sub_mod(out.coeffs()[j][idx], prod, q);
+                }
+            }
+        }
     }
 }

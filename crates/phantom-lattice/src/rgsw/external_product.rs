@@ -15,7 +15,7 @@ pub fn external_product(
     let mut out = Vec::with_capacity(ct.value().len());
     for component in ct.value() {
         params.ring().check_poly(component)?;
-        out.push(params.ring().schoolbook_mul(component, rgsw.message())?);
+        out.push(params.ring().mul(component, rgsw.message())?);
     }
     Ok(Ciphertext::new(out))
 }

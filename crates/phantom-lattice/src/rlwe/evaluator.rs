@@ -57,7 +57,7 @@ impl Evaluator {
 
         for (i, a) in lhs.value().iter().enumerate() {
             for (j, b) in rhs.value().iter().enumerate() {
-                let term = self.params.ring().schoolbook_mul(a, b)?;
+                let term = self.params.ring().mul(a, b)?;
                 self.params
                     .ring()
                     .add_assign(&mut out.value_mut()[i + j], &term)?;

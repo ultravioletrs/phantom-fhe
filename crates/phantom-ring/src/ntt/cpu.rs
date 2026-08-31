@@ -44,7 +44,12 @@ impl NttBackend for CpuNttBackend {
     }
 }
 
-fn forward_component(input: &[u64], table: &NttTable) -> Vec<u64> {
+/// Forward transform for one RNS component, given an already-built table.
+///
+/// `pub(crate)` so `Ring` can reuse a precomputed [`NttTable`] across many
+/// multiplications instead of rebuilding one (a primitive-root search) per
+/// call, the way [`NttBackend::forward`] does for the single-shot API.
+pub(crate) fn forward_component(input: &[u64], table: &NttTable) -> Vec<u64> {
     let n = table.degree();
     let q = table.modulus().value();
     let mut twisted = vec![0u64; n];
@@ -55,7 +60,9 @@ fn forward_component(input: &[u64], table: &NttTable) -> Vec<u64> {
     twisted
 }
 
-fn inverse_component(input: &[u64], table: &NttTable) -> Vec<u64> {
+/// Inverse transform for one RNS component, given an already-built table.
+/// See [`forward_component`] for why this is `pub(crate)`.
+pub(crate) fn inverse_component(input: &[u64], table: &NttTable) -> Vec<u64> {
     let n = table.degree();
     let q = table.modulus().value();
     let mut untwisted = input.to_vec();

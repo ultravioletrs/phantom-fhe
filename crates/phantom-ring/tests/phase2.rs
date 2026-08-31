@@ -159,6 +159,71 @@ fn ntt_round_trip_and_multiplication_hold_across_degrees_and_moduli() {
 }
 
 #[test]
+fn ring_mul_matches_schoolbook_when_ntt_is_supported() {
+    let cases: [(usize, u64); 6] = [
+        (4, 17),
+        (8, 97),
+        (16, 193),
+        (32, 257),
+        (64, 769),
+        (128, 3329),
+    ];
+    let mut rng = ChaCha20Rng::from_seed([29u8; 32]);
+
+    for (degree, modulus) in cases {
+        let ring = Ring::new_ntt(
+            Degree::new(degree).unwrap(),
+            vec![Modulus::new(modulus).unwrap()],
+        )
+        .unwrap();
+
+        for _ in 0..10 {
+            let a_coeffs: Vec<u64> = (0..degree).map(|_| rng.next_u64() % modulus).collect();
+            let b_coeffs: Vec<u64> = (0..degree).map(|_| rng.next_u64() % modulus).collect();
+            let a = Poly::from_coeffs(vec![a_coeffs]).unwrap();
+            let b = Poly::from_coeffs(vec![b_coeffs]).unwrap();
+
+            let expected = ring.schoolbook_mul(&a, &b).unwrap();
+            let actual = ring.mul(&a, &b).unwrap();
+            assert_eq!(
+                actual, expected,
+                "mul != schoolbook_mul at degree={degree}, modulus={modulus}"
+            );
+        }
+    }
+}
+
+#[test]
+fn ring_mul_falls_back_to_schoolbook_when_ntt_is_unsupported() {
+    // modulus=23 does not satisfy (q-1) % (2*degree) == 0 for degree=4
+    // ((23-1)=22, 22 % 8 = 6 != 0), so Ring::new (not new_ntt) accepts it
+    // but mul has no NTT table to use for this modulus.
+    let degree = Degree::new(4).unwrap();
+    let modulus = Modulus::new(23).unwrap();
+    assert!(!modulus.supports_ntt(degree.get()));
+    let ring = Ring::new(degree, vec![modulus]).unwrap();
+
+    let a = Poly::from_coeffs(vec![vec![1, 2, 3, 4]]).unwrap();
+    let b = Poly::from_coeffs(vec![vec![5, 6, 7, 8]]).unwrap();
+
+    let expected = ring.schoolbook_mul(&a, &b).unwrap();
+    let actual = ring.mul(&a, &b).unwrap();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn ring_mul_is_correct_even_for_unreduced_coefficients() {
+    let ring = Ring::new_ntt(Degree::new(4).unwrap(), vec![Modulus::new(17).unwrap()]).unwrap();
+    let huge = u64::MAX - 1;
+    let a = Poly::from_coeffs(vec![vec![huge, 5, huge, 2]]).unwrap();
+    let b = Poly::from_coeffs(vec![vec![3, huge, 1, huge]]).unwrap();
+
+    let expected = ring.schoolbook_mul(&a, &b).unwrap();
+    let actual = ring.mul(&a, &b).unwrap();
+    assert_eq!(actual, expected);
+}
+
+#[test]
 fn ring_multiplication_is_correct_even_for_unreduced_coefficients() {
     // Poly's type does not enforce coefficients < modulus; Ring's multiplication
     // hot paths (which now route through BarrettReducer, valid only for already-

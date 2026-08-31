@@ -29,12 +29,9 @@ impl Decryptor {
         let mut sk_power = self.sk.value().clone();
 
         for component in ct.value().iter().skip(1) {
-            let term = self.params.ring().schoolbook_mul(component, &sk_power)?;
+            let term = self.params.ring().mul(component, &sk_power)?;
             self.params.ring().add_assign(&mut acc, &term)?;
-            sk_power = self
-                .params
-                .ring()
-                .schoolbook_mul(&sk_power, self.sk.value())?;
+            sk_power = self.params.ring().mul(&sk_power, self.sk.value())?;
         }
 
         Ok(Plaintext::new(acc))

@@ -54,7 +54,7 @@ impl KeyGenerator {
         R: RngCore + CryptoRng,
     {
         let a = sample_uniform(self.params.ring(), rng);
-        let as_prod = self.params.ring().schoolbook_mul(&a, sk.value())?;
+        let as_prod = self.params.ring().mul(&a, sk.value())?;
         let b = self.params.ring().neg(&as_prod)?;
         Ok(PublicKey::new(b, a))
     }

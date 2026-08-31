@@ -133,7 +133,7 @@ $$
 
 Two polynomials' negacyclic product is then `InverseNTT(NTT(a) ⊙ NTT(b))` — elementwise multiplication in the transformed domain, which is where the O(N²) → O(N) saving on the multiplication step comes from (the transform itself, done via an FFT-style butterfly network, is the O(N log N) part).
 
-`phantom_ring::ntt::NttTable` computes `ψ`, `ω`, and their inverses for a given modulus/degree; `NttBackend` (`forward`/`inverse`) is the trait a concrete implementation satisfies, with `CpuNttBackend` implementing it as a real O(N log N) radix-2 butterfly network — see [`technical-manual.md#ring-internals`](technical-manual.md#ring-internals) for the algorithm and how it's verified, and for what's still not wired into it (the multiplication path everywhere above `phantom-ring` still uses `Ring::schoolbook_mul` instead).
+`phantom_ring::ntt::NttTable` computes `ψ`, `ω`, and their inverses for a given modulus/degree; `NttBackend` (`forward`/`inverse`) is the trait a concrete implementation satisfies, with `CpuNttBackend` implementing it as a real O(N log N) radix-2 butterfly network — see [`technical-manual.md#ring-internals`](technical-manual.md#ring-internals) for the algorithm, how it's verified, and how `Ring::mul` uses it (falling back to the always-O(N²) `Ring::schoolbook_mul` for any modulus that doesn't support NTT at the ring's degree).
 
 ### Sampling
 
