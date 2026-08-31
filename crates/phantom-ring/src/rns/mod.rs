@@ -6,3 +6,5 @@ pub mod extension;
 pub mod rescale;
 
 pub use basis::RnsBasis;
+pub use extension::crt_basis_constant;
+pub use rescale::mod_down;

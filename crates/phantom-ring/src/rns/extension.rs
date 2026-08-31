@@ -94,3 +94,40 @@ pub fn extend_basis(poly: &Poly, source: &RnsBasis, target: &RnsBasis) -> Result
 
     Poly::from_coeffs(coeffs)
 }
+
+/// Computes `(product(source.moduli()) / source.moduli()[index]) mod t` for
+/// each `t` in `targets` - the CRT "`M_i`" basis constant for the modulus at
+/// `index` within `source`, reduced into arbitrary target moduli.
+///
+/// [`extend_basis`] computes this exact same `M_i` internally (there, always
+/// called `m_values[comp_idx]`) but only as scratch on the way to a full CRT
+/// reconstruction - it never returns `M_i` standalone. RNS hybrid
+/// key-switching key generation needs precisely that standalone value: with
+/// `source` the *extended* `Q ∪ P` basis and `index` one of the `Q` moduli's
+/// position within it, this gives `(QP / q_i) mod p` for every modulus `p`
+/// in `QP` - the per-row scaling constant each key-switching key row
+/// encrypts a secret times.
+pub fn crt_basis_constant(
+    source: &RnsBasis,
+    index: usize,
+    targets: &[crate::Modulus],
+) -> Result<Vec<u64>> {
+    let source_moduli: Vec<u64> = source.moduli().iter().map(|m| m.value()).collect();
+    if index >= source_moduli.len() {
+        return Err(RingError::DimensionMismatch);
+    }
+
+    let big_q = source_moduli
+        .iter()
+        .fold(BigUint::from_u64(1), |acc, &q| acc.mul_u64(q));
+    let (m_i, remainder) = big_q.divmod_u64(source_moduli[index]);
+    debug_assert_eq!(
+        remainder, 0,
+        "source modulus must divide the basis product exactly"
+    );
+
+    Ok(targets
+        .iter()
+        .map(|t| m_i.divmod_u64(t.value()).1)
+        .collect())
+}
