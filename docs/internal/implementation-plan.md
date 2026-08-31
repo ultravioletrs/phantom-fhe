@@ -1014,16 +1014,19 @@ Tasks:
 1. Add property tests for modular arithmetic, polynomial arithmetic, NTT round trips, and RNS reconstruction.
 2. Add larger randomized tests for basis extension, rescale, and modulus dropping.
 3. Replace placeholder Gaussian-like sampling with a documented, cryptographically appropriate path or keep it explicitly toy-gated.
-4. Optimize CPU NTT and measure against schoolbook multiplication.
-5. Audit allocation patterns in polynomial operations.
-6. Add in-place variants where they remove meaningful allocation in hot paths.
-7. Extend smoke benchmarks or replace them with Criterion once dependency policy is settled.
+4. Replace the current O(N²) direct-evaluation NTT (`ntt::cpu::forward_component`/`inverse_component`) with a real Cooley-Tukey-style O(N log N) butterfly network, and measure against schoolbook multiplication and against `Ring::schoolbook_mul` (the O(N²) path everything above `phantom-ring` currently uses for ciphertext multiplication).
+5. Implement real Barrett and Montgomery reduction in `phantom_ring::reduce` — `BarrettReducer::reduce` and `MontgomeryReducer::mul` currently wrap widened `u128` arithmetic rather than the actual algorithms their names promise.
+6. Replace `rns::extension::extend_basis`'s `u128`-based CRT round trip with a production RNS-native basis-extension algorithm (e.g. Bajard-Eynard-Hasan-Zucca or Halevi-Polyakov-Shoup style) that doesn't overflow for realistic multi-modulus bases; its own doc comment already flags it as debug/small-parameter-only.
+7. Audit allocation patterns in polynomial operations.
+8. Add in-place variants where they remove meaningful allocation in hot paths.
+9. Extend smoke benchmarks or replace them with Criterion once dependency policy is settled.
 
 Exit criteria:
 
 - Ring operations have stronger randomized coverage.
 - The CPU backend has baseline performance data.
 - Sampling status is explicit and not silently production-claimed.
+- The NTT is a real O(N log N) transform, and Barrett/Montgomery reducers implement their named algorithms.
 
 ### Workstream 4 - Production RLWE/RGSW Track
 
@@ -1034,14 +1037,15 @@ Owned areas:
 
 Tasks:
 
-1. Replace toy exact encryption internals with real RLWE encryption semantics.
+1. Replace toy exact encryption internals with real RLWE encryption semantics — `KeyGenerator::generate_public_key` currently adds no error term (a noiseless RLWE-of-zero), and `Encryptor` performs real RLWE arithmetic but likewise with no error sampled in.
 2. Add noise tracking and correctness bounds.
-3. Implement production key switching.
-4. Implement production relinearization.
-5. Implement production automorphism/Galois key behavior.
-6. Improve RGSW ciphertext representation beyond plaintext-backed scaffolding.
-7. Implement real gadget decomposition/external product paths suitable for higher layers.
-8. Add randomized decryptability and homomorphic-operation tests.
+3. Implement production key switching (`keyswitch::key_switch_identity` is currently a literal identity function).
+4. Implement production relinearization (`Evaluator::relinearize` is currently a literal identity function, not a real degree reduction).
+5. Implement production automorphism/Galois key behavior, replacing `Evaluator::rotate_coefficients`'s raw coefficient rotation with real Galois-automorphism-based slot rotation.
+6. Implement production repacking (`repacking::repack_identity` is currently a literal identity function).
+7. Improve RGSW ciphertext representation beyond plaintext-backed scaffolding — `RgswCiphertext` currently stores the message polynomial directly rather than an encrypted gadget matrix, and `external_product` is a plain polynomial multiplication by that plaintext message.
+8. Implement real gadget decomposition/external product paths suitable for higher layers (decomposition/recomposition themselves are already production-shaped; what's missing is a real encrypted RGSW ciphertext for them to operate on).
+9. Add randomized decryptability and homomorphic-operation tests.
 
 Exit criteria:
 
@@ -1059,10 +1063,10 @@ Owned areas:
 
 Tasks:
 
-1. Replace transparent BFV/BGV ciphertext semantics with real scheme behavior.
-2. Implement proper modulus switching and plaintext scaling for BFV/BGV.
-3. Add real CKKS encoding and decoding over the ring representation.
-4. Harden CKKS scale management, rescale, level alignment, and precision accounting.
+1. Replace transparent BFV/BGV ciphertext semantics with real scheme behavior — `bgv::Encryptor::encrypt` (which `bfv::Encryptor` also calls through) currently ignores its RNG and key entirely and returns the plaintext polynomial wrapped as a length-1 ciphertext.
+2. Implement proper modulus switching and plaintext scaling for BFV/BGV (`ModulusSwitcher::switch_next` currently validates and clones, with no real RNS modulus drop).
+3. Rebuild the CKKS ciphertext/plaintext representation on top of `phantom_lattice::rlwe` — today `ckks::Ciphertext`/`Plaintext` store `Complex64` slots directly with no ring/RLWE backing at all, and `Encryptor`/`Decryptor` are identity functions over that representation. Then add real encoding/decoding over the ring representation.
+4. Harden CKKS scale management, rescale, level alignment, and precision accounting — the current `Precision` degradation amounts (e.g. `degrade(0.25)`, `degrade(1.0)` throughout `ckks::Evaluator`) are illustrative constants, not derived from real noise analysis.
 5. Add noise/error estimates to scheme contexts.
 6. Add scheme-specific parameter builders that reject insecure or inconsistent settings.
 7. Add cross-operation tests for encryption, addition, multiplication, rotations, rescale/modswitch, and serialization.
@@ -1085,9 +1089,10 @@ Tasks:
 1. Keep common circuit planning APIs stable while production scheme internals evolve.
 2. Connect BGV/BFV/CKKS circuit evaluators to real evaluator semantics.
 3. Improve polynomial/minimax approximation testing with known mathematical targets.
-4. Turn CKKS bootstrapping from message-preserving scaffold into a real refresh pipeline.
-5. Decide whether BGV/BFV bootstrapping remain reserved modules or become explicit future milestones.
-6. Add parameter documentation for any bootstrapping presets.
+4. Turn CKKS bootstrapping from message-preserving scaffold into a real refresh pipeline — the coefficients-to-slots/EvalMod/slots-to-coefficients pipeline *shape* is already correct (`CoeffsToSlots`/`SlotsToCoeffs` genuinely run the DFT transforms), but `Bootstrapper::bootstrap` calls `EvalMod::preserve_message`, an identity function, for the middle stage instead of a real polynomial approximation of modular reduction (`EvalMod::centered_fractional_part`, which does call the real `Mod1Evaluator`, exists but isn't wired into `bootstrap()`).
+5. Give `BootstrapKeyGenerator` real key material — `BootstrapKey` currently carries only `{ params, rotation_elements }`, no cryptographic content, consistent with the transparent scheme layer beneath it not yet needing any.
+6. Decide whether BGV/BFV bootstrapping remain reserved modules or become explicit future milestones.
+7. Add parameter documentation for any bootstrapping presets.
 
 Exit criteria:
 
@@ -1108,10 +1113,11 @@ Tasks:
 
 1. Review protocol transcripts and share encodings for replay, stale-share, and domain-separation risks.
 2. Add stronger validation around participant sets, thresholds, rounds, and protocol kinds.
-3. Tie collective key generation to production key material once RLWE is hardened.
-4. Tie partial decryption and re-encryption to production ciphertext semantics.
-5. Document security assumptions for threshold and interactive bootstrapping protocols.
-6. Add adversarial tests for malformed shares and protocol confusion.
+3. Replace `common::transcript::stable_hash_256` — currently a small hand-rolled XOR/multiply/rotate mixer with no cryptanalysis behind it — with a vetted cryptographic hash function (e.g. SHA-256 or BLAKE3) before any transcript hash is relied on for collision or preimage resistance.
+4. Tie collective key generation, relinearization-key generation, and Galois-key generation (`ckg`/`rkg`/`gkg` across `mpbgv`/`mpbfv`/`mpckks`) to production key material once RLWE is hardened — today all three `aggregate_*` functions ignore collected share content and return placeholder key material (e.g. `CollectiveKeyGen::aggregate_public_key` returns an all-zero public key regardless of shares).
+5. Replace share aggregation's current byte-equality check (`ensure_equal_payloads`, used by `PartialDecryptor`/`ReEncryptor`/`InteractiveBootstrap`) with real threshold secret-share reconstruction (e.g. Lagrange interpolation) once ciphertext semantics are production-grade — there is currently no actual secret sharing of a decryption/re-encryption computation happening, only agreement-checking on identical cleartext-equivalent payloads.
+6. Document security assumptions for threshold and interactive bootstrapping protocols.
+7. Add adversarial tests for malformed shares and protocol confusion.
 
 Exit criteria:
 
