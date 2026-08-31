@@ -7,10 +7,16 @@ Phantom-FHE is a research-stage implementation, roughly **TRL 2–3** (technolog
 The following components are not yet at production cryptographic strength:
 
 - `phantom-ring::sampling::sample_discrete_gaussian` is a real discrete
-  Gaussian (CDT-based) but is not constant-time, and no scheme wires it into
-  encryption noise yet — see the next bullet.
-- `phantom-lattice::rlwe` uses exact (noiseless) secret-key/public-key
-  encryption, placeholder relinearization, and placeholder key switching.
+  Gaussian (CDT-based) but is not constant-time.
+- `phantom-lattice::rlwe` now samples real Gaussian encryption error
+  (`phantom_lattice::security::STANDARD_ERROR_STD_DEV`, the
+  homomorphicencryption.org community-standard σ≈3.2) into both key
+  generation and encryption, with worst-case noise-growth bounds in
+  `phantom_lattice::noise` — but key switching and relinearization are still
+  placeholders (identity functions), so noise growth isn't yet controlled
+  across a real evaluation circuit the way production key switching would.
+  Noise tracking itself is a sound-but-loose worst-case bound, not a tight
+  probabilistic one.
 - `phantom-lattice::rgsw` uses a plaintext-backed ciphertext representation
   rather than an encrypted one.
 - `phantom-schemes::bgv` and `phantom-schemes::bfv` use transparent

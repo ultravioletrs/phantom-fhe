@@ -46,16 +46,22 @@ impl KeyGenerator {
         SecretKey::new(value)
     }
 
-    /// Generates a public key with zero encryption error (early implementation).
-    ///
-    /// This is a correctness scaffold, not a production key generation routine.
+    /// Generates a public key: `(b, a) = (-(a*s + e), a)`, a real (noisy)
+    /// RLWE-of-zero - `b + a*s = -e`, small but nonzero, per
+    /// [`crate::security::STANDARD_ERROR_STD_DEV`].
     pub fn generate_public_key<R>(&self, sk: &SecretKey, rng: &mut R) -> Result<PublicKey>
     where
         R: RngCore + CryptoRng,
     {
         let a = sample_uniform(self.params.ring(), rng);
+        let e = sample_discrete_gaussian(
+            self.params.ring(),
+            rng,
+            crate::security::STANDARD_ERROR_STD_DEV,
+        );
         let as_prod = self.params.ring().mul(&a, sk.value())?;
-        let b = self.params.ring().neg(&as_prod)?;
+        let noisy = self.params.ring().add(&as_prod, &e)?;
+        let b = self.params.ring().neg(&noisy)?;
         Ok(PublicKey::new(b, a))
     }
 

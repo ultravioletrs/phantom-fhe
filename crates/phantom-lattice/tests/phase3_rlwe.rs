@@ -1,3 +1,6 @@
+use phantom_lattice::noise::{
+    fresh_public_key_noise_bound, fresh_secret_key_noise_bound, mul_noise_bound,
+};
 use phantom_lattice::rlwe::{
     key_switch_identity, Ciphertext, Decryptor, Encryptor, Evaluator, KeyGenerator, Plaintext,
     RlweParams, SecretDistribution,
@@ -6,13 +9,31 @@ use phantom_ring::{Degree, Modulus, Poly, Ring};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
+// Real RLWE encryption now carries real Gaussian noise (sigma = 3.2, see
+// phantom_lattice::security), so decryption recovers "plaintext plus small
+// noise," not the plaintext exactly - the old degree=4/modulus=17 params
+// couldn't hold real noise at all (sigma=3.2's ~6-sigma tail alone can reach
+// 20, larger than the whole modulus). MODULUS is sized with real headroom
+// over even the worst-case (pessimistic, see noise::ring_product_bound's own
+// doc comment) post-multiplication noise bound at DEGREE=8, not just fresh
+// encryption - see assert_noise_bounded's callers below for the exact
+// bounds each operation is checked against.
+const DEGREE: usize = 8;
+const MODULUS: u64 = 4_000_081; // prime, (MODULUS - 1) % (2 * DEGREE) == 0
+
 fn params() -> RlweParams {
-    let ring = Ring::new_ntt(Degree::new(4).unwrap(), vec![Modulus::new(17).unwrap()]).unwrap();
+    let ring = Ring::new_ntt(
+        Degree::new(DEGREE).unwrap(),
+        vec![Modulus::new(MODULUS).unwrap()],
+    )
+    .unwrap();
     RlweParams::builder().ring(ring).build().unwrap()
 }
 
 fn plaintext(values: &[u64]) -> Plaintext {
-    Plaintext::new(Poly::from_coeffs(vec![values.to_vec()]).unwrap())
+    let mut coeffs = values.to_vec();
+    coeffs.resize(DEGREE, 0);
+    Plaintext::new(Poly::from_coeffs(vec![coeffs]).unwrap())
 }
 
 fn key_material() -> (
@@ -28,6 +49,25 @@ fn key_material() -> (
     (params, sk, pk)
 }
 
+/// Asserts every coefficient of `actual` is within `bound` of the
+/// corresponding coefficient of `expected`, using the centered residue
+/// (mapping `[0, modulus)` to `(-modulus/2, modulus/2]`) - the standard way
+/// to measure RLWE decryption noise, since "close to the true value" means
+/// close in either direction around the modular wraparound.
+fn assert_noise_bounded(actual: &Plaintext, expected: &Plaintext, bound: u64, modulus: u64) {
+    for (&a, &e) in actual.value().coeffs()[0]
+        .iter()
+        .zip(expected.value().coeffs()[0].iter())
+    {
+        let diff = (a + modulus - e) % modulus;
+        let centered = diff.min(modulus - diff);
+        assert!(
+            centered <= bound,
+            "noise {centered} exceeds bound {bound} (actual={a}, expected={e}, modulus={modulus})"
+        );
+    }
+}
+
 #[test]
 fn secret_key_encrypt_decrypt_round_trip() {
     let (params, sk, _) = key_material();
@@ -39,7 +79,7 @@ fn secret_key_encrypt_decrypt_round_trip() {
     let ct = encryptor.encrypt(&pt, &mut rng).unwrap();
     let out = decryptor.decrypt(&ct).unwrap();
 
-    assert_eq!(out, pt);
+    assert_noise_bounded(&out, &pt, fresh_secret_key_noise_bound(), MODULUS);
 }
 
 #[test]
@@ -53,7 +93,7 @@ fn public_key_encrypt_decrypt_round_trip() {
     let ct = encryptor.encrypt(&pt, &mut rng).unwrap();
     let out = decryptor.decrypt(&ct).unwrap();
 
-    assert_eq!(out, pt);
+    assert_noise_bounded(&out, &pt, fresh_public_key_noise_bound(DEGREE), MODULUS);
 }
 
 #[test]
@@ -69,13 +109,25 @@ fn homomorphic_add_sub_preserve_plaintext_semantics() {
     let ct_a = encryptor.encrypt(&a, &mut rng).unwrap();
     let ct_b = encryptor.encrypt(&b, &mut rng).unwrap();
 
+    // Addition/subtraction combine two independent fresh-noise ciphertexts
+    // linearly, so the resulting noise is bounded by the sum of their
+    // individual bounds.
+    let combined_bound = 2 * fresh_public_key_noise_bound(DEGREE);
+
     let sum = evaluator.add(&ct_a, &ct_b).unwrap();
-    assert_eq!(decryptor.decrypt(&sum).unwrap(), plaintext(&[5, 5, 5, 5]));
+    assert_noise_bounded(
+        &decryptor.decrypt(&sum).unwrap(),
+        &plaintext(&[5, 5, 5, 5]),
+        combined_bound,
+        MODULUS,
+    );
 
     let diff = evaluator.sub(&ct_a, &ct_b).unwrap();
-    assert_eq!(
-        decryptor.decrypt(&diff).unwrap(),
-        plaintext(&[14, 16, 1, 3])
+    assert_noise_bounded(
+        &decryptor.decrypt(&diff).unwrap(),
+        &plaintext(&[MODULUS - 3, MODULUS - 1, 1, 3]),
+        combined_bound,
+        MODULUS,
     );
 }
 
@@ -95,9 +147,16 @@ fn multiplication_outputs_degree_two_and_decrypts() {
     let product = evaluator.mul(&ct_a, &ct_b).unwrap();
 
     assert_eq!(product.degree(), 2);
-    assert_eq!(
-        decryptor.decrypt(&product).unwrap(),
-        Plaintext::new(params.ring().schoolbook_mul(a.value(), b.value()).unwrap())
+    let expected = Plaintext::new(params.ring().schoolbook_mul(a.value(), b.value()).unwrap());
+    // Both operands' plaintext coefficients are <= 2; see
+    // noise::mul_noise_bound's own doc comment for the worst-case
+    // derivation this bound comes from.
+    let bound = mul_noise_bound(DEGREE, 2, fresh_public_key_noise_bound(DEGREE));
+    assert_noise_bounded(
+        &decryptor.decrypt(&product).unwrap(),
+        &expected,
+        bound,
+        MODULUS,
     );
 }
 
@@ -111,26 +170,30 @@ fn key_switch_and_relinearization_preserve_decryptability() {
     let decryptor = Decryptor::new(params.clone(), sk);
     let evaluator = Evaluator::new(params);
 
-    let ct = encryptor
-        .encrypt(&plaintext(&[1, 2, 3, 4]), &mut rng)
-        .unwrap();
+    let pt = plaintext(&[1, 2, 3, 4]);
+    let ct = encryptor.encrypt(&pt, &mut rng).unwrap();
+    let bound = fresh_public_key_noise_bound(DEGREE);
+
     let switched = key_switch_identity(&ct).unwrap();
-    assert_eq!(
-        decryptor.decrypt(&switched).unwrap(),
-        plaintext(&[1, 2, 3, 4])
-    );
+    assert_noise_bounded(&decryptor.decrypt(&switched).unwrap(), &pt, bound, MODULUS);
 
     let relinearized = evaluator.relinearize(&switched, &relin_key).unwrap();
-    assert_eq!(
-        decryptor.decrypt(&relinearized).unwrap(),
-        plaintext(&[1, 2, 3, 4])
+    assert_noise_bounded(
+        &decryptor.decrypt(&relinearized).unwrap(),
+        &pt,
+        bound,
+        MODULUS,
     );
 }
 
 #[test]
 fn rotation_changes_coefficients_without_changing_shape() {
-    let params = params();
-    let evaluator = Evaluator::new(params.clone());
+    // Pure coefficient-rotation mechanics, no encryption/noise involved -
+    // kept on its own small ring rather than the shared noise-tolerant
+    // params() above, since it only needs to match Ciphertext's own degree.
+    let ring = Ring::new_ntt(Degree::new(4).unwrap(), vec![Modulus::new(17).unwrap()]).unwrap();
+    let params = RlweParams::builder().ring(ring).build().unwrap();
+    let evaluator = Evaluator::new(params);
     let ct = Ciphertext::new(vec![
         Poly::from_coeffs(vec![vec![1, 2, 3, 4]]).unwrap(),
         Poly::from_coeffs(vec![vec![5, 6, 7, 8]]).unwrap(),

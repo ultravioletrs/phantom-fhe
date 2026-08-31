@@ -1,3 +1,4 @@
+use phantom_lattice::noise::{fresh_secret_key_noise_bound, ring_product_bound};
 use phantom_lattice::rgsw::{
     external_product, GadgetDecomposition, GadgetDecompositionParams, RgswCiphertext, RgswKey,
     RgswParams,
@@ -20,6 +21,48 @@ fn key_material() -> (RlweParams, phantom_lattice::rlwe::SecretKey) {
     let mut rng = ChaCha20Rng::from_seed([11u8; 32]);
     let sk = keygen.generate_secret_key(&mut rng, SecretDistribution::Ternary);
     (params, sk)
+}
+
+// Real RLWE encryption now carries real noise, which modulus=97 above has no
+// room for (fresh_secret_key_noise_bound() alone can reach 20, comparable to
+// the whole modulus) - params()/key_material() stay small for the
+// noise-free structural tests below (gadget decomposition, boundary values
+// tied to modulus=97 specifically), and external_product_multiplies_
+// underlying_plaintexts gets its own noise-tolerant ring instead.
+const NOISY_DEGREE: usize = 4;
+const NOISY_MODULUS: u64 = 5009; // prime, (NOISY_MODULUS - 1) % (2 * NOISY_DEGREE) == 0
+
+fn noisy_params() -> RlweParams {
+    let ring = Ring::new_ntt(
+        Degree::new(NOISY_DEGREE).unwrap(),
+        vec![Modulus::new(NOISY_MODULUS).unwrap()],
+    )
+    .unwrap();
+    RlweParams::builder().ring(ring).build().unwrap()
+}
+
+fn noisy_key_material() -> (RlweParams, phantom_lattice::rlwe::SecretKey) {
+    let params = noisy_params();
+    let keygen = KeyGenerator::new(params.clone());
+    let mut rng = ChaCha20Rng::from_seed([11u8; 32]);
+    let sk = keygen.generate_secret_key(&mut rng, SecretDistribution::Ternary);
+    (params, sk)
+}
+
+/// See `phase3_rlwe.rs`'s identical helper for why centered-residue
+/// comparison is the right way to check RLWE decryption noise.
+fn assert_noise_bounded(actual: &Plaintext, expected: &Plaintext, bound: u64, modulus: u64) {
+    for (&a, &e) in actual.value().coeffs()[0]
+        .iter()
+        .zip(expected.value().coeffs()[0].iter())
+    {
+        let diff = (a + modulus - e) % modulus;
+        let centered = diff.min(modulus - diff);
+        assert!(
+            centered <= bound,
+            "noise {centered} exceeds bound {bound} (actual={a}, expected={e}, modulus={modulus})"
+        );
+    }
 }
 
 #[test]
@@ -57,7 +100,7 @@ fn rgsw_ciphertext_keeps_plaintext_backed_message_for_toy_semantics() {
 
 #[test]
 fn external_product_multiplies_underlying_plaintexts() {
-    let (params, sk) = key_material();
+    let (params, sk) = noisy_key_material();
     let mut rng = ChaCha20Rng::from_seed([12u8; 32]);
     let encryptor = Encryptor::with_secret_key(params.clone(), sk.clone());
     let decryptor = Decryptor::new(params.clone(), sk);
@@ -74,5 +117,11 @@ fn external_product_multiplies_underlying_plaintexts() {
         .schoolbook_mul(pt.value(), &multiplier)
         .unwrap();
 
-    assert_eq!(product_pt, Plaintext::new(expected));
+    // external_product multiplies every RLWE component (including the
+    // noise-carrying one) by the plaintext-known multiplier polynomial, so
+    // the resulting noise is that same ring product applied to the fresh
+    // secret-key encryption's own noise bound (multiplier's max coefficient
+    // is 3 here).
+    let bound = ring_product_bound(NOISY_DEGREE, 3, fresh_secret_key_noise_bound());
+    assert_noise_bounded(&product_pt, &Plaintext::new(expected), bound, NOISY_MODULUS);
 }
