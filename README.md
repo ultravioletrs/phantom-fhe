@@ -1,220 +1,130 @@
 # Phantom-FHE
 
-`phantom-fhe` is a Rust-native fully homomorphic encryption library for modern RLWE-based cryptography.
+[![CI](https://github.com/ultravioletrs/phantom-fhe/actions/workflows/ci.yml/badge.svg)](https://github.com/ultravioletrs/phantom-fhe/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](Cargo.toml)
 
-The project is being built as an original Rust implementation. Public papers and mature open-source FHE libraries may be used for understanding algorithms, terminology, parameters, and validation behavior, but project source code, tests, examples, documentation, and serialization formats should be authored for this repository.
+`phantom-fhe` is a Rust-native fully homomorphic encryption (FHE) library for modern RLWE-based cryptography: BFV, BGV, CKKS, homomorphic circuits, bootstrapping, and multiparty/threshold protocols, built as an original Rust implementation.
+
+> [!WARNING]
+> **Phantom-FHE is an alpha correctness scaffold.** Every scheme and primitive in this workspace currently prioritizes a correct, testable API over cryptographic hardness or performance — see [SECURITY.md](SECURITY.md) for the exact list of toy/placeholder internals. **Do not use this library to protect real secrets.**
+
+## Contents
+
+- [Scope](#scope)
+- [Quickstart](#quickstart)
+- [Workspace](#workspace)
+- [Status](#status)
+- [Documentation](#documentation)
+- [Development](#development)
+- [Security](#security)
+- [Contributing](#contributing)
+- [License](#license)
 
 ## Scope
-
-Planned cryptographic stack:
 
 - RNS polynomial ring arithmetic
 - RLWE and RGSW core primitives
 - BFV, BGV, and CKKS schemes
-- Homomorphic circuits
+- Homomorphic circuits (linear transforms, polynomial evaluation, comparison/inverse/mod1, DFT)
 - Scheme bootstrapping, with CKKS first
 - Multiparty / threshold protocols
-- Examples and benchmarks
+- Runnable examples and smoke benchmarks
+
+## Quickstart
+
+Phantom-FHE is not yet published to crates.io. Depend on it directly from git:
+
+```toml
+[dependencies]
+phantom-fhe = { git = "https://github.com/ultravioletrs/phantom-fhe" }
+```
+
+```rust
+use phantom_fhe::ring::{Degree, Modulus, Ring};
+use phantom_fhe::schemes::bfv::{BfvContext, BfvParams};
+use rand_chacha::ChaCha20Rng;
+use rand_core::SeedableRng;
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Toy parameters only - see docs/user-guide.md#choosing-parameters.
+    let ring = Ring::new(Degree::new(8)?, vec![Modulus::new(257)?])?;
+    let ctx = BfvContext::new(BfvParams::new(ring, 17)?);
+    let mut rng = ChaCha20Rng::from_seed([7; 32]);
+
+    let keys = ctx.keygen()?.generate_keypair(&mut rng)?;
+    let encoder = ctx.encoder();
+    let plaintext = encoder.encode_i64(&[-2, 3, 5, -6])?;
+    let ciphertext = ctx.encryptor(keys.public)?.encrypt(&plaintext, &mut rng)?;
+    let decrypted = ctx.decryptor(keys.secret)?.decrypt(&ciphertext)?;
+
+    assert_eq!(&encoder.decode_i64(&decrypted)?[..4], &[-2, 3, 5, -6]);
+    Ok(())
+}
+```
+
+More workflows (BGV, CKKS, bootstrapping, multiparty) are runnable from [`crates/phantom-examples/examples`](crates/phantom-examples/examples) — see [Development](#development). For a walked-through first program and every scheme's usage, start with [`docs/getting-started.md`](docs/getting-started.md).
 
 ## Workspace
 
-Current crates:
+| Crate | Description |
+| --- | --- |
+| [`phantom-fhe`](crates/phantom-fhe) | Top-level facade; re-exports the crates below as `ring`, `lattice`, `schemes`, `circuits`, `bootstrapping`, `multiparty`, and `utils` |
+| [`phantom-utils`](crates/phantom-utils) | Minimal cross-cutting support utilities |
+| [`phantom-ring`](crates/phantom-ring) | RNS polynomial ring arithmetic |
+| [`phantom-lattice`](crates/phantom-lattice) | Scheme-agnostic RLWE and RGSW primitives |
+| [`phantom-schemes`](crates/phantom-schemes) | Concrete BGV, BFV, and CKKS scheme APIs |
+| [`phantom-circuits`](crates/phantom-circuits) | Shared circuit planning plus scheme-specific circuit scaffolds |
+| [`phantom-bootstrapping`](crates/phantom-bootstrapping) | CKKS bootstrapping scaffold plus reserved BGV/BFV module locations |
+| [`phantom-multiparty`](crates/phantom-multiparty) | Threshold protocol scaffolds (mpBGV, mpBFV, mpCKKS) |
+| [`phantom-examples`](crates/phantom-examples) | Runnable toy workflows and example binaries (workspace-only) |
+| [`phantom-benches`](crates/phantom-benches) | Dependency-free smoke benchmarks for current hot paths (workspace-only) |
 
-- `phantom-utils`: minimal cross-cutting support utilities
-- `phantom-ring`: RNS polynomial ring arithmetic
-- `phantom-lattice`: scheme-agnostic RLWE and RGSW primitives
-- `phantom-schemes`: concrete BGV, BFV, and CKKS scheme APIs
-- `phantom-circuits`: shared circuit planning plus scheme-specific circuit scaffolds
-- `phantom-bootstrapping`: CKKS bootstrapping scaffold plus reserved BGV/BFV module locations
-- `phantom-multiparty`: common threshold protocol scaffolds
-
-Planned crates:
-
-- `phantom-fhe` facade crate
-- `phantom-examples`: runnable toy workflows and example binaries
-- `phantom-benches`: dependency-free smoke benchmarks for current hot paths
+`phantom-examples` and `phantom-benches` are workspace-only (`publish = false`): they exercise the individual `phantom-*` crates directly, and the facade crate has its own smoke test ([`crates/phantom-fhe/tests/facade.rs`](crates/phantom-fhe/tests/facade.rs)) confirming its re-exports resolve to working APIs.
 
 ## Status
 
-Current position: Phase 18 is implemented as a correctness scaffold. The roadmap implementation pass is complete; remaining work is production hardening and Phase 0 cleanup.
+All 18 roadmap phases are implemented at a **correctness-scaffold** level — every crate above compiles, is tested, and its examples run — but the underlying cryptography is not yet production-hardened (see the warning above and [SECURITY.md](SECURITY.md)). The project is now working through an **Alpha Hardening** release plan: Phase 0 cleanup (this repository's release infrastructure) is done, and remaining work is tracked as a sequence of workstreams — scaffold/API honesty, ring hardening, production RLWE/RGSW, production BFV/BGV/CKKS, bootstrapping/circuits hardening, and multiparty protocol security.
 
-## Roadmap
+The full phase-by-phase and workstream-by-workstream detail lives in [`docs/internal/implementation-plan.md`](docs/internal/implementation-plan.md).
 
-| Phase | Area | Status |
-| --- | --- | --- |
-| 0 | Repository foundation | Partial |
-| 1 | `phantom-utils` | Done |
-| 2 | `phantom-ring` | Done |
-| 3 | `phantom-lattice::rlwe` | Done |
-| 4 | `phantom-lattice::rgsw` | Done |
-| 5 | `phantom-schemes::bgv` | Done |
-| 6 | `phantom-schemes::bfv` | Done |
-| 7 | `phantom-schemes::ckks` | Done |
-| 8 | `phantom-circuits::common` | Done |
-| 9 | `phantom-circuits::bgv` | Done |
-| 10 | `phantom-circuits::bfv` | Done |
-| 11 | `phantom-circuits::ckks` | Done |
-| 12 | `phantom-bootstrapping` | Done |
-| 13 | `phantom-multiparty::common` | Done |
-| 14 | `phantom-multiparty::mpbgv` | Done |
-| 15 | `phantom-multiparty::mpbfv` | Done |
-| 16 | `phantom-multiparty::mpckks` | Done |
-| 17 | Serialization and compatibility | Done |
-| 18 | Examples, benches, release hardening | Done |
+## Documentation
 
-Status labels:
+The full documentation set lives under [`docs/`](docs) — see [`docs/README.md`](docs/README.md) for the index. Highlights:
 
-- `Partial`: started, but not all phase deliverables are complete
-- `Done`: implemented at the current scaffold/correctness level
-- `Next`: next planned implementation target
-- `Pending`: not started
+- [`docs/getting-started.md`](docs/getting-started.md) — clone, build, run the examples, your first program
+- [`docs/user-guide.md`](docs/user-guide.md) — using every scheme, circuits, bootstrapping, and multiparty protocols, with runnable code
+- [`docs/concepts.md`](docs/concepts.md) — the cryptography and math behind the library
+- [`docs/architecture.md`](docs/architecture.md) — crate layout, dependency hierarchy, design conventions
+- [`docs/developer-guide.md`](docs/developer-guide.md) — coding/testing conventions, adding a new scheme
+- [`docs/technical-manual.md`](docs/technical-manual.md) — the precise, code-level reference: exactly what's real vs. scaffolded, wire formats, error taxonomy, performance
+- [`docs/internal/`](docs/internal) — maintainer-facing: PRD, technical spec, implementation plan, dependency policy, release checklist
 
-## Implemented Details
-
-Implemented:
-
-- Phase 1: `phantom-utils`
-  - secure byte sampling helpers
-  - deterministic test RNG helpers
-  - binary buffer reader/writer helpers
-  - serialization domain/version helpers
-
-- Phase 2: `phantom-ring`
-  - strong domain types
-  - modular arithmetic
-  - RNS polynomial storage
-  - baseline RNS helpers
-  - correctness-first negacyclic NTT backend
-  - uniform, ternary, and placeholder Gaussian-like samplers
-
-- Phase 3: `phantom-lattice::rlwe`
-  - RLWE parameters, plaintexts, ciphertexts, secret keys, public keys, and evaluation key markers
-  - toy exact secret-key and public-key encryption/decryption for correctness scaffolding
-  - evaluator operations for add, sub, neg, add-plain, multiplication shape, placeholder relinearization, and coefficient rotation
-  - placeholder key-switching and repacking surfaces
-  - redacted `Debug` and zero-on-drop behavior for secret keys
-
-- Phase 4: `phantom-lattice::rgsw`
-  - RGSW parameter, key, ciphertext, and gadget decomposition types
-  - gadget decomposition/recomposition over RNS polynomials
-  - plaintext-backed RGSW ciphertext scaffold for toy semantics
-  - toy external product path integrated with RLWE ciphertexts
-
-- Phase 5: `phantom-schemes::bgv`
-  - `BgvParams`, `BgvContext`, keygen, encoder, encryptor, decryptor, evaluator, and modulus-switching surfaces
-  - exact integer encode/decode modulo the plaintext modulus
-  - add, sub, neg, plaintext addition, multiplication, rotation, slot-sum, and modulus-switching correctness tests
-  - transparent ciphertext semantics for the BGV scaffold while production encrypted scheme behavior is still being built
-
-- Phase 6: `phantom-schemes::bfv`
-  - `BfvParams`, `BfvContext`, keygen, encoder, encryptor, decryptor, and evaluator surfaces
-  - distinct BFV public API over the current exact-arithmetic scaffold
-  - unsigned and signed integer slot encoding
-  - add, sub, neg, plaintext operations, multiplication, rotation, and slot-sum correctness tests
-
-- Phase 7: `phantom-schemes::ckks`
-  - `CkksParams`, `CkksContext`, scale, precision, encoder, keygen, encryptor, decryptor, and evaluator surfaces
-  - complex and real approximate slot encoding
-  - add, sub, neg, plaintext operations, multiplication, rescale, level alignment, rotation, and conjugation
-  - conjugate-invariant real-slot validation and scale/level mismatch tests
-
-- Phase 8: `phantom-circuits::common`
-  - linear transformation descriptors
-  - diagonal matrix representations
-  - baby-step giant-step planning
-  - polynomial evaluation planning, including power-basis and Paterson-Stockmeyer plans
-
-- Phase 9: `phantom-circuits::bgv`
-  - `phantom-circuits::bgv::lintrans`
-  - `phantom-circuits::bgv::polynomial`
-  - exact coefficient-slot linear transformations and polynomial evaluation for the current scaffold
-  - tests covering dense transforms, diagonal planning, BSGS planning, and modular polynomial evaluation
-
-- Phase 10: `phantom-circuits::bfv`
-  - `phantom-circuits::bfv::lintrans`
-  - `phantom-circuits::bfv::polynomial`
-  - exact coefficient-slot linear transformations and polynomial evaluation for the current scaffold
-  - tests covering dense transforms, diagonal planning, BSGS planning, modular polynomial evaluation, and signed BFV decoding semantics
-
-- Phase 11: `phantom-circuits::ckks`
-  - `phantom-circuits::ckks::lintrans`
-  - `phantom-circuits::ckks::polynomial`
-  - `phantom-circuits::ckks::{minimax,comparison,inverse,mod1,dft}`
-  - approximate slot linear transformations, polynomial/composite polynomial evaluation, comparison helpers, reciprocal, mod-one, and DFT scaffolds
-  - tests covering complex linear transforms, Paterson-Stockmeyer planning, minimax composition, comparison/inverse/mod1 helpers, conjugate-invariant validation, and DFT round trips
-
-- Phase 12: `phantom-bootstrapping`
-  - `phantom-bootstrapping::ckks`
-  - reserved `phantom-bootstrapping::{bgv,bfv}` module locations
-  - CKKS bootstrap parameters, key markers, coeffs-to-slots, slots-to-coeffs, eval-mod, batch bootstrap, and sparse pack/unpack scaffolds
-  - tests covering message preservation, metadata refresh, batch bootstrapping, sparse packing, invalid parameters, conjugate-invariant bootstrapping, and exact-scheme placeholders
-
-- Phase 13: `phantom-multiparty::common`
-  - participant IDs and participant sets
-  - protocol sessions, rounds, and threshold validation
-  - deterministic transcript message encoding and hashing
-  - typed public shares and share aggregation helpers
-  - tests covering deterministic transcripts, public-message round trips, share aggregation, and duplicate/missing/stale/malformed share rejection
-
-- Phase 14: `phantom-multiparty::mpbgv`
-  - collective public-key, relinearization-key, and Galois-key generation scaffolds
-  - partial decryption aggregation
-  - re-encryption from threshold shares
-  - interactive bootstrapping scaffold
-  - tests covering decryptable collective public keys, evaluation key markers, partial decryption, invalid share detection, re-encryption, and interactive bootstrap preservation
-
-- Phase 15: `phantom-multiparty::mpbfv`
-  - collective public-key, relinearization-key, and Galois-key generation scaffolds
-  - partial decryption aggregation with signed and unsigned BFV slots
-  - re-encryption from threshold shares
-  - interactive bootstrapping scaffold
-  - tests covering decryptable collective public keys, evaluation key markers, signed partial decryption, invalid share detection, re-encryption, and interactive bootstrap preservation
-
-- Phase 16: `phantom-multiparty::mpckks`
-  - collective public-key, relinearization-key, and Galois-key generation scaffolds
-  - partial decryption aggregation with approximate CKKS slots
-  - re-encryption from threshold shares
-  - interactive bootstrapping through the CKKS bootstrapping scaffold
-  - tests covering decryptable collective public keys, evaluation key markers, approximate partial decryption, invalid share detection, re-encryption, and interactive bootstrap metadata refresh
-
-- Phase 17: Serialization and compatibility
-  - canonical binary encodings with crate-owned domain tags and version headers
-  - RLWE public-key and evaluation-key marker round trips
-  - BGV, BFV, and CKKS parameter, plaintext, and ciphertext round trips
-  - common circuit plan round trips for polynomial evaluation and BSGS schedules
-  - CKKS bootstrap parameter round trips
-  - tests covering malformed, truncated, and wrong-domain payload rejection
-
-- Phase 18: Examples, benches, and release hardening
-  - `phantom-examples` package with runnable BFV, BGV, CKKS, bootstrapping, and multiparty examples
-  - `phantom-benches` package with smoke benchmark targets for ring, RLWE, scheme, bootstrapping, and multiparty paths
-  - toy preset, performance, and release checklist documentation under `docs/`
-  - tests covering documented example workflows
-
-The current ring, RLWE, RGSW, BGV, BFV, CKKS, circuit, bootstrapping, and multiparty implementations prioritize correct APIs and testable behavior over production cryptographic hardness or performance. Fast NTT, production RNS basis extension, cryptographic-quality Gaussian sampling, real noise management, key switching, relinearization, encrypted RGSW rows, production BGV/BFV ciphertext semantics, production CKKS encoding/noise analysis, production bootstrapping parameters, and production threshold protocol security are future hardening work.
+Rustdoc for every crate is generated with `make doc` (see below).
 
 ## Development
 
-Run the workspace tests:
-
 ```bash
-cargo test --workspace
+make help    # list all targets
+make check   # fmt-check + clippy + test + doc, same as CI
+make test    # cargo test --workspace --all-targets
+make examples  # run every phantom-examples binary
+make bench   # run the phantom-benches smoke benchmarks
+make ci      # check + bench, the full local command matrix
 ```
 
-Run formatting and lint checks:
+See [`Makefile`](Makefile) for the underlying `cargo` invocations, and [CONTRIBUTING.md](CONTRIBUTING.md) for testing conventions and PR scope.
 
-```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-```
+## Security
 
-Run all example and benchmark smoke targets:
+Phantom-FHE is an alpha correctness scaffold and is **not** production secure. See [SECURITY.md](SECURITY.md) for the current per-crate security status and vulnerability reporting guidance.
 
-```bash
-cargo test --workspace --all-targets
-cargo bench -p phantom-benches
-```
+## Contributing
 
-## Authorship
+See [CONTRIBUTING.md](CONTRIBUTING.md) and [`docs/developer-guide.md`](docs/developer-guide.md) for local checks, coding/testing conventions, and authorship rules, and [`docs/internal/dependency-policy.md`](docs/internal/dependency-policy.md) before adding a dependency.
 
-This repository should contain original Rust source authored for Phantom-FHE. Do not copy or mechanically translate third-party implementation code, comments, tests, examples, serialization formats, or internal layouts into this repository.
+This repository should contain original Rust source authored for Phantom-FHE. Public papers and mature open-source FHE libraries may be used for understanding algorithms, terminology, parameters, and validation behavior, but source code, tests, examples, documentation, and serialization formats here must be authored for this repository — do not copy or mechanically translate third-party implementation code.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).

@@ -831,10 +831,10 @@ Status: Done at the current scaffold/correctness level.
   - `ckks_eval`
   - `ckks_bootstrapping`
   - `multiparty`
-- Parameter preset documentation in `docs/parameter-presets.md`.
+- Parameter preset documentation, now in `docs/user-guide.md#choosing-parameters`.
 - Runnable API examples in `phantom-examples`.
-- Performance notes for CPU backend in `docs/performance-notes.md`.
-- Release checklist for alpha, beta, and stable in `docs/release-checklist.md`.
+- Performance notes for CPU backend, now in `docs/technical-manual.md#performance`.
+- Release checklist for alpha, beta, and stable in `docs/internal/release-checklist.md`.
 
 ### Tests
 
@@ -913,7 +913,7 @@ Each phase is complete only when:
 
 ## 25. Immediate Next Coding Tasks
 
-Current next implementation target: production hardening and Phase 0 cleanup.
+Current next implementation target: Alpha Hardening Workstream 2 (scaffold boundary and API honesty). Workstream 1 (Phase 0 cleanup) is complete - see below.
 
 ## 26. Next Release Plan - Alpha Hardening
 
@@ -940,23 +940,25 @@ Owned areas:
 
 Tasks:
 
-1. Add the `phantom-fhe` facade crate.
-2. Re-export stable top-level modules from the facade:
+1. [Done] Add the `phantom-fhe` facade crate.
+2. [Done] Re-export stable top-level modules from the facade:
    - `ring`
    - `lattice`
    - `schemes`
    - `circuits`
    - `bootstrapping`
    - `multiparty`
-3. Decide whether `phantom-examples` and `phantom-benches` remain workspace-only packages or get facade-facing examples.
-4. Add `SECURITY.md` with current cryptographic status and vulnerability reporting guidance.
-5. Add `CONTRIBUTING.md` with formatting, testing, authorship, and no-copying rules.
-6. Add baseline CI for:
+   - (also `utils`, since `phantom-utils` error types leak into the public error enums of `phantom-lattice` and `phantom-schemes`)
+3. [Done] Decision: `phantom-examples` and `phantom-benches` remain workspace-only packages (`publish = false`). They already exercise each `phantom-*` crate directly; facade-facing example binaries would duplicate that coverage without adding any. The facade instead gets its own smoke test (`crates/phantom-fhe/tests/facade.rs`) confirming the re-exports resolve to working APIs.
+4. [Done] Add `SECURITY.md` with current cryptographic status and vulnerability reporting guidance.
+5. [Done] Add `CONTRIBUTING.md` with formatting, testing, authorship, and no-copying rules.
+6. [Done] Add baseline CI (`.github/workflows/ci.yml`) for:
    - `cargo fmt --all -- --check`
    - `cargo test --workspace --all-targets`
    - `cargo clippy --workspace --all-targets --all-features -- -D warnings`
    - `cargo doc --workspace --no-deps`
-7. Add dependency policy:
+   - (plus a `cargo bench -p phantom-benches` smoke job, since that command is also in the documented matrix)
+7. [Done] Add dependency policy (`docs/internal/dependency-policy.md`):
    - which dependencies are allowed in core crates
    - which dependencies are dev-only
    - whether Criterion is allowed for benchmarks
@@ -964,9 +966,9 @@ Tasks:
 
 Exit criteria:
 
-- A new contributor can clone the repository and run the documented command matrix.
-- The top-level facade crate compiles and has clear Rustdoc.
-- CI status reflects the same checks developers run locally.
+- [Met] A new contributor can clone the repository and run the documented command matrix (`cargo fmt --all -- --check`, `cargo test --workspace --all-targets`, `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo doc --workspace --no-deps`, `cargo bench -p phantom-benches` all pass locally as of this update).
+- [Met] The top-level facade crate compiles and has clear Rustdoc (crate-level docs describe alpha status and module layout).
+- [Met] CI status reflects the same checks developers run locally (`.github/workflows/ci.yml` runs the identical command matrix).
 
 ### Workstream 2 - Scaffold Boundary and API Honesty
 
