@@ -50,8 +50,9 @@ and `phantom-benches` packages (which are `publish = false` and are not
 part of the trusted core surface):
 
 - `rand_chacha` - deterministic seeded RNGs for tests and examples.
-- `proptest` - not currently a dependency, but pre-approved for
-  property-based tests (Workstream 3, 8) as a dev-dependency only. It must
+- `proptest` - a dev-dependency of `phantom-ring` (`tests/property_tests.rs`,
+  Workstream 3 item 1) for property-based tests. Still pre-approved for the
+  same use in other crates (Workstream 8) as it's picked up there. Must
   never appear in a non-dev dependency list.
 
 ## Benchmarks

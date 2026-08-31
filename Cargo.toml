@@ -20,6 +20,7 @@ repository = "https://github.com/ultravioletrs/phantom-fhe"
 rust-version = "1.85"
 
 [workspace.dependencies]
+proptest = "1"
 rand_chacha = "0.3"
 rand_core = "0.6"
 thiserror = "1"
