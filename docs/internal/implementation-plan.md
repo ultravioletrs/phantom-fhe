@@ -913,7 +913,7 @@ Each phase is complete only when:
 
 ## 25. Immediate Next Coding Tasks
 
-Current next implementation target: Alpha Hardening Workstream 3 (ring and RNS foundation hardening) - the first workstream that changes cryptographic behavior rather than API/documentation surface. Workstreams 1 (Phase 0 cleanup) and 2 (scaffold boundary and API honesty) are complete - see below.
+Current next implementation target: Alpha Hardening Workstream 4 (production RLWE/RGSW track) - the next workstream up now that Workstream 3 (ring and RNS foundation hardening) is effectively complete (item 5b intentionally deferred, see its own entry). Workstreams 1 (Phase 0 cleanup), 2 (scaffold boundary and API honesty), and 3 are done - see below.
 
 ## 26. Next Release Plan - Alpha Hardening
 
@@ -1028,11 +1028,13 @@ Tasks:
 
 Exit criteria:
 
-- Ring operations have stronger randomized coverage.
-- The CPU backend has baseline performance data.
-- Sampling status is explicit and not silently production-claimed.
+- [Met] Ring operations have stronger randomized coverage: property tests (item 1) covering modular/polynomial/NTT/RNS properties across the full `u64` modulus range, plus 40 independently-computed large-scale RNS basis-extension cases and 500 randomized modulus-dropping trials (item 2).
+- [Met] The CPU backend has baseline performance data: `ring_ntt`, `ring_rns`, `ring_extend_basis`, `rlwe_encrypt` smoke benchmarks with recorded numbers (item 9, smoke half - Criterion adoption remains deliberately deferred to Workstream 9 per `dependency-policy.md`).
+- [Met] Sampling status is explicit and not silently production-claimed: `sample_discrete_gaussian` is now a real CDT-based discrete Gaussian (items 3/10), explicitly documented as not constant-time and not yet wired into any scheme's encryption noise.
 - [Met] The NTT is a real O(N log N) transform, and Barrett/Montgomery reducers implement their named algorithms.
 - [Met] Barrett reduction is wired into `Ring`'s actual arithmetic, not a standalone unused type (item 5a).
+
+Workstream 3 is now effectively complete; item 5b (true Harvey-style `[0, 2·modulus)`-lazy-correction NTT butterflies, as opposed to item 4b's full-reduction-but-faster-reducer wiring) remains intentionally deferred - it is real further optimization, not a correctness gap or an unmet exit criterion, and its bound-tracking across multiple butterfly stages is meaningfully higher-risk to get subtly wrong than anything else in this workstream.
 
 ### Workstream 4 - Production RLWE/RGSW Track
 
