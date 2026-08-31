@@ -27,6 +27,10 @@ name = "ring_rns"
 harness = false
 
 [[bench]]
+name = "ring_extend_basis"
+harness = false
+
+[[bench]]
 name = "rlwe_encrypt"
 harness = false
 

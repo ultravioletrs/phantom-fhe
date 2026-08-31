@@ -201,20 +201,30 @@ impl Ring {
     /// approach per-component otherwise. This is the multiplication to call
     /// for anything except tests that specifically want the reference
     /// implementation.
+    ///
+    /// The NTT path allocates exactly one scratch buffer (reused across every
+    /// RNS component, not just once per call) rather than the four
+    /// allocations - two per operand's forward transform, two more inside the
+    /// inverse transform - an earlier version needed: `lhs`'s transform and
+    /// the final product are both written directly into `out`'s own
+    /// already-allocated component, and only `rhs`'s transform needs
+    /// separate scratch space.
     pub fn mul(&self, lhs: &Poly, rhs: &Poly) -> Result<Poly> {
         self.check_poly(lhs)?;
         self.check_poly(rhs)?;
         let n = self.degree();
         let mut out = self.zero();
+        let mut scratch = vec![0u64; n];
         for j in 0..self.moduli.len() {
             match &self.ntt_tables[j] {
                 Some(table) => {
-                    let mut a = crate::ntt::cpu::forward_component(&lhs.coeffs()[j], table);
-                    let b = crate::ntt::cpu::forward_component(&rhs.coeffs()[j], table);
+                    let a: &mut [u64] = &mut out.coeffs_mut()[j];
+                    crate::ntt::cpu::forward_component_into(&lhs.coeffs()[j], table, a);
+                    crate::ntt::cpu::forward_component_into(&rhs.coeffs()[j], table, &mut scratch);
                     for i in 0..n {
-                        a[i] = self.mul_residue(j, a[i], b[i]);
+                        a[i] = self.mul_residue(j, a[i], scratch[i]);
                     }
-                    out.coeffs_mut()[j] = crate::ntt::cpu::inverse_component(&a, table);
+                    crate::ntt::cpu::inverse_transform_in_place(a, table);
                 }
                 None => self.schoolbook_mul_component(j, lhs, rhs, &mut out),
             }

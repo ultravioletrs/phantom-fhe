@@ -15,9 +15,9 @@ pub struct NttTable {
     inv_degree: u64,
     /// `psi_powers[j] = psi^j mod modulus`, precomputed once here instead of
     /// recomputing each `pow_mod(psi, j, q)` (an `O(log j)` computation) on
-    /// every `forward_component`/`inverse_component` call - this turns the
-    /// twist step's total cost from `O(n log n)` back down to the `O(n)` it
-    /// should be, via one running-product pass at table-construction time.
+    /// every forward/inverse transform call - this turns the twist step's
+    /// total cost from `O(n log n)` back down to the `O(n)` it should be,
+    /// via one running-product pass at table-construction time.
     psi_powers: Vec<u64>,
     /// `inv_psi_powers[j] = psi^-j mod modulus`, same rationale as
     /// `psi_powers` but for the inverse transform's untwist step.

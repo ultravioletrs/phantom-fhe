@@ -48,9 +48,7 @@ impl NttBackend for CpuNttBackend {
         ring.check_poly(poly)?;
         for (j, modulus) in ring.moduli().iter().enumerate() {
             let table = NttTable::new(ring.degree(), *modulus)?;
-            let input = poly.coeffs()[j].clone();
-            let output = forward_component(&input, &table);
-            poly.coeffs_mut()[j] = output;
+            forward_transform_in_place(&mut poly.coeffs_mut()[j], &table);
         }
         Ok(())
     }
@@ -59,48 +57,54 @@ impl NttBackend for CpuNttBackend {
         ring.check_poly(poly)?;
         for (j, modulus) in ring.moduli().iter().enumerate() {
             let table = NttTable::new(ring.degree(), *modulus)?;
-            let input = poly.coeffs()[j].clone();
-            let output = inverse_component(&input, &table);
-            poly.coeffs_mut()[j] = output;
+            inverse_transform_in_place(&mut poly.coeffs_mut()[j], &table);
         }
         Ok(())
     }
 }
 
-/// Forward transform for one RNS component, given an already-built table.
-///
-/// `pub(crate)` so `Ring` can reuse a precomputed [`NttTable`] across many
-/// multiplications instead of rebuilding one (a primitive-root search) per
-/// call, the way [`NttBackend::forward`] does for the single-shot API.
-pub(crate) fn forward_component(input: &[u64], table: &NttTable) -> Vec<u64> {
+/// Forward transform for one RNS component, entirely in place: no
+/// allocation. `pub(crate)` so `Ring` can reuse a precomputed [`NttTable`]
+/// across many multiplications instead of rebuilding one (a primitive-root
+/// search) per call, the way [`NttBackend::forward`] does for the
+/// single-shot API. Safe to run the twist step in place because each
+/// coefficient's twisted value depends only on that same coefficient's own
+/// input value - nothing here reads a value after another iteration has
+/// already overwritten it.
+pub(crate) fn forward_transform_in_place(buf: &mut [u64], table: &NttTable) {
     let n = table.degree();
     let q = table.modulus().value();
     let reducer = table.reducer();
     let psi_powers = table.psi_powers();
-    let mut twisted = vec![0u64; n];
     for j in 0..n {
-        twisted[j] = mul_residue(reducer, input[j], psi_powers[j], q);
+        buf[j] = mul_residue(reducer, buf[j], psi_powers[j], q);
     }
-    radix2_ntt_inplace(&mut twisted, table.omega(), reducer, q);
-    twisted
+    radix2_ntt_inplace(buf, table.omega(), reducer, q);
 }
 
-/// Inverse transform for one RNS component, given an already-built table.
-/// See [`forward_component`] for why this is `pub(crate)`.
-pub(crate) fn inverse_component(input: &[u64], table: &NttTable) -> Vec<u64> {
-    let n = table.degree();
+/// Forward transform for one RNS component, reading `input` and writing the
+/// result into `out` (which must have length `table.degree()`) - used where
+/// the input must be preserved (e.g. [`Ring::mul`](crate::ring::Ring::mul),
+/// which still needs `lhs`'s original coefficients after transforming a
+/// separate scratch buffer for `rhs`).
+pub(crate) fn forward_component_into(input: &[u64], table: &NttTable, out: &mut [u64]) {
+    out.copy_from_slice(input);
+    forward_transform_in_place(out, table);
+}
+
+/// Inverse transform for one RNS component, entirely in place: no
+/// allocation. See [`forward_transform_in_place`] for why this is sound
+/// in place, and [`NttBackend::inverse`] / [`Ring::mul`](crate::ring::Ring::mul)
+/// for its two call sites.
+pub(crate) fn inverse_transform_in_place(buf: &mut [u64], table: &NttTable) {
     let q = table.modulus().value();
     let reducer = table.reducer();
     let inv_psi_powers = table.inv_psi_powers();
-    let mut untwisted = input.to_vec();
-    radix2_ntt_inplace(&mut untwisted, table.inv_omega(), reducer, q);
-
-    let mut out = vec![0u64; n];
-    for (j, slot) in out.iter_mut().enumerate() {
-        let scaled = mul_residue(reducer, untwisted[j], table.inv_degree(), q);
+    radix2_ntt_inplace(buf, table.inv_omega(), reducer, q);
+    for (j, slot) in buf.iter_mut().enumerate() {
+        let scaled = mul_residue(reducer, *slot, table.inv_degree(), q);
         *slot = mul_residue(reducer, scaled, inv_psi_powers[j], q);
     }
-    out
 }
 
 /// In-place radix-2 cyclic NTT: the standard iterative decimation-in-time
@@ -113,8 +117,8 @@ pub(crate) fn inverse_component(input: &[u64], table: &NttTable) -> Vec<u64> {
 /// Running this same function with `root = ω⁻¹` computes `n` times the
 /// inverse transform (by the standard NTT/DFT duality: applying the forward
 /// structure with the inverse root, then scaling by `n⁻¹`, recovers the
-/// original sequence) - `inverse_component` above does exactly that scaling
-/// itself, so this function has no separate "inverse" variant.
+/// original sequence) - [`inverse_transform_in_place`] above does exactly
+/// that scaling itself, so this function has no separate "inverse" variant.
 fn radix2_ntt_inplace(a: &mut [u64], root: u64, reducer: BarrettReducer, q: u64) {
     let n = a.len();
     if n <= 1 {
