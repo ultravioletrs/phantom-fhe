@@ -4,17 +4,40 @@
 //! run a standard radix-2 cyclic NTT with `ω = ψ²` (the textbook iterative
 //! Cooley-Tukey butterfly network, O(N log N)), then - for the inverse -
 //! scale by `N⁻¹` and untwist by powers of `ψ⁻¹`. The twist/untwist steps
-//! are unchanged from the original O(N²) implementation; only the cyclic
-//! transform core was replaced. Correctness rests on two independent
-//! checks: `tests/phase2.rs::ntt_multiplication_matches_schoolbook` compares
-//! against `Ring::schoolbook_mul`, a structurally unrelated direct
-//! negacyclic multiplication, and `ntt_round_trip_*` checks forward/inverse
-//! consistency across many degrees and moduli.
+//! now use [`NttTable`]'s precomputed `psi_powers`/`inv_psi_powers` (an `O(n)`
+//! running-product table, built once per table) instead of an independent
+//! `pow_mod(psi, j, q)` call per coefficient (`O(n log n)` total) - same
+//! values, computed once instead of `n` times. Every multiplication in the
+//! twist step and the butterfly network itself routes through the table's
+//! precomputed [`crate::reduce::BarrettReducer`] instead of division-based
+//! [`mul_mod`], with the same defensive `< modulus` guard `Ring`'s own
+//! `mul_residue` helper uses (`Poly`'s type doesn't guarantee coefficients
+//! are already reduced, so the guard - not just the reducer's own
+//! precondition - is what keeps this correct for any input).
+//! Correctness rests on two independent checks:
+//! `tests/phase2.rs::ntt_multiplication_matches_schoolbook` compares against
+//! `Ring::schoolbook_mul`, a structurally unrelated direct negacyclic
+//! multiplication, and `ntt_round_trip_*` checks forward/inverse consistency
+//! across many degrees and moduli - both passed unchanged through this
+//! rewrite, since it changes performance, not results.
 
 use crate::ntt::backend::NttBackend;
 use crate::ntt::table::NttTable;
-use crate::reduce::{add_mod, mul_mod, pow_mod, sub_mod};
+use crate::reduce::{add_mod, mul_mod, pow_mod, sub_mod, BarrettReducer};
 use crate::{Poly, Result, Ring};
+
+/// Multiplies two residues modulo `modulus`, using `reducer`'s fast path when
+/// both operands are already `< modulus` and falling back to division-based
+/// [`mul_mod`] otherwise - the same defensive pattern `Ring`'s own
+/// `mul_residue` helper uses, needed for the same reason: nothing in
+/// [`Poly`]'s type guarantees a coefficient is already reduced.
+fn mul_residue(reducer: BarrettReducer, a: u64, b: u64, modulus: u64) -> u64 {
+    if a < modulus && b < modulus {
+        reducer.reduce(a as u128 * b as u128)
+    } else {
+        mul_mod(a, b, modulus)
+    }
+}
 
 /// Baseline CPU backend.
 #[derive(Clone, Copy, Debug, Default)]
@@ -52,11 +75,13 @@ impl NttBackend for CpuNttBackend {
 pub(crate) fn forward_component(input: &[u64], table: &NttTable) -> Vec<u64> {
     let n = table.degree();
     let q = table.modulus().value();
+    let reducer = table.reducer();
+    let psi_powers = table.psi_powers();
     let mut twisted = vec![0u64; n];
     for j in 0..n {
-        twisted[j] = mul_mod(input[j], pow_mod(table.psi(), j as u64, q), q);
+        twisted[j] = mul_residue(reducer, input[j], psi_powers[j], q);
     }
-    radix2_ntt_inplace(&mut twisted, table.omega(), q);
+    radix2_ntt_inplace(&mut twisted, table.omega(), reducer, q);
     twisted
 }
 
@@ -65,13 +90,15 @@ pub(crate) fn forward_component(input: &[u64], table: &NttTable) -> Vec<u64> {
 pub(crate) fn inverse_component(input: &[u64], table: &NttTable) -> Vec<u64> {
     let n = table.degree();
     let q = table.modulus().value();
+    let reducer = table.reducer();
+    let inv_psi_powers = table.inv_psi_powers();
     let mut untwisted = input.to_vec();
-    radix2_ntt_inplace(&mut untwisted, table.inv_omega(), q);
+    radix2_ntt_inplace(&mut untwisted, table.inv_omega(), reducer, q);
 
     let mut out = vec![0u64; n];
     for (j, slot) in out.iter_mut().enumerate() {
-        let scaled = mul_mod(untwisted[j], table.inv_degree(), q);
-        *slot = mul_mod(scaled, pow_mod(table.inv_psi(), j as u64, q), q);
+        let scaled = mul_residue(reducer, untwisted[j], table.inv_degree(), q);
+        *slot = mul_residue(reducer, scaled, inv_psi_powers[j], q);
     }
     out
 }
@@ -79,14 +106,16 @@ pub(crate) fn inverse_component(input: &[u64], table: &NttTable) -> Vec<u64> {
 /// In-place radix-2 cyclic NTT: the standard iterative decimation-in-time
 /// Cooley-Tukey butterfly network (bit-reverse permute, then `log2(n)`
 /// butterfly stages), evaluating `a` at powers of `root` (an `n`-th root of
-/// unity mod `q`). `a.len()` must be a power of two.
+/// unity mod `q`). `a.len()` must be a power of two. `reducer` must be for
+/// modulus `q` - every multiplication in the butterfly stages routes through
+/// it (via [`mul_residue`]) instead of division-based [`mul_mod`].
 ///
 /// Running this same function with `root = ω⁻¹` computes `n` times the
 /// inverse transform (by the standard NTT/DFT duality: applying the forward
 /// structure with the inverse root, then scaling by `n⁻¹`, recovers the
 /// original sequence) - `inverse_component` above does exactly that scaling
 /// itself, so this function has no separate "inverse" variant.
-fn radix2_ntt_inplace(a: &mut [u64], root: u64, q: u64) {
+fn radix2_ntt_inplace(a: &mut [u64], root: u64, reducer: BarrettReducer, q: u64) {
     let n = a.len();
     if n <= 1 {
         return;
@@ -101,11 +130,11 @@ fn radix2_ntt_inplace(a: &mut [u64], root: u64, q: u64) {
         while k < n {
             let mut w = 1u64;
             for j in 0..m / 2 {
-                let t = mul_mod(w, a[k + j + m / 2], q);
+                let t = mul_residue(reducer, w, a[k + j + m / 2], q);
                 let u = a[k + j];
                 a[k + j] = add_mod(u, t, q);
                 a[k + j + m / 2] = sub_mod(u, t, q);
-                w = mul_mod(w, w_m, q);
+                w = mul_residue(reducer, w, w_m, q);
             }
             k += m;
         }
@@ -134,7 +163,7 @@ fn reverse_bits(mut x: usize, bits: u32) -> usize {
 #[cfg(test)]
 mod tests {
     use super::radix2_ntt_inplace;
-    use crate::reduce::mul_mod;
+    use crate::reduce::{mul_mod, BarrettReducer};
 
     /// Hand-derived reference: q=5, n=4, ω=2 (order 4 in (Z/5)*), input
     /// [1,2,3,4] transforms to [0,4,3,2] by direct evaluation
@@ -143,7 +172,8 @@ mod tests {
     #[test]
     fn radix2_ntt_matches_hand_computed_reference() {
         let mut a = [1u64, 2, 3, 4];
-        radix2_ntt_inplace(&mut a, 2, 5);
+        let reducer = BarrettReducer::new(5).unwrap();
+        radix2_ntt_inplace(&mut a, 2, reducer, 5);
         assert_eq!(a, [0, 4, 3, 2]);
     }
 
@@ -197,7 +227,7 @@ mod tests {
 
             let expected = direct_dft(&a, root, q);
             let mut actual = a.clone();
-            radix2_ntt_inplace(&mut actual, root, q);
+            radix2_ntt_inplace(&mut actual, root, table.reducer(), q);
             assert_eq!(actual, expected, "mismatch for n={n}, q={q}, root={root}");
         }
     }
