@@ -9,6 +9,13 @@ use phantom_ring::{Degree, Modulus, Poly, Ring};
 use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
+// Auxiliary "P" moduli for real hybrid relinearization - comparable in size
+// to MODULUS, the actual requirement hybrid key-switching has (see
+// phantom_lattice::rlwe::keyswitch's own module doc comment). Unlike Q,
+// these don't need NTT-friendliness: generate_key_switch_key builds the
+// extended QP ring via Ring::new, not Ring::new_ntt.
+const P_MODULI: [u64; 2] = [4_000_063, 4_000_067];
+
 // Real RLWE encryption now carries real Gaussian noise (sigma = 3.2, see
 // phantom_lattice::security), so decryption recovers "plaintext plus small
 // noise," not the plaintext exactly - the old degree=4/modulus=17 params
@@ -154,6 +161,52 @@ fn multiplication_outputs_degree_two_and_decrypts() {
     let bound = mul_noise_bound(DEGREE, 2, fresh_public_key_noise_bound(DEGREE));
     assert_noise_bounded(
         &decryptor.decrypt(&product).unwrap(),
+        &expected,
+        bound,
+        MODULUS,
+    );
+}
+
+#[test]
+fn real_relinearization_reduces_degree_and_preserves_the_product() {
+    let (params, sk, _) = key_material();
+    let keygen = KeyGenerator::new(params.clone());
+    let mut rng = ChaCha20Rng::from_seed([8u8; 32]);
+
+    let p_moduli: Vec<Modulus> = P_MODULI.iter().map(|&p| Modulus::new(p).unwrap()).collect();
+    let relin_key = keygen
+        .generate_hybrid_relinearization_key(&sk, &p_moduli, &mut rng)
+        .unwrap();
+
+    let encryptor = Encryptor::with_secret_key(params.clone(), sk.clone());
+    let decryptor = Decryptor::new(params.clone(), sk);
+    let evaluator = Evaluator::new(params.clone());
+
+    let a = plaintext(&[1, 1, 0, 0]);
+    let b = plaintext(&[1, 2, 0, 0]);
+    let ct_a = encryptor.encrypt(&a, &mut rng).unwrap();
+    let ct_b = encryptor.encrypt(&b, &mut rng).unwrap();
+
+    let product = evaluator.mul(&ct_a, &ct_b).unwrap();
+    assert_eq!(product.degree(), 2);
+
+    let relinearized = evaluator.relinearize(&product, &relin_key).unwrap();
+    assert_eq!(
+        relinearized.degree(),
+        1,
+        "real relinearization must bring a degree-2 ciphertext back to degree 1"
+    );
+
+    let expected = Plaintext::new(params.ring().schoolbook_mul(a.value(), b.value()).unwrap());
+    // Pre-relinearization multiplication noise (mul_noise_bound, same as
+    // multiplication_outputs_degree_two_and_decrypts above) plus real
+    // key-switching's own modest contribution - see key_switch.rs's own
+    // noise_bound() for why 4x fresh_secret_key_noise_bound() is a safe,
+    // deliberately generous (not yet formally derived) margin for that part.
+    let bound = mul_noise_bound(DEGREE, 2, fresh_secret_key_noise_bound())
+        + 4 * fresh_secret_key_noise_bound();
+    assert_noise_bounded(
+        &decryptor.decrypt(&relinearized).unwrap(),
         &expected,
         bound,
         MODULUS,

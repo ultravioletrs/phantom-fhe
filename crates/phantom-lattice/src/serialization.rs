@@ -32,6 +32,12 @@ pub fn decode_public_key(bytes: &[u8]) -> Result<PublicKey> {
 }
 
 /// Encodes public RLWE evaluation-key markers.
+///
+/// Only records *whether* a relinearization key was present, not its
+/// content - true even for a real key-switching-based one
+/// ([`RelinearizationKey::from_key_switch_key`]), whose actual
+/// cryptographic material (a full [`crate::rlwe::KeySwitchKey`]) this
+/// function does not serialize. See [`decode_evaluation_key`].
 pub fn encode_evaluation_key(evaluation_key: &EvaluationKey) -> Result<Vec<u8>> {
     let mut writer = writer(RLWE_EVALUATION_KEY)?;
     writer.write_u8(u8::from(evaluation_key.relinearization_key().is_some()))?;
@@ -43,11 +49,20 @@ pub fn encode_evaluation_key(evaluation_key: &EvaluationKey) -> Result<Vec<u8>> 
 }
 
 /// Decodes public RLWE evaluation-key markers.
+///
+/// Always reconstructs a *placeholder* relinearization key
+/// ([`RelinearizationKey::placeholder`]) when the marker says one was
+/// present - this format has never carried real relinearization-key
+/// content (there was none to carry until real key-switching-based
+/// relinearization keys existed), so round-tripping a real key through
+/// this function silently downgrades it to the placeholder. Real
+/// key-switching key serialization is real follow-up work, not attempted
+/// here.
 pub fn decode_evaluation_key(bytes: &[u8]) -> Result<EvaluationKey> {
     let mut reader = reader(bytes, RLWE_EVALUATION_KEY)?;
     let relin = match reader.read_u8()? {
         0 => None,
-        1 => Some(RelinearizationKey),
+        1 => Some(RelinearizationKey::placeholder()),
         _ => {
             return Err(LatticeError::InvalidParameters(
                 "invalid relinearization marker",

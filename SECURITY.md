@@ -14,14 +14,18 @@ The following components are not yet at production cryptographic strength:
   generation and encryption, with worst-case noise-growth bounds in
   `phantom_lattice::noise`. `phantom_lattice::rlwe::{generate_key_switch_key,
   key_switch}` are now a real RNS hybrid key-switch (the modern
-  RNS-CKKS-era technique, not a textbook simplification) - but
-  relinearization still calls the identity-function placeholder
-  (`key_switch_identity`), not this real primitive yet, so noise growth
-  isn't yet controlled across a real evaluation circuit the way production
-  relinearization/rotation would once they're built on top of it. Noise
-  tracking itself is a sound-but-loose worst-case bound, not a tight
-  probabilistic one, and key-switching's own noise contribution doesn't yet
-  have a formally-derived bound (only an empirically-set test threshold).
+  RNS-CKKS-era technique, not a textbook simplification), and
+  `Evaluator::relinearize` does real degree reduction when given a real key
+  (`KeyGenerator::generate_hybrid_relinearization_key`) - but every scheme
+  crate above `phantom-lattice` (BGV, BFV, CKKS, multiparty) still only
+  constructs the identity-preserving placeholder key
+  (`RelinearizationKey::placeholder()`), since none of them yet have a
+  concept of the auxiliary `P` moduli a real key needs, so `relinearize`
+  still behaves as a no-op in practice for every scheme, and Galois rotation
+  isn't built on real key-switching yet either. Noise tracking itself is a
+  sound-but-loose worst-case bound, not a tight probabilistic one, and
+  key-switching's own noise contribution doesn't yet have a
+  formally-derived bound (only an empirically-set test threshold).
 - `phantom-lattice::rgsw` now encrypts real gadget matrices (the standard
   GSW/RGSW construction) instead of the earlier plaintext-backed scaffold,
   with a real external product and its own noise bound in

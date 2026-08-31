@@ -30,6 +30,6 @@ impl RelinearizationKeyGen {
     /// Aggregates RKG shares into a placeholder relinearization key.
     pub fn aggregate_key(&self, aggregator: &ShareAggregator) -> Result<RelinearizationKey> {
         let _shares = aggregator.aggregate()?;
-        Ok(RelinearizationKey)
+        Ok(RelinearizationKey::placeholder())
     }
 }

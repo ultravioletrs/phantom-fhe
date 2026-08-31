@@ -1,5 +1,6 @@
 //! RLWE evaluator operations.
 
+use crate::rlwe::keyswitch::key_switch;
 use crate::rlwe::{Ciphertext, Plaintext, RelinearizationKey, RlweParams};
 use crate::{LatticeError, Result};
 
@@ -67,10 +68,40 @@ impl Evaluator {
         Ok(out)
     }
 
-    /// Placeholder relinearization that preserves decryptability.
-    pub fn relinearize(&self, ct: &Ciphertext, _key: &RelinearizationKey) -> Result<Ciphertext> {
+    /// Relinearizes a degree-2 ciphertext back to degree 1 using `key`.
+    ///
+    /// If `key` is the identity-preserving placeholder
+    /// ([`RelinearizationKey::placeholder`]), returns `ct` unchanged -
+    /// today's behavior for every caller not yet supplying a real key. With
+    /// a real key ([`RelinearizationKey::from_key_switch_key`]), treats
+    /// `ct`'s third component `c2` (the one multiplying `s²`) as the `c1`
+    /// half of a throwaway ciphertext `(0, c2)`, key-switches that from `s²`
+    /// to `s`, and adds the result into `ct`'s first two components -
+    /// `c0 + c1*s + c2*s² = (c0 + switched_c0) + (c1 + switched_c1)*s`.
+    pub fn relinearize(&self, ct: &Ciphertext, key: &RelinearizationKey) -> Result<Ciphertext> {
         self.check_ciphertext(ct)?;
-        Ok(ct.clone())
+        let Some(ksk) = key.key_switch_key() else {
+            return Ok(ct.clone());
+        };
+        if ct.value().len() != 3 {
+            return Err(LatticeError::InvalidParameters(
+                "relinearize with a real key expects a degree-2 ciphertext (3 components)",
+            ));
+        }
+
+        let c2 = &ct.value()[2];
+        let c2_ct = Ciphertext::new(vec![self.params.ring().zero(), c2.clone()]);
+        let switched = key_switch(&c2_ct, ksk, &self.params)?;
+
+        let new_c0 = self
+            .params
+            .ring()
+            .add(&ct.value()[0], &switched.value()[0])?;
+        let new_c1 = self
+            .params
+            .ring()
+            .add(&ct.value()[1], &switched.value()[1])?;
+        Ok(Ciphertext::new(vec![new_c0, new_c1]))
     }
 
     /// Applies a simple cyclic coefficient rotation to every component.

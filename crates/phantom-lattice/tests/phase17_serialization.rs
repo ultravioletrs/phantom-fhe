@@ -22,8 +22,14 @@ fn public_keys_round_trip() {
 
 #[test]
 fn evaluation_key_markers_round_trip() {
+    // EvaluationKey/RelinearizationKey don't derive PartialEq (a real
+    // RelinearizationKey can hold a KeySwitchKey, which doesn't either -
+    // see evaluation_key.rs), so this checks the fields the markers
+    // actually round-trip (see serialization.rs's own doc comments: only
+    // "was a relinearization key present", never its content) instead of
+    // whole-struct equality.
     let evaluation_key = EvaluationKey::new(
-        Some(RelinearizationKey),
+        Some(RelinearizationKey::placeholder()),
         vec![GaloisKey::new(3), GaloisKey::new(5)],
     );
     let decoded = serialization::decode_evaluation_key(
@@ -31,7 +37,22 @@ fn evaluation_key_markers_round_trip() {
     )
     .unwrap();
 
-    assert_eq!(decoded, evaluation_key);
+    assert_eq!(
+        decoded.relinearization_key().is_some(),
+        evaluation_key.relinearization_key().is_some()
+    );
+    assert_eq!(
+        decoded
+            .galois_keys()
+            .iter()
+            .map(GaloisKey::element)
+            .collect::<Vec<_>>(),
+        evaluation_key
+            .galois_keys()
+            .iter()
+            .map(GaloisKey::element)
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]
