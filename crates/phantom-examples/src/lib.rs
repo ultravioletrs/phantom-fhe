@@ -1,4 +1,4 @@
-//! Runnable toy workflows used by the repository examples.
+//! Runnable example workflows used by the repository examples.
 
 pub mod workflows;
 

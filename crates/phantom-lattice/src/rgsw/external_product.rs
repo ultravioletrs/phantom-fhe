@@ -4,7 +4,7 @@ use crate::rgsw::RgswCiphertext;
 use crate::rlwe::{Ciphertext, RlweParams};
 use crate::Result;
 
-/// Applies a toy external product by multiplying every RLWE component by the
+/// Applies an early-implementation external product by multiplying every RLWE component by the
 /// plaintext-backed RGSW message polynomial.
 pub fn external_product(
     params: &RlweParams,

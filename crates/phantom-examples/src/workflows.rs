@@ -1,4 +1,4 @@
-//! Small, deterministic examples that run on toy parameters.
+//! Small, deterministic examples that run on development parameters.
 
 use std::error::Error;
 use std::fmt;

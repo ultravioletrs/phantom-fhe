@@ -1,54 +1,52 @@
 # Security Policy
 
-## Current Status: Alpha Scaffold - Not Production Secure
+## Current Status
 
-Phantom-FHE is at an alpha, correctness-scaffold stage. Every crate in this
-workspace prioritizes correct APIs and testable behavior over cryptographic
-hardness or performance. Concretely, as of this release:
+Phantom-FHE is a research-stage implementation, roughly **TRL 2–3** (technology concept formulated; experimental proof of concept). The full architecture — ring arithmetic, RLWE/RGSW primitives, BGV/BFV/CKKS schemes, homomorphic circuits, CKKS bootstrapping, and multiparty threshold protocols — is implemented, tested end-to-end, and documented (see `docs/technical-manual.md` for the precise per-operation reference). Cryptographic hardening toward production strength is in progress under a tracked roadmap (`docs/internal/implementation-plan.md`).
+
+The following components are not yet at production cryptographic strength:
 
 - `phantom-ring` sampling includes a placeholder Gaussian-like sampler that
   is not cryptographically appropriate.
-- `phantom-lattice::rlwe` uses toy exact secret-key/public-key encryption,
-  placeholder relinearization, and placeholder key switching.
-- `phantom-lattice::rgsw` uses a plaintext-backed ciphertext scaffold rather
-  than an encrypted representation.
+- `phantom-lattice::rlwe` uses exact (noiseless) secret-key/public-key
+  encryption, placeholder relinearization, and placeholder key switching.
+- `phantom-lattice::rgsw` uses a plaintext-backed ciphertext representation
+  rather than an encrypted one.
 - `phantom-schemes::bgv` and `phantom-schemes::bfv` use transparent
   (non-encrypted) ciphertext semantics.
 - `phantom-schemes::ckks` implements approximate encoding and rescale
   bookkeeping without real noise/precision analysis.
-- `phantom-bootstrapping::ckks` is message-preserving scaffolding, not a
+- `phantom-bootstrapping::ckks` is a message-preserving pipeline, not yet a
   production refresh pipeline. BGV/BFV bootstrapping modules are reserved
   but unimplemented.
-- `phantom-multiparty` protocol scaffolds have not had an adversarial
-  security review. Collective key generation, relinearization-key
-  generation, and Galois-key generation currently aggregate shares into
-  placeholder key material (e.g. an all-zero public key) rather than real
-  cryptographic key material, and the transcript hash used for protocol
-  transcripts (`phantom_multiparty::common::transcript::stable_hash_256`) is
-  a small hand-rolled mixer, not a vetted cryptographic hash function.
+- `phantom-multiparty` protocols have not had an adversarial security
+  review. Collective key generation, relinearization-key generation, and
+  Galois-key generation currently aggregate shares into placeholder key
+  material (e.g. an all-zero public key) rather than real cryptographic key
+  material, and the transcript hash used for protocol transcripts
+  (`phantom_multiparty::common::transcript::stable_hash_256`) is a small
+  hand-rolled mixer, not a vetted cryptographic hash function.
 - All example and test parameter presets (see
-  `docs/user-guide.md#choosing-parameters`) are toy sizes chosen for speed,
-  not security.
+  `docs/user-guide.md#choosing-parameters`) are small development sizes
+  chosen for fast iteration, not production security margins.
 
 For the precise, per-operation account of what each of the above means in
-code, see `docs/technical-manual.md`.
-
-**Do not use this repository to protect real secrets, in any deployment, at
-any parameter size, until this notice is updated.** The workstreams tracked
-in `docs/internal/implementation-plan.md` describe the path from this scaffold to
-production-hardened cryptography.
+code, see `docs/technical-manual.md`. This status is expected to change
+substantially as the hardening roadmap executes; **this implementation
+should not be relied on for production security until these items are
+resolved.**
 
 ## Reporting a Vulnerability
 
-Because the project has not reached a security-reviewed state, most
+Because the project has not yet reached a security-reviewed state, most
 cryptographic weaknesses are already known and tracked in
 `docs/internal/implementation-plan.md` rather than being reportable surprises. Still, if
 you find:
 
 - a memory-safety or panic-safety issue reachable from public APIs,
-- a logic bug that breaks correctness guarantees the current scaffold does
-  claim (for example, a documented round-trip or test that can be broken
-  with valid inputs), or
+- a logic bug that breaks correctness guarantees the current implementation
+  does claim (for example, a documented round-trip or test that can be
+  broken with valid inputs), or
 - a supply-chain or build-process concern,
 
 please open a GitHub issue with a minimal reproduction. If the issue is

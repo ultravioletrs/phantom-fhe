@@ -6,7 +6,7 @@ use rand_core::{CryptoRng, RngCore};
 use crate::rlwe::{Ciphertext, Plaintext, PublicKey, RlweParams, SecretKey};
 use crate::Result;
 
-/// Encryptor for toy exact RLWE encryption.
+/// Encryptor for exact RLWE encryption (early implementation, no error term).
 #[derive(Clone, Debug)]
 pub enum Encryptor {
     /// Secret-key encryptor.

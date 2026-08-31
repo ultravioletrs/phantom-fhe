@@ -1,9 +1,8 @@
 # Technical Manual
 
-This is the precise, code-level reference for Phantom-FHE: exactly what each operation does today, the wire formats, the error taxonomy, and current performance characteristics. Where the current behavior is a correctness scaffold rather than the real cryptographic operation, that's called out explicitly and unambiguously — this document exists so nobody has to read the source to find out. For the conceptual/mathematical background this assumes, see [`concepts.md`](concepts.md); for crate layout, see [`architecture.md`](architecture.md).
+This is the precise, code-level reference for Phantom-FHE: exactly what each operation does today, the wire formats, the error taxonomy, and current performance characteristics. Where the current behavior is an early implementation rather than the final cryptographic operation, that's called out explicitly and unambiguously — this document exists so nobody has to read the source to find out. For the conceptual/mathematical background this assumes, see [`concepts.md`](concepts.md); for crate layout, see [`architecture.md`](architecture.md).
 
-> [!WARNING]
-> Every "Current status" callout below reflects the alpha scaffold described in [SECURITY.md](../SECURITY.md). Nothing here is a defect report — it's the intended state of an in-progress implementation — but treat any operation marked transparent, placeholder, or identity as providing **no cryptographic protection**.
+Every "Current status" callout below reflects the research-stage status described in [SECURITY.md](../SECURITY.md) — the intended state of an in-progress hardening roadmap, not a defect report. Any operation marked transparent, placeholder, or identity does not yet provide cryptographic protection.
 
 ## Ring internals
 
@@ -17,7 +16,7 @@ This is the precise, code-level reference for Phantom-FHE: exactly what each ope
 
 `phantom_ring::ntt::CpuNttBackend` computes a negacyclic transform: twist by powers of `ψ` (the `2N`-th root), apply the transform, and for the inverse, untwist by powers of `ψ⁻¹` and scale by `N⁻¹`.
 
-**Current status:** the forward/inverse transform itself (`forward_component`/`inverse_component` in `ntt/cpu.rs`) is a **direct O(N²) evaluation** — for each output index `k`, it sums `input[j] * ω^(jk)` over all `j` — not a Cooley-Tukey-style O(N log N) butterfly network. It is correct (the round-trip and multiplication-vs-schoolbook tests pass) but has none of the NTT's asymptotic performance advantage yet; at toy sizes (`N=8`) this doesn't matter, but it will not scale to production ring degrees (`N` in the thousands to tens of thousands) without a real butterfly implementation. `Ring::schoolbook_mul` — used throughout `phantom-lattice` for ciphertext multiplication — is explicitly documented as "for correctness tests and small rings," i.e. it's the O(N²) path used in place of NTT-accelerated multiplication everywhere above `phantom-ring` today.
+**Current status:** the forward/inverse transform itself (`forward_component`/`inverse_component` in `ntt/cpu.rs`) is a **direct O(N²) evaluation** — for each output index `k`, it sums `input[j] * ω^(jk)` over all `j` — not a Cooley-Tukey-style O(N log N) butterfly network. It is correct (the round-trip and multiplication-vs-schoolbook tests pass) but has none of the NTT's asymptotic performance advantage yet; at the small sizes used in tests and examples (`N=8`) this doesn't matter, but it will not scale to production ring degrees (`N` in the thousands to tens of thousands) without a real butterfly implementation. `Ring::schoolbook_mul` — used throughout `phantom-lattice` for ciphertext multiplication — is explicitly documented as "for correctness tests and small rings," i.e. it's the O(N²) path used in place of NTT-accelerated multiplication everywhere above `phantom-ring` today.
 
 ### RNS basis extension
 
@@ -183,7 +182,7 @@ The `CircuitsError`/`BootstrappingError` collapsing conversions (turning a struc
 
 The current implementation prioritizes small, readable correctness scaffolds over performance — this is deliberate at the current stage, not an oversight, but it means today's numbers are not representative of where the library needs to land.
 
-- `phantom_ring::ntt::CpuNttBackend` is the correctness-first O(N²) transform described [above](#ring-internals) — fine for toy sizes (`N` ≤ ~64 in tests/examples), not representative of NTT-accelerated performance.
+- `phantom_ring::ntt::CpuNttBackend` is the correctness-first O(N²) transform described [above](#ring-internals) — fine for the small sizes used in tests/examples (`N` ≤ ~64), not representative of NTT-accelerated performance.
 - `Ring::schoolbook_mul` (O(N²) negacyclic multiplication) is what `phantom-lattice` actually uses for ciphertext multiplication today, not an NTT-accelerated path.
 - `phantom-benches` intentionally has **no external benchmark dependency** — it uses `std::time::Instant`-based smoke timing (`phantom_benches::time_iterations`/`print_result`) rather than Criterion, specifically so `cargo bench -p phantom-benches` runs without network access or extra setup. Its output (iteration count + elapsed wall time, printed per target) is a smoke signal — "did this get dramatically slower" — not a statistically rigorous benchmark report. `docs/internal/dependency-policy.md` pre-approves adopting Criterion as a `phantom-benches`-only dev-dependency once Workstream 9 (Performance and Benchmarking) is picked up.
 - Benchmark targets today: `ring_ntt`, `ring_rns`, `rlwe_encrypt`, `rlwe_keyswitch`, `bfv_eval`, `bgv_eval`, `ckks_eval`, `ckks_bootstrapping`, `multiparty` (see `crates/phantom-benches/benches/`).

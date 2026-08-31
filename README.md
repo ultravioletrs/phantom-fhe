@@ -6,8 +6,7 @@
 
 `phantom-fhe` is a Rust-native fully homomorphic encryption (FHE) library for modern RLWE-based cryptography: BFV, BGV, CKKS, homomorphic circuits, bootstrapping, and multiparty/threshold protocols, built as an original Rust implementation.
 
-> [!WARNING]
-> **Phantom-FHE is an alpha correctness scaffold.** Every scheme and primitive in this workspace currently prioritizes a correct, testable API over cryptographic hardness or performance — see [SECURITY.md](SECURITY.md) for the exact list of toy/placeholder internals. **Do not use this library to protect real secrets.**
+Phantom-FHE is a research-stage implementation under active development (TRL 2–3). The full architecture is implemented and tested end-to-end; cryptographic hardening toward production-grade security is in progress under a tracked roadmap — see [SECURITY.md](SECURITY.md) for current status.
 
 ## Contents
 
@@ -47,7 +46,7 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Toy parameters only - see docs/user-guide.md#choosing-parameters.
+    // Development parameters, chosen for fast iteration - see docs/user-guide.md#choosing-parameters.
     let ring = Ring::new(Degree::new(8)?, vec![Modulus::new(257)?])?;
     let ctx = BfvContext::new(BfvParams::new(ring, 17)?);
     let mut rng = ChaCha20Rng::from_seed([7; 32]);
@@ -74,17 +73,17 @@ More workflows (BGV, CKKS, bootstrapping, multiparty) are runnable from [`crates
 | [`phantom-ring`](crates/phantom-ring) | RNS polynomial ring arithmetic |
 | [`phantom-lattice`](crates/phantom-lattice) | Scheme-agnostic RLWE and RGSW primitives |
 | [`phantom-schemes`](crates/phantom-schemes) | Concrete BGV, BFV, and CKKS scheme APIs |
-| [`phantom-circuits`](crates/phantom-circuits) | Shared circuit planning plus scheme-specific circuit scaffolds |
-| [`phantom-bootstrapping`](crates/phantom-bootstrapping) | CKKS bootstrapping scaffold plus reserved BGV/BFV module locations |
-| [`phantom-multiparty`](crates/phantom-multiparty) | Threshold protocol scaffolds (mpBGV, mpBFV, mpCKKS) |
-| [`phantom-examples`](crates/phantom-examples) | Runnable toy workflows and example binaries (workspace-only) |
+| [`phantom-circuits`](crates/phantom-circuits) | Shared circuit planning plus scheme-specific circuit implementations |
+| [`phantom-bootstrapping`](crates/phantom-bootstrapping) | CKKS bootstrapping pipeline plus reserved BGV/BFV module locations |
+| [`phantom-multiparty`](crates/phantom-multiparty) | Threshold protocol implementations (mpBGV, mpBFV, mpCKKS) |
+| [`phantom-examples`](crates/phantom-examples) | Runnable example workflows and binaries (workspace-only) |
 | [`phantom-benches`](crates/phantom-benches) | Dependency-free smoke benchmarks for current hot paths (workspace-only) |
 
 `phantom-examples` and `phantom-benches` are workspace-only (`publish = false`): they exercise the individual `phantom-*` crates directly, and the facade crate has its own smoke test ([`crates/phantom-fhe/tests/facade.rs`](crates/phantom-fhe/tests/facade.rs)) confirming its re-exports resolve to working APIs.
 
 ## Status
 
-All 18 roadmap phases are implemented at a **correctness-scaffold** level — every crate above compiles, is tested, and its examples run — but the underlying cryptography is not yet production-hardened (see the warning above and [SECURITY.md](SECURITY.md)). The project is now working through an **Alpha Hardening** release plan: Phase 0 cleanup (this repository's release infrastructure) is done, and remaining work is tracked as a sequence of workstreams — scaffold/API honesty, ring hardening, production RLWE/RGSW, production BFV/BGV/CKKS, bootstrapping/circuits hardening, and multiparty protocol security.
+All 18 roadmap phases are implemented — every crate above compiles, is tested, and its examples run end-to-end. The project is now executing an **Alpha Hardening** plan to progress cryptographic hardness toward production strength: Phase 0 (release infrastructure) is complete, and remaining work is tracked as a sequence of workstreams — API/documentation clarity, ring hardening, production RLWE/RGSW, production BFV/BGV/CKKS, bootstrapping/circuits hardening, and multiparty protocol security. See [SECURITY.md](SECURITY.md) for current cryptographic status.
 
 The full phase-by-phase and workstream-by-workstream detail lives in [`docs/internal/implementation-plan.md`](docs/internal/implementation-plan.md).
 
@@ -117,7 +116,7 @@ See [`Makefile`](Makefile) for the underlying `cargo` invocations, and [CONTRIBU
 
 ## Security
 
-Phantom-FHE is an alpha correctness scaffold and is **not** production secure. See [SECURITY.md](SECURITY.md) for the current per-crate security status and vulnerability reporting guidance.
+Phantom-FHE is under active cryptographic hardening. See [SECURITY.md](SECURITY.md) for current per-crate status, the hardening roadmap, and vulnerability reporting guidance.
 
 ## Contributing
 

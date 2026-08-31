@@ -1,6 +1,6 @@
 # Architecture
 
-This document describes how Phantom-FHE is put together: the crate hierarchy, why it's shaped that way, and how data flows from raw ring arithmetic up to multiparty protocols. For the mathematics behind each layer, see [`concepts.md`](concepts.md). For "is this real cryptography yet," see [SECURITY.md](../SECURITY.md).
+This document describes how Phantom-FHE is put together: the crate hierarchy, why it's shaped that way, and how data flows from raw ring arithmetic up to multiparty protocols. For the mathematics behind each layer, see [`concepts.md`](concepts.md). For current cryptographic status, see [SECURITY.md](../SECURITY.md).
 
 ## Design goals
 

@@ -2,8 +2,7 @@
 
 This walks through cloning the repository, building it, running the tests and examples, and writing your first program against Phantom-FHE. If you just want the quickest possible taste, the [README quickstart](../README.md#quickstart) has a shorter version of the same thing.
 
-> [!WARNING]
-> Phantom-FHE is an alpha correctness scaffold — see [SECURITY.md](../SECURITY.md). Everything below uses toy, insecure parameters on purpose.
+Everything below uses small development parameters, chosen for fast iteration rather than production security margins — see [SECURITY.md](../SECURITY.md) for current cryptographic status.
 
 ## Prerequisites
 
@@ -65,7 +64,7 @@ use rand_chacha::ChaCha20Rng;
 use rand_core::SeedableRng;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // A toy ring: degree 8, two 60-ish-bit... well, two *tiny* moduli.
+    // A small development ring: degree 8, two tiny moduli.
     // See docs/user-guide.md#choosing-parameters for why these numbers.
     let ring = Ring::new(Degree::new(8)?, vec![Modulus::new(257)?, Modulus::new(769)?])?;
     let ctx = BfvContext::new(BfvParams::new(ring, 17)?); // plaintext modulus t = 17

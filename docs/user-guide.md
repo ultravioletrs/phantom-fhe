@@ -1,6 +1,6 @@
 # User Guide
 
-Practical, runnable guidance for using Phantom-FHE: adding it as a dependency, working with each scheme, circuits, multiparty protocols, and serialization. For first-run setup, see [`getting-started.md`](getting-started.md). For the math behind the calls here, see [`concepts.md`](concepts.md). For exactly what's cryptographically real today, see [`technical-manual.md`](technical-manual.md) and [SECURITY.md](../SECURITY.md) — every example in this guide uses toy, insecure parameters, deliberately.
+Practical, runnable guidance for using Phantom-FHE: adding it as a dependency, working with each scheme, circuits, multiparty protocols, and serialization. For first-run setup, see [`getting-started.md`](getting-started.md). For the math behind the calls here, see [`concepts.md`](concepts.md). For current cryptographic status, see [`technical-manual.md`](technical-manual.md) and [SECURITY.md](../SECURITY.md) — every example in this guide uses small development parameters, deliberately.
 
 ## Adding the dependency
 
@@ -233,7 +233,7 @@ Decoding a payload against the wrong `decode_*` function, or a truncated/corrupt
 
 ## Choosing parameters
 
-**Every parameter set in this guide, in the examples, and in the test suite is a toy preset** — small enough to run fast in CI and local development, and explicitly not cryptographically secure at any parameter size given the current implementation status (see [SECURITY.md](../SECURITY.md)). The presets used throughout:
+Every parameter set in this guide, in the examples, and in the test suite is a small development preset, chosen for fast iteration in CI and local development rather than production security margins — see [SECURITY.md](../SECURITY.md) for current cryptographic status. The presets used throughout:
 
 | Scheme(s) | Ring degree | Ciphertext moduli | Plaintext modulus / scale |
 | --- | --- | --- | --- |

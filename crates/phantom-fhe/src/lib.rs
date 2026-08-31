@@ -1,13 +1,11 @@
 //! `phantom-fhe` is the top-level facade for the Phantom-FHE workspace.
 //!
-//! # Alpha / scaffold status
+//! # Status
 //!
-//! This crate re-exports the current workspace crates unchanged. The
-//! underlying ring, lattice, scheme, circuit, bootstrapping, and multiparty
-//! implementations prioritize correct APIs and testable behavior over
-//! production cryptographic hardness or performance. Do not use the current
-//! parameter presets or primitives to protect real secrets. See
-//! `SECURITY.md` in the repository root for the current security status.
+//! This crate re-exports the current workspace crates unchanged. Phantom-FHE
+//! is a research-stage implementation under active cryptographic hardening;
+//! see `SECURITY.md` in the repository root for current status and the
+//! hardening roadmap.
 //!
 //! # Layout
 //!

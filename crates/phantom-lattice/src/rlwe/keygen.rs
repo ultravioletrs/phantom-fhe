@@ -46,7 +46,7 @@ impl KeyGenerator {
         SecretKey::new(value)
     }
 
-    /// Generates a toy public key with zero encryption error.
+    /// Generates a public key with zero encryption error (early implementation).
     ///
     /// This is a correctness scaffold, not a production key generation routine.
     pub fn generate_public_key<R>(&self, sk: &SecretKey, rng: &mut R) -> Result<PublicKey>

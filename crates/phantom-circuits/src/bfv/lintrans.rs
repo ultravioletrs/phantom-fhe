@@ -38,7 +38,7 @@ impl LinearTransformEvaluator {
         self.diagonalize(transform)?.bsgs_plan(baby_step_count)
     }
 
-    /// Applies a dense linear transform to a degree-zero toy BFV ciphertext.
+    /// Applies a dense linear transform to a degree-zero BFV ciphertext.
     pub fn apply(
         &self,
         ciphertext: &Ciphertext,
@@ -69,7 +69,7 @@ impl LinearTransformEvaluator {
         )))
     }
 
-    /// Applies a diagonalized transform to a degree-zero toy BFV ciphertext.
+    /// Applies a diagonalized transform to a degree-zero BFV ciphertext.
     pub fn apply_diagonal(
         &self,
         ciphertext: &Ciphertext,
