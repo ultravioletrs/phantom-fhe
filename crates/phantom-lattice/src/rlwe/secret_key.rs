@@ -33,9 +33,7 @@ impl fmt::Debug for SecretKey {
 impl Drop for SecretKey {
     fn drop(&mut self) {
         for component in self.value.coeffs_mut() {
-            for coeff in component {
-                *coeff = 0;
-            }
+            component.fill(0);
         }
     }
 }
