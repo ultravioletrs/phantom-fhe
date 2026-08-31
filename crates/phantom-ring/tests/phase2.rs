@@ -102,6 +102,63 @@ fn ntt_multiplication_matches_schoolbook() {
 }
 
 #[test]
+fn ntt_round_trip_and_multiplication_hold_across_degrees_and_moduli() {
+    // The degree-4 cases above are hand-traceable but too small to catch
+    // indexing bugs that only surface with more than one radix-2 butterfly
+    // stage. Every (degree, modulus) pair here needs modulus = 1 (mod 2*degree).
+    let cases: [(usize, u64); 6] = [
+        (4, 17),
+        (8, 97),
+        (16, 193),
+        (32, 257),
+        (64, 769),
+        (128, 3329),
+    ];
+
+    let backend = CpuNttBackend;
+    let mut rng = ChaCha20Rng::from_seed([23u8; 32]);
+
+    for (degree, modulus) in cases {
+        let ring = Ring::new_ntt(
+            Degree::new(degree).unwrap(),
+            vec![Modulus::new(modulus).unwrap()],
+        )
+        .unwrap();
+
+        for _ in 0..10 {
+            let coeffs: Vec<u64> = (0..degree).map(|_| rng.next_u64() % modulus).collect();
+            let poly = Poly::from_coeffs(vec![coeffs]).unwrap();
+
+            // Round trip.
+            let mut transformed = poly.clone();
+            backend.forward(&ring, &mut transformed).unwrap();
+            backend.inverse(&ring, &mut transformed).unwrap();
+            assert_eq!(
+                transformed, poly,
+                "round trip failed at degree={degree}, modulus={modulus}"
+            );
+
+            // NTT-based multiplication vs. independent schoolbook multiplication.
+            let other_coeffs: Vec<u64> = (0..degree).map(|_| rng.next_u64() % modulus).collect();
+            let other = Poly::from_coeffs(vec![other_coeffs]).unwrap();
+            let expected = ring.schoolbook_mul(&poly, &other).unwrap();
+
+            let mut a_ntt = poly.clone();
+            let mut b_ntt = other.clone();
+            backend.forward(&ring, &mut a_ntt).unwrap();
+            backend.forward(&ring, &mut b_ntt).unwrap();
+            let mut product = ring.coeffwise_mul(&a_ntt, &b_ntt).unwrap();
+            backend.inverse(&ring, &mut product).unwrap();
+
+            assert_eq!(
+                product, expected,
+                "NTT multiplication != schoolbook at degree={degree}, modulus={modulus}"
+            );
+        }
+    }
+}
+
+#[test]
 fn ring_multiplication_is_correct_even_for_unreduced_coefficients() {
     // Poly's type does not enforce coefficients < modulus; Ring's multiplication
     // hot paths (which now route through BarrettReducer, valid only for already-

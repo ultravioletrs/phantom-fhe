@@ -131,9 +131,9 @@ a_j = N^{-1} \cdot \psi^{-j} \cdot \sum_{k=0}^{N-1} \hat{a}_k \cdot \omega^{-jk}
 \qquad\text{(inverse)}
 $$
 
-Two polynomials' negacyclic product is then `InverseNTT(NTT(a) ⊙ NTT(b))` — elementwise multiplication in the transformed domain, which is where the O(N²) → O(N) saving on the multiplication step comes from (the transform itself, done via an FFT-style butterfly network, is the O(N log N) part — see below for why this implementation doesn't have that yet).
+Two polynomials' negacyclic product is then `InverseNTT(NTT(a) ⊙ NTT(b))` — elementwise multiplication in the transformed domain, which is where the O(N²) → O(N) saving on the multiplication step comes from (the transform itself, done via an FFT-style butterfly network, is the O(N log N) part).
 
-`phantom_ring::ntt::NttTable` computes `ψ`, `ω`, and their inverses for a given modulus/degree; `NttBackend` (`forward`/`inverse`) is the trait a concrete implementation satisfies, with `CpuNttBackend` as the current implementation — see [`technical-manual.md#ring-internals`](technical-manual.md#ring-internals) for why it evaluates the sums above directly (O(N²)) rather than via a butterfly network (O(N log N)) today.
+`phantom_ring::ntt::NttTable` computes `ψ`, `ω`, and their inverses for a given modulus/degree; `NttBackend` (`forward`/`inverse`) is the trait a concrete implementation satisfies, with `CpuNttBackend` implementing it as a real O(N log N) radix-2 butterfly network — see [`technical-manual.md#ring-internals`](technical-manual.md#ring-internals) for the algorithm and how it's verified, and for what's still not wired into it (the multiplication path everywhere above `phantom-ring` still uses `Ring::schoolbook_mul` instead).
 
 ### Sampling
 
