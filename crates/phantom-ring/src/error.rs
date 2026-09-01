@@ -58,4 +58,14 @@ pub enum RingError {
     /// Modulus is too small for a reducer to operate on (needs at least 2).
     #[error("modulus must be at least 2, got {0}")]
     ModulusTooSmall(u64),
+
+    /// Galois element for [`crate::Ring::apply_automorphism`] isn't coprime
+    /// to `2 * degree`, so `X -> X^element` isn't a valid ring automorphism.
+    #[error("automorphism element {element} must be coprime to 2N={two_n}")]
+    InvalidAutomorphismElement {
+        /// The requested element.
+        element: usize,
+        /// Twice the ring degree.
+        two_n: usize,
+    },
 }

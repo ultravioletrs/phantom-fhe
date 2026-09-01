@@ -2,10 +2,10 @@
 
 use phantom_ring::rns::extension::extend_basis;
 use phantom_ring::sampling::{sample_discrete_gaussian, sample_ternary, sample_uniform};
-use phantom_ring::{Modulus, RnsBasis};
+use phantom_ring::{Degree, Modulus, Ring, RnsBasis};
 use rand_core::{CryptoRng, RngCore};
 
-use crate::rlwe::keyswitch::generate_key_switch_key;
+use crate::rlwe::keyswitch::{generate_key_switch_key, rebase_ternary_secret};
 use crate::rlwe::{GaloisKey, PublicKey, RelinearizationKey, RlweParams, SecretKey};
 use crate::Result;
 
@@ -114,8 +114,54 @@ impl KeyGenerator {
         Ok(RelinearizationKey::from_key_switch_key(ksk))
     }
 
-    /// Generates placeholder Galois key markers.
+    /// Generates placeholder Galois key markers - what every scheme crate
+    /// above this layer still gets, since none of them yet supply the
+    /// auxiliary `P` moduli
+    /// [`generate_hybrid_galois_key`](Self::generate_hybrid_galois_key)
+    /// needs.
     pub fn generate_galois_keys(&self, elements: &[usize], _sk: &SecretKey) -> Vec<GaloisKey> {
         elements.iter().copied().map(GaloisKey::new).collect()
+    }
+
+    /// Generates a real Galois key for `element`: an RNS hybrid
+    /// key-switching key from `σ_element(s)` to `s` (`sk` must be ternary),
+    /// using `p_moduli` as the auxiliary basis. `element` must be coprime to
+    /// `2 * degree` (see [`phantom_ring::Ring::apply_automorphism`]).
+    ///
+    /// `σ_element(s)` needs no special centered lift either, for the same
+    /// reason relinearization's `s²` doesn't (see
+    /// [`generate_hybrid_relinearization_key`](Self::generate_hybrid_relinearization_key)'s
+    /// doc comment): the argument only depends on the target being *some*
+    /// representative congruent mod `Q`, not on what that representative
+    /// actually is. Unlike `s²` though, `σ_element(s)`'s coefficients are
+    /// just a permutation and sign flip of `s`'s own ternary values (proven
+    /// in [`phantom_ring::Ring::apply_automorphism`]'s doc comment), so it
+    /// stays ternary and can be lifted with the simpler, exact
+    /// [`rebase_ternary_secret`] instead of a CRT reconstruction.
+    pub fn generate_hybrid_galois_key<R>(
+        &self,
+        element: usize,
+        sk: &SecretKey,
+        p_moduli: &[Modulus],
+        rng: &mut R,
+    ) -> Result<GaloisKey>
+    where
+        R: RngCore + CryptoRng,
+    {
+        let ring = self.params.ring();
+        let sigma_s = ring.apply_automorphism(sk.value(), element)?;
+        let sigma_sk = SecretKey::new(sigma_s);
+
+        let qp_moduli: Vec<Modulus> = ring
+            .moduli()
+            .iter()
+            .chain(p_moduli.iter())
+            .copied()
+            .collect();
+        let qp_ring = Ring::new(Degree::new(ring.degree())?, qp_moduli)?;
+        let sigma_s_qp = rebase_ternary_secret(&sigma_sk, ring.moduli()[0], &qp_ring)?;
+
+        let ksk = generate_key_switch_key(&self.params, p_moduli, &sigma_s_qp, sk, rng)?;
+        Ok(GaloisKey::from_key_switch_key(element, ksk))
     }
 }

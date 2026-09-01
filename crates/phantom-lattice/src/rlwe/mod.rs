@@ -1,6 +1,5 @@
 //! Generic RLWE primitives.
 
-pub mod automorphism;
 pub mod ciphertext;
 pub mod decryptor;
 pub mod encryptor;
@@ -15,7 +14,6 @@ pub mod relinearization;
 pub mod repacking;
 pub mod secret_key;
 
-pub use automorphism::AutomorphismKey;
 pub use ciphertext::Ciphertext;
 pub use decryptor::Decryptor;
 pub use encryptor::Encryptor;

@@ -14,15 +14,17 @@ The following components are not yet at production cryptographic strength:
   generation and encryption, with worst-case noise-growth bounds in
   `phantom_lattice::noise`. `phantom_lattice::rlwe::{generate_key_switch_key,
   key_switch}` are now a real RNS hybrid key-switch (the modern
-  RNS-CKKS-era technique, not a textbook simplification), and
-  `Evaluator::relinearize` does real degree reduction when given a real key
-  (`KeyGenerator::generate_hybrid_relinearization_key`) - but every scheme
-  crate above `phantom-lattice` (BGV, BFV, CKKS, multiparty) still only
-  constructs the identity-preserving placeholder key
-  (`RelinearizationKey::placeholder()`), since none of them yet have a
-  concept of the auxiliary `P` moduli a real key needs, so `relinearize`
-  still behaves as a no-op in practice for every scheme, and Galois rotation
-  isn't built on real key-switching yet either. Noise tracking itself is a
+  RNS-CKKS-era technique, not a textbook simplification), and both
+  `Evaluator::relinearize` (given `KeyGenerator::generate_hybrid_relinearization_key`)
+  and `Evaluator::apply_galois_automorphism` (given
+  `KeyGenerator::generate_hybrid_galois_key`) do real work when given a real
+  key - but every scheme crate above `phantom-lattice` (BGV, BFV, CKKS,
+  multiparty) still only constructs the identity-preserving placeholder keys
+  (`RelinearizationKey::placeholder()`, `GaloisKey::new`), since none of
+  them yet have a concept of the auxiliary `P` moduli a real key needs, so
+  both operations still behave as a no-op in practice for every scheme
+  (`Evaluator::rotate_coefficients`, the raw-coefficient placeholder BGV's
+  evaluator still calls directly, is unaffected). Noise tracking itself is a
   sound-but-loose worst-case bound, not a tight probabilistic one, and
   key-switching's own noise contribution doesn't yet have a
   formally-derived bound (only an empirically-set test threshold).

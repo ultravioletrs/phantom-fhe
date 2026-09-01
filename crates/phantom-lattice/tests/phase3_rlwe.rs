@@ -240,6 +240,50 @@ fn key_switch_and_relinearization_preserve_decryptability() {
 }
 
 #[test]
+fn real_galois_automorphism_matches_plaintext_sigma_and_preserves_decryptability() {
+    let (params, sk, _) = key_material();
+    let keygen = KeyGenerator::new(params.clone());
+    let mut rng = ChaCha20Rng::from_seed([9u8; 32]);
+
+    // element=3 is coprime to 2*DEGREE=16 (the same small example hand-
+    // verified against direct polynomial substitution in
+    // phantom-ring/tests/automorphism.rs).
+    let element = 3;
+    let p_moduli: Vec<Modulus> = P_MODULI.iter().map(|&p| Modulus::new(p).unwrap()).collect();
+    let galois_key = keygen
+        .generate_hybrid_galois_key(element, &sk, &p_moduli, &mut rng)
+        .unwrap();
+
+    let encryptor = Encryptor::with_secret_key(params.clone(), sk.clone());
+    let decryptor = Decryptor::new(params.clone(), sk);
+    let evaluator = Evaluator::new(params.clone());
+
+    let pt = plaintext(&[1, 2, 3, 4]);
+    let ct = encryptor.encrypt(&pt, &mut rng).unwrap();
+
+    let rotated = evaluator
+        .apply_galois_automorphism(&ct, &galois_key)
+        .unwrap();
+    assert_eq!(rotated.degree(), 1);
+
+    let expected = Plaintext::new(
+        params
+            .ring()
+            .apply_automorphism(pt.value(), element)
+            .unwrap(),
+    );
+    // Fresh encryption noise plus real key-switching's own modest
+    // contribution - same margin as real_relinearization's own bound above.
+    let bound = fresh_secret_key_noise_bound() + 4 * fresh_secret_key_noise_bound();
+    assert_noise_bounded(
+        &decryptor.decrypt(&rotated).unwrap(),
+        &expected,
+        bound,
+        MODULUS,
+    );
+}
+
+#[test]
 fn rotation_changes_coefficients_without_changing_shape() {
     // Pure coefficient-rotation mechanics, no encryption/noise involved -
     // kept on its own small ring rather than the shared noise-tolerant

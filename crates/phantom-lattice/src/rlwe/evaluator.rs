@@ -1,7 +1,7 @@
 //! RLWE evaluator operations.
 
 use crate::rlwe::keyswitch::key_switch;
-use crate::rlwe::{Ciphertext, Plaintext, RelinearizationKey, RlweParams};
+use crate::rlwe::{Ciphertext, GaloisKey, Plaintext, RelinearizationKey, RlweParams};
 use crate::{LatticeError, Result};
 
 /// Scheme-agnostic evaluator.
@@ -102,6 +102,47 @@ impl Evaluator {
             .ring()
             .add(&ct.value()[1], &switched.value()[1])?;
         Ok(Ciphertext::new(vec![new_c0, new_c1]))
+    }
+
+    /// Applies the Galois automorphism `σ_element: X -> X^element` to `ct`
+    /// under `key`, homomorphically - the real primitive ciphertext
+    /// rotation is built on (see
+    /// [`KeyGenerator::generate_hybrid_galois_key`](crate::rlwe::KeyGenerator::generate_hybrid_galois_key)).
+    ///
+    /// If `key` is the identity-preserving placeholder ([`GaloisKey::new`]),
+    /// returns `ct` unchanged - today's behavior for every caller not yet
+    /// supplying a real key, matching [`Self::relinearize`]'s placeholder
+    /// behavior. With a real key ([`GaloisKey::from_key_switch_key`]):
+    /// applying `σ_element` to both of `ct`'s components turns `c0 + c1*s =
+    /// mu + e` into `σ(c0) + σ(c1)*σ(s) = σ(mu) + σ(e)` (any ring
+    /// automorphism preserves the encryption relation, since it distributes
+    /// over addition and multiplication), i.e. a valid ciphertext encrypting
+    /// `σ(mu)` under `σ(s)` - which `key`'s key-switching key (from
+    /// `σ(s)` to `s`) then moves back to the original secret `s`.
+    pub fn apply_galois_automorphism(
+        &self,
+        ct: &Ciphertext,
+        key: &GaloisKey,
+    ) -> Result<Ciphertext> {
+        self.check_ciphertext(ct)?;
+        let Some(ksk) = key.key_switch_key() else {
+            return Ok(ct.clone());
+        };
+        if ct.value().len() != 2 {
+            return Err(LatticeError::InvalidParameters(
+                "apply_galois_automorphism with a real key expects a degree-1 ciphertext (2 components)",
+            ));
+        }
+
+        let mut sigma_components = Vec::with_capacity(ct.value().len());
+        for component in ct.value() {
+            sigma_components.push(
+                self.params
+                    .ring()
+                    .apply_automorphism(component, key.element())?,
+            );
+        }
+        key_switch(&Ciphertext::new(sigma_components), ksk, &self.params)
     }
 
     /// Applies a simple cyclic coefficient rotation to every component.

@@ -246,6 +246,44 @@ impl Ring {
         Ok(out)
     }
 
+    /// Applies the ring automorphism `σ_k: X -> X^k` to `poly`, independently
+    /// per RNS component. `k` must be coprime to `2 * degree()` (odd and
+    /// coprime to `degree()`) for `X -> X^k` to be a valid automorphism of
+    /// `Z[X]/(X^N+1)` - this is exactly the Galois group `(Z/2N)*` that
+    /// underlies Galois-key-based ciphertext rotation.
+    ///
+    /// For coefficient `i`, let `m = (i * k) mod 2N`: if `m < N` it moves to
+    /// position `m` unchanged; otherwise it moves to position `m - N`
+    /// negated, since `X^N ≡ -1` in this ring. Since `k` is coprime to `2N`,
+    /// multiplication by `k` is a bijection on `Z/2N` that commutes with the
+    /// `x -> x + N` shift (`k` odd means `k*N ≡ N (mod 2N)`), so it induces a
+    /// bijection on the `N` folded positions - every output position is hit
+    /// exactly once, with no accumulation needed. Hand-derived and checked
+    /// against direct polynomial substitution `p(X^k) mod (X^N+1)` on a
+    /// concrete example before relying on this.
+    pub fn apply_automorphism(&self, poly: &Poly, k: usize) -> Result<Poly> {
+        self.check_poly(poly)?;
+        let n = self.degree();
+        let two_n = 2 * n;
+        if k % 2 == 0 || gcd(k % two_n, two_n) != 1 {
+            return Err(RingError::InvalidAutomorphismElement { element: k, two_n });
+        }
+        let mut out = self.zero();
+        for (j, modulus) in self.moduli.iter().enumerate() {
+            let q = modulus.value();
+            for i in 0..n {
+                let m = (i * k) % two_n;
+                let c = poly.coeffs()[j][i];
+                if m < n {
+                    out.coeffs_mut()[j][m] = c;
+                } else {
+                    out.coeffs_mut()[j][m - n] = neg_mod(c, q);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     fn schoolbook_mul_component(&self, j: usize, lhs: &Poly, rhs: &Poly, out: &mut Poly) {
         let n = self.degree();
         let q = self.moduli[j].value();
@@ -261,5 +299,15 @@ impl Ring {
                 }
             }
         }
+    }
+}
+
+/// Euclidean GCD, used by [`Ring::apply_automorphism`] to validate that a
+/// Galois element is coprime to `2 * degree`.
+const fn gcd(a: usize, b: usize) -> usize {
+    if b == 0 {
+        a
+    } else {
+        gcd(b, a % b)
     }
 }
