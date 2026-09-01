@@ -83,7 +83,18 @@ The following components are not yet at production cryptographic strength:
   just within a noise bound) across 30 randomized trials. BGV also has a
   real RNS modulus-switching path now (`ModulusSwitcher::switch_next_real`,
   alongside the original clone-only `switch_next`), with the same
-  not-yet-migrated caller situation as everything else here.
+  not-yet-migrated caller situation as everything else here. Both schemes
+  now also have noise/error estimate functions (`bgv::noise`/`bfv::noise`,
+  plus `BgvContext`/`BfvContext::noise_budget_bits` and
+  `fresh_*_noise_budget_bits` convenience wrappers) - unlike CKKS's
+  `Precision` (a real per-ciphertext field), these are standalone
+  parameter-driven estimates, since neither scheme's real `Ciphertext` type
+  carries any noise metadata of its own. They cover fresh encryption and
+  raw multiplication for both schemes, plus relinearization for BGV
+  specifically (whose classical gadget-decomposition key-switch has a
+  derivable bound); BFV's (and CKKS's) relinearization/key-switching noise
+  contribution remains unbounded, the same gap noted above for
+  `phantom_lattice::rlwe`'s hybrid key-switching generally.
 - `phantom-schemes::ckks` still has its original approximate encoding
   (`Encoder::encode_complex`/`decode_complex`) and transparent
   `Ciphertext`/`Encryptor`/`Decryptor` as its default path - the actual

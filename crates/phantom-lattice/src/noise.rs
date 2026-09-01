@@ -101,6 +101,25 @@ pub fn external_product_noise_bound(
     message_term + gadget_term
 }
 
+/// Bits of margin a noise bound leaves against a correctness `threshold`
+/// (the largest noise magnitude decryption can still tolerate before
+/// wraparound or rounding gives the wrong answer), both given as `log2` of
+/// the underlying value - `threshold_bits - noise_bits`, clamped to `0.0`
+/// (no margin, never negative). Kept in log space rather than taking the
+/// threshold/noise themselves: a scheme's correctness threshold is
+/// typically `ciphertext_modulus / (2 * plaintext_modulus)` or similar,
+/// and the modulus product for a realistic multi-modulus ring routinely
+/// exceeds what a `u64` or even `f64` can represent exactly - but its
+/// `log2` (a sum of each modulus's own `log2`) never does. Each scheme
+/// derives its own `threshold_bits`/`noise_bits` from its own correctness
+/// condition and calls this shared helper - see
+/// `phantom_schemes::bgv::noise`/`bfv::noise`/`ckks::noise` (whose own
+/// `precision_bits_from_noise` is this same identity specialized to CKKS's
+/// canonical-embedding setting, predating this shared extraction).
+pub fn noise_budget_bits(threshold_bits: f64, noise_bits: f64) -> f64 {
+    (threshold_bits - noise_bits).max(0.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +165,12 @@ mod tests {
         // gadget_term = 2*2*ring_product_bound(4, 15, fresh_error_bound()=20) = 4*(4*15*20) = 4*1200 = 4800
         // total = 240 + 4800 = 5040
         assert_eq!(external_product_noise_bound(4, 3, 20, 2, 4), 5040);
+    }
+
+    #[test]
+    fn noise_budget_bits_is_the_plain_difference_clamped_at_zero() {
+        assert_eq!(noise_budget_bits(30.0, 10.0), 20.0);
+        assert_eq!(noise_budget_bits(10.0, 30.0), 0.0);
+        assert_eq!(noise_budget_bits(10.0, 10.0), 0.0);
     }
 }

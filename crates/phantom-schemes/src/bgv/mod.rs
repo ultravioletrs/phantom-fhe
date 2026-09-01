@@ -8,6 +8,7 @@ mod encryptor;
 mod evaluator;
 mod keygen;
 mod modulus_switch;
+pub mod noise;
 mod params;
 mod plaintext;
 mod relinearization;

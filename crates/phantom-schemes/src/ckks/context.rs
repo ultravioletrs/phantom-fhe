@@ -73,4 +73,20 @@ impl CkksContext {
     pub fn evaluator(&self) -> Evaluator {
         Evaluator::new(self.params.clone())
     }
+
+    /// Bits of precision a freshly-encrypted ciphertext starts at, at this
+    /// context's own ring/default scale - see
+    /// [`super::noise::fresh_precision_bits`]. `Ciphertext`/`Plaintext`
+    /// already track this as a real, per-value field (unlike BGV/BFV,
+    /// which have no per-ciphertext noise field at all - see
+    /// `bgv::BgvContext`/`bfv::BfvContext`'s own
+    /// `noise_budget_bits`/`fresh_*_noise_budget_bits`), so this exists for
+    /// discoverability/API symmetry across the three scheme contexts more
+    /// than as a capability CKKS otherwise lacks.
+    pub fn fresh_precision_bits(&self) -> f64 {
+        super::noise::fresh_precision_bits(
+            self.params.ring().degree(),
+            self.params.default_scale().value(),
+        )
+    }
 }

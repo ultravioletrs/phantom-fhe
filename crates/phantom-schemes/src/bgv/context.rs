@@ -67,4 +67,34 @@ impl BgvContext {
     pub fn evaluator(&self) -> Result<Evaluator> {
         Evaluator::new(self.params.clone())
     }
+
+    /// Bits of noise margin `noise_bound` leaves before decryption breaks,
+    /// at this context's own ring/plaintext modulus - see
+    /// [`super::noise::noise_budget_bits`].
+    pub fn noise_budget_bits(&self, noise_bound: u64) -> f64 {
+        let moduli: Vec<u64> = self
+            .params
+            .ring()
+            .moduli()
+            .iter()
+            .map(|m| m.value())
+            .collect();
+        super::noise::noise_budget_bits(&moduli, self.params.plaintext_modulus(), noise_bound)
+    }
+
+    /// Bits of noise margin left immediately after a fresh secret-key
+    /// encryption - see [`Self::noise_budget_bits`] and
+    /// [`super::noise::fresh_secret_key_noise_bound`].
+    pub fn fresh_secret_key_noise_budget_bits(&self) -> f64 {
+        self.noise_budget_bits(super::noise::fresh_secret_key_noise_bound())
+    }
+
+    /// Bits of noise margin left immediately after a fresh public-key
+    /// encryption - see [`Self::noise_budget_bits`] and
+    /// [`super::noise::fresh_public_key_noise_bound`].
+    pub fn fresh_public_key_noise_budget_bits(&self) -> f64 {
+        self.noise_budget_bits(super::noise::fresh_public_key_noise_bound(
+            self.params.ring().degree(),
+        ))
+    }
 }
