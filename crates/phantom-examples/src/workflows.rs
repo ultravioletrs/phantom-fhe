@@ -8,6 +8,7 @@ use phantom_bootstrapping::ckks::{
 };
 use phantom_circuits::bgv::PolynomialEvaluator as BgvPolynomialEvaluator;
 use phantom_circuits::ckks::{DftDirection, DftEvaluator, InverseEvaluator};
+use phantom_lattice::rgsw::GadgetDecompositionParams;
 use phantom_multiparty::common::{
     ParticipantId, ParticipantSet, ProtocolKind, SessionId, SessionState, ShareAggregator,
     ShareKind,
@@ -132,6 +133,92 @@ pub fn bgv_polynomial() -> Result<ExampleOutput, ExampleError> {
     Ok(ExampleOutput::new(
         "bgv_polynomial",
         encoder.decode_u64(&decrypted)?[..5].iter(),
+    ))
+}
+
+/// Runs a **real** BGV pipeline: encrypt, homomorphic add, homomorphic
+/// multiply, real relinearization (classical gadget decomposition - see
+/// `phantom_schemes::bgv::relinearization`'s own module doc comment for why
+/// BGV needs a different construction from BFV's), then decrypt - unlike
+/// [`bgv_basic`]/[`bgv_polynomial`] above, which still use the transparent
+/// (no real cryptographic content) path every other example and the
+/// multiparty/circuits consumers still rely on.
+pub fn bgv_real_basic() -> Result<ExampleOutput, ExampleError> {
+    let ctx = BgvContext::new(bgv_real_params()?);
+    let mut rng = rng(10);
+    let keygen = ctx.keygen()?;
+    let keys = keygen.generate_keypair_real(&mut rng)?;
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.decryptor(keys.secret.clone())?;
+    let evaluator = ctx.evaluator()?;
+
+    let a_pt = encoder.encode_u64(&[2, 4, 6, 8])?;
+    let b_pt = encoder.encode_u64(&[1, 3, 5, 7])?;
+    let a_ct = encryptor.encrypt(&a_pt, &mut rng)?;
+    let b_ct = encryptor.encrypt(&b_pt, &mut rng)?;
+
+    let sum = evaluator.add(&a_ct, &b_ct)?;
+    let decrypted_sum = decryptor.decrypt(&sum)?;
+
+    let product = evaluator.mul(&a_ct, &b_ct, None)?;
+    let decomposition_params = GadgetDecompositionParams::new(8, 7)?;
+    let relin_key =
+        keygen.generate_relinearization_key_real(&keys.secret, decomposition_params, &mut rng)?;
+    let relinearized = evaluator.relinearize_real(&product, &relin_key)?;
+    let decrypted_product = decryptor.decrypt(&relinearized)?;
+
+    Ok(ExampleOutput::new(
+        "bgv_real_basic",
+        [
+            format!("sum={:?}", &encoder.decode_u64(&decrypted_sum)?[..4]),
+            format!(
+                "product={:?}",
+                &encoder.decode_u64(&decrypted_product)?[..4]
+            ),
+        ],
+    ))
+}
+
+/// Runs a **real** BFV pipeline: encrypt, homomorphic add, homomorphic
+/// multiply (tensor-and-rescale - see `phantom_schemes::bfv::Evaluator::mul_real`'s
+/// own doc comment), real relinearization, then decrypt - unlike
+/// [`bfv_basic`]/[`bfv_batching`]/[`bfv_rotation`] above, which still use
+/// the transparent path.
+pub fn bfv_real_basic() -> Result<ExampleOutput, ExampleError> {
+    let ctx = BfvContext::new(bfv_real_params()?);
+    let mut rng = rng(11);
+    let keygen = ctx.keygen()?;
+    let keys = keygen.generate_keypair(&mut rng)?;
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.decryptor(keys.secret.clone())?;
+    let evaluator = ctx.evaluator()?;
+
+    let a_pt = encoder.encode_u64(&[2, 4, 6, 8])?;
+    let b_pt = encoder.encode_u64(&[1, 3, 5, 7])?;
+    let a_ct = encryptor.encrypt(&a_pt, &mut rng)?;
+    let b_ct = encryptor.encrypt(&b_pt, &mut rng)?;
+
+    let sum = evaluator.add(&a_ct, &b_ct)?;
+    let decrypted_sum = decryptor.decrypt(&sum)?;
+
+    let p_moduli = bfv_real_p_moduli()?;
+    let product = evaluator.mul_real(&a_ct, &b_ct, &p_moduli)?;
+    let relin_key =
+        keygen.generate_hybrid_relinearization_key(&keys.secret, &p_moduli, &mut rng)?;
+    let relinearized = evaluator.relinearize_real(&product, &relin_key)?;
+    let decrypted_product = decryptor.decrypt(&relinearized)?;
+
+    Ok(ExampleOutput::new(
+        "bfv_real_basic",
+        [
+            format!("sum={:?}", &encoder.decode_u64_real(&decrypted_sum)?[..4]),
+            format!(
+                "product={:?}",
+                &encoder.decode_u64_real(&decrypted_product)?[..4]
+            ),
+        ],
     ))
 }
 
@@ -339,6 +426,39 @@ fn toy_ring() -> Result<Ring, ExampleError> {
     )?)
 }
 
+// Real BGV/BFV encryption needs real noise headroom the toy ring above has
+// none of (see phantom-schemes::bgv/bfv's own real-path doc comments) -
+// separate, realistically-sized parameters kept just for the two "real"
+// workflows above, so the toy-preset examples/tests every other workflow
+// here (and phantom-circuits/phantom-multiparty) still relies on stay
+// completely unaffected. Same modulus sizes `phantom-schemes`'s own
+// `tests/phase5_bgv.rs`/`tests/phase6_bfv.rs` use, individually verified
+// prime (Miller-Rabin, in Python) before use there.
+const REAL_DEGREE: usize = 8;
+const REAL_MODULUS: u64 = 1_000_000_000_000_037;
+const REAL_T: u64 = 17;
+const REAL_P1: u64 = 1_000_000_000_000_091;
+const REAL_P2: u64 = 1_000_000_000_000_159;
+
+fn real_ring() -> Result<Ring, ExampleError> {
+    Ok(Ring::new(
+        Degree::new(REAL_DEGREE)?,
+        vec![Modulus::new(REAL_MODULUS)?],
+    )?)
+}
+
+fn bgv_real_params() -> Result<BgvParams, ExampleError> {
+    Ok(BgvParams::new(real_ring()?, REAL_T)?)
+}
+
+fn bfv_real_params() -> Result<BfvParams, ExampleError> {
+    Ok(BfvParams::new(real_ring()?, REAL_T)?)
+}
+
+fn bfv_real_p_moduli() -> Result<Vec<Modulus>, ExampleError> {
+    Ok(vec![Modulus::new(REAL_P1)?, Modulus::new(REAL_P2)?])
+}
+
 fn ckks_ciphertext(slots: &[Complex64]) -> Result<phantom_schemes::ckks::Ciphertext, ExampleError> {
     Ok(phantom_schemes::ckks::Ciphertext::new(
         slots.to_vec(),
@@ -398,6 +518,12 @@ impl From<phantom_multiparty::MultipartyError> for ExampleError {
 
 impl From<phantom_ring::RingError> for ExampleError {
     fn from(error: phantom_ring::RingError) -> Self {
+        Self::new(error.to_string())
+    }
+}
+
+impl From<phantom_lattice::LatticeError> for ExampleError {
+    fn from(error: phantom_lattice::LatticeError) -> Self {
         Self::new(error.to_string())
     }
 }

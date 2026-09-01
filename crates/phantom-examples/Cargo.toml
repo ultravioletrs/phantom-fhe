@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 phantom-bootstrapping = { path = "../phantom-bootstrapping" }
 phantom-circuits = { path = "../phantom-circuits" }
+phantom-lattice = { path = "../phantom-lattice" }
 phantom-multiparty = { path = "../phantom-multiparty" }
 phantom-ring = { path = "../phantom-ring" }
 phantom-schemes = { path = "../phantom-schemes" }
