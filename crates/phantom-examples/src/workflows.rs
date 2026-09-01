@@ -222,6 +222,50 @@ pub fn bfv_real_basic() -> Result<ExampleOutput, ExampleError> {
     ))
 }
 
+/// Runs a **real** CKKS pipeline: encrypt, homomorphic multiply, real
+/// relinearization, real rescale, then decrypt/decode - unlike
+/// [`ckks_basic`]/[`ckks_rescale`]/[`ckks_dft`]/[`ckks_inverse`]/[`ckks_bootstrapping`]
+/// below, which still use the transparent (no real cryptographic content)
+/// path every other CKKS example and the multiparty/circuits/bootstrapping
+/// consumers still rely on. See `phantom_schemes::ckks::evaluator`'s own
+/// module doc comment for why CKKS needs no BFV-style extended-basis
+/// tensor-and-rescale procedure at multiplication time, and why its rescale
+/// (unlike BGV's) needs no congruence-preserving correction term.
+pub fn ckks_real_basic() -> Result<ExampleOutput, ExampleError> {
+    let ctx = CkksContext::new(ckks_real_params()?);
+    let mut rng = rng(12);
+    let keygen = ctx.keygen()?;
+    let keys = keygen.generate_keypair(&mut rng)?;
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.real_decryptor(keys.secret.clone())?;
+    let evaluator = ctx.evaluator();
+
+    let a_values = [Complex64::new(1.5, -0.5), Complex64::new(2.0, 1.0)];
+    let b_values = [Complex64::new(0.5, 0.5), Complex64::new(-1.0, 2.0)];
+    let a_ct = encryptor.encrypt_real(&encoder.encode_complex_real(&a_values)?, &mut rng)?;
+    let b_ct = encryptor.encrypt_real(&encoder.encode_complex_real(&b_values)?, &mut rng)?;
+
+    let sum = evaluator.add_real(&a_ct, &b_ct)?;
+    let decoded_sum = encoder.decode_complex_real(&decryptor.decrypt_real(&sum)?)?;
+
+    let p_moduli = ckks_real_p_moduli()?;
+    let relin_key =
+        keygen.generate_hybrid_relinearization_key(&keys.secret, &p_moduli, &mut rng)?;
+    let product = evaluator.mul_real(&a_ct, &b_ct)?;
+    let relinearized = evaluator.relinearize_real(&product, &relin_key)?;
+    let rescaled = evaluator.rescale_next_real(&relinearized)?;
+    let decoded_product = encoder.decode_complex_real(&decryptor.decrypt_real(&rescaled)?)?;
+
+    Ok(ExampleOutput::new(
+        "ckks_real_basic",
+        [
+            format!("sum={:?}", &decoded_sum[..2]),
+            format!("product={:?}", &decoded_product[..2]),
+        ],
+    ))
+}
+
 /// Runs a CKKS encrypt/decrypt round trip.
 pub fn ckks_basic() -> Result<ExampleOutput, ExampleError> {
     let ctx = CkksContext::new(ckks_params()?);
@@ -456,6 +500,29 @@ fn bfv_real_params() -> Result<BfvParams, ExampleError> {
 }
 
 fn bfv_real_p_moduli() -> Result<Vec<Modulus>, ExampleError> {
+    Ok(vec![Modulus::new(REAL_P1)?, Modulus::new(REAL_P2)?])
+}
+
+// CKKS's real rescale drops the ring's *last* modulus, so unlike BGV/BFV's
+// single-modulus `real_ring()` above, this needs a second one - chosen
+// close to `2^REAL_CKKS_SCALE_BITS`, the standard RNS-CKKS convention that
+// keeps the tracked scale close to `default_scale` across a rescale (see
+// `phantom_schemes::ckks::evaluator`'s own module doc comment). Both primes
+// Miller-Rabin verified in Python before use, matching `REAL_MODULUS`'s own
+// precedent; `REAL_P1`/`REAL_P2` above are reused for the hybrid
+// relinearization key's own auxiliary moduli.
+const REAL_CKKS_RESCALE_MODULUS: u64 = 1_073_741_827;
+const REAL_CKKS_SCALE_BITS: u32 = 30;
+
+fn ckks_real_params() -> Result<CkksParams, ExampleError> {
+    Ok(CkksParams::builder()
+        .degree(REAL_DEGREE)
+        .moduli(vec![REAL_MODULUS, REAL_CKKS_RESCALE_MODULUS])
+        .default_scale_bits(REAL_CKKS_SCALE_BITS)
+        .build()?)
+}
+
+fn ckks_real_p_moduli() -> Result<Vec<Modulus>, ExampleError> {
     Ok(vec![Modulus::new(REAL_P1)?, Modulus::new(REAL_P2)?])
 }
 

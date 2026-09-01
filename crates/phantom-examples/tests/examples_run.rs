@@ -1,7 +1,7 @@
 use phantom_examples::{
     bfv_basic, bfv_batching, bfv_real_basic, bfv_rotation, bgv_basic, bgv_polynomial,
-    bgv_real_basic, ckks_basic, ckks_bootstrapping, ckks_dft, ckks_inverse, ckks_rescale,
-    mpbgv_basic, mpckks_basic, mpckks_interactive_bootstrap,
+    bgv_real_basic, ckks_basic, ckks_bootstrapping, ckks_dft, ckks_inverse, ckks_real_basic,
+    ckks_rescale, mpbgv_basic, mpckks_basic, mpckks_interactive_bootstrap,
 };
 
 #[test]
@@ -33,7 +33,11 @@ fn documented_examples_run_on_toy_presets() {
 
 #[test]
 fn real_examples_run_on_realistically_sized_parameters() {
-    let outputs = [bgv_real_basic().unwrap(), bfv_real_basic().unwrap()];
+    let outputs = [
+        bgv_real_basic().unwrap(),
+        bfv_real_basic().unwrap(),
+        ckks_real_basic().unwrap(),
+    ];
 
     for output in outputs {
         assert!(

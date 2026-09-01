@@ -39,10 +39,13 @@ The following components are not yet at production cryptographic strength:
   noise-bearing encryption path
   (`Encryptor::with_secret_key_real`/`with_public_key_real`) alongside
   their original transparent one - every existing caller
-  (`phantom-circuits`, `phantom-bootstrapping`, `phantom-multiparty`,
-  `phantom-examples`) still only constructs the transparent
-  (non-encrypted) path, since their toy ring parameters have no headroom
-  for real noise and haven't been migrated yet. BGV's real path needs
+  (`phantom-circuits`, `phantom-bootstrapping`, `phantom-multiparty`) still
+  only constructs the transparent (non-encrypted) path, since their toy
+  ring parameters have no headroom for real noise and haven't been
+  migrated yet; `phantom-examples` additionally has two dedicated
+  real-path workflows (`bgv_real_basic`/`bfv_real_basic`) at
+  realistically-sized parameters, kept separate from its toy-preset
+  examples rather than a migration of them. BGV's real path needs
   noise scaled by the plaintext modulus `t` and a matching real public key
   (`BgvKeyGenerator::generate_keypair_real`); BFV's real path scales the
   *message* by `Delta = floor(Q/t)` instead and reuses a standard public
@@ -104,10 +107,12 @@ The following components are not yet at production cryptographic strength:
   suffices. Real CKKS multiplication needs no BFV-style extended-basis
   tensor-and-rescale procedure: its mod-`Q` tensor product is already
   exactly what the *next*, separate rescale step needs. This real path
-  isn't wired into `phantom-circuits`/`phantom-bootstrapping`/`phantom-multiparty`/`phantom-examples`
+  isn't wired into `phantom-circuits`/`phantom-bootstrapping`/`phantom-multiparty`
   yet, the same not-yet-migrated situation as BGV/BFV's own real paths
-  above - and conjugate-invariant real packing and an NTT/FFT fast path
-  for encode/decode remain unimplemented.
+  above; `phantom-examples` additionally has a dedicated real-path
+  workflow (`ckks_real_basic`), the same as BGV/BFV's own two. Conjugate-
+  invariant real packing and an NTT/FFT fast path for encode/decode remain
+  unimplemented.
 - `phantom-bootstrapping::ckks` is a message-preserving pipeline, not yet a
   production refresh pipeline. BGV/BFV bootstrapping modules are reserved
   but unimplemented.
