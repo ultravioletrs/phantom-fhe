@@ -30,17 +30,32 @@ impl BgvContext {
         BgvKeyGenerator::new(self.params.clone())
     }
 
-    /// Creates a public-key encryptor.
+    /// Creates a transparent public-key encryptor (see [`Encryptor`]'s own
+    /// doc comment for the transparent-vs-real distinction).
     pub fn encryptor(&self, public_key: phantom_lattice::rlwe::PublicKey) -> Result<Encryptor> {
         Encryptor::with_public_key(self.params.clone(), public_key)
     }
 
-    /// Creates a secret-key encryptor.
+    /// Creates a transparent secret-key encryptor.
     pub fn secret_key_encryptor(
         &self,
         secret_key: phantom_lattice::rlwe::SecretKey,
     ) -> Result<Encryptor> {
         Encryptor::with_secret_key(self.params.clone(), secret_key)
+    }
+
+    /// Creates a real public-key encryptor. `public_key` must come from
+    /// [`BgvKeyGenerator::generate_keypair_real`].
+    pub fn real_encryptor(&self, public_key: phantom_lattice::rlwe::PublicKey) -> Encryptor {
+        Encryptor::with_public_key_real(self.params.clone(), public_key)
+    }
+
+    /// Creates a real secret-key encryptor.
+    pub fn real_secret_key_encryptor(
+        &self,
+        secret_key: phantom_lattice::rlwe::SecretKey,
+    ) -> Encryptor {
+        Encryptor::with_secret_key_real(self.params.clone(), secret_key)
     }
 
     /// Creates a decryptor.
