@@ -80,6 +80,7 @@ impl Evaluator {
     /// Adds two ciphertexts.
     pub fn add(&self, lhs: &Ciphertext, rhs: &Ciphertext) -> Result<Ciphertext> {
         self.check_binary(lhs, rhs)?;
+        Self::check_scale(lhs.scale(), rhs.scale())?;
         let degrade = add_degrade_bits(
             self.degree(),
             lhs.scale().value(),
@@ -99,6 +100,7 @@ impl Evaluator {
     /// Subtracts two ciphertexts.
     pub fn sub(&self, lhs: &Ciphertext, rhs: &Ciphertext) -> Result<Ciphertext> {
         self.check_binary(lhs, rhs)?;
+        Self::check_scale(lhs.scale(), rhs.scale())?;
         let degrade = add_degrade_bits(
             self.degree(),
             lhs.scale().value(),
@@ -130,6 +132,7 @@ impl Evaluator {
     /// Adds a plaintext to a ciphertext.
     pub fn add_plain(&self, ciphertext: &Ciphertext, plaintext: &Plaintext) -> Result<Ciphertext> {
         self.check_plain_binary(ciphertext, plaintext)?;
+        Self::check_scale(ciphertext.scale(), plaintext.scale())?;
         let degrade = add_degrade_bits(
             self.degree(),
             ciphertext.scale().value(),
@@ -322,6 +325,7 @@ impl Evaluator {
     /// Adds two **real** ciphertexts - see the module doc comment.
     pub fn add_real(&self, lhs: &Ciphertext, rhs: &Ciphertext) -> Result<Ciphertext> {
         self.check_binary(lhs, rhs)?;
+        Self::check_scale(lhs.scale(), rhs.scale())?;
         let (lhs_poly, rhs_poly) = (self.real_poly(lhs)?, self.real_poly(rhs)?);
         let sum = self.inner_at(lhs.level())?.add(lhs_poly, rhs_poly)?;
         let degrade = add_degrade_bits(
@@ -343,6 +347,7 @@ impl Evaluator {
     /// Subtracts two **real** ciphertexts - see the module doc comment.
     pub fn sub_real(&self, lhs: &Ciphertext, rhs: &Ciphertext) -> Result<Ciphertext> {
         self.check_binary(lhs, rhs)?;
+        Self::check_scale(lhs.scale(), rhs.scale())?;
         let (lhs_poly, rhs_poly) = (self.real_poly(lhs)?, self.real_poly(rhs)?);
         let diff = self.inner_at(lhs.level())?.sub(lhs_poly, rhs_poly)?;
         let degrade = add_degrade_bits(
@@ -545,13 +550,25 @@ impl Evaluator {
         ))
     }
 
+    /// Level/slot-count compatibility only - **not** scale, since CKKS
+    /// multiplication (unlike addition) doesn't require matching operand
+    /// scales: the result's scale is simply their product either way (see
+    /// [`Self::mul`]/[`Self::mul_real`]). Callers that need addition's
+    /// stricter "same scale" requirement call [`Self::check_scale`]
+    /// themselves alongside this.
     fn check_binary(&self, lhs: &Ciphertext, rhs: &Ciphertext) -> Result<()> {
         self.check_ciphertext(lhs)?;
         self.check_ciphertext(rhs)?;
         if lhs.slots().len() != rhs.slots().len() || lhs.level() != rhs.level() {
             return Err(SchemesError::DimensionMismatch);
         }
-        if !lhs.scale().compatible(rhs.scale()) {
+        Ok(())
+    }
+
+    /// See [`Self::check_binary`]'s own doc comment for why this is a
+    /// separate check rather than folded into it.
+    fn check_scale(lhs: Scale, rhs: Scale) -> Result<()> {
+        if !lhs.compatible(rhs) {
             return Err(SchemesError::InvalidParameters("scale mismatch"));
         }
         Ok(())
@@ -561,9 +578,6 @@ impl Evaluator {
         self.check_ciphertext(lhs)?;
         if lhs.slots().len() != rhs.slots().len() || lhs.level() != rhs.level() {
             return Err(SchemesError::DimensionMismatch);
-        }
-        if !lhs.scale().compatible(rhs.scale()) {
-            return Err(SchemesError::InvalidParameters("scale mismatch"));
         }
         Ok(())
     }

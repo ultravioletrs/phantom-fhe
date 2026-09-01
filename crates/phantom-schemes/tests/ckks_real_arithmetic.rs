@@ -41,6 +41,27 @@ fn p_moduli() -> Vec<Modulus> {
     vec![Modulus::new(P1).unwrap(), Modulus::new(P2).unwrap()]
 }
 
+// Three-modulus ring for the Horner-style regression test below: two large
+// primes that both survive a raw (unrelinearized) tensor product's
+// magnitude (`~default_scale^2 * message_bound`, comfortably under
+// `Q0*Q1 ~ 2^112`) at level 1, plus the same `RESCALE_MODULUS` as the
+// third (dropped first) modulus - unlike `real_arith_params`'s two-modulus
+// ring, whose level 0 (a single ~2^50 modulus) is too small to hold a
+// second raw tensor product at all, an unrelated sizing constraint, not a
+// property of the scale/mul fix under test. Both new primes Miller-Rabin
+// verified in Python before use.
+const HORNER_Q0: u64 = 36_028_797_018_976_327;
+const HORNER_Q1: u64 = 36_028_797_018_976_331;
+
+fn horner_params() -> CkksParams {
+    CkksParams::builder()
+        .degree(REAL_DEGREE)
+        .moduli(vec![HORNER_Q0, HORNER_Q1, RESCALE_MODULUS])
+        .default_scale_bits(SCALE_BITS)
+        .build()
+        .unwrap()
+}
+
 fn seeded_rng(seed: u8) -> ChaCha20Rng {
     ChaCha20Rng::from_seed([seed; 32])
 }
@@ -378,4 +399,121 @@ fn drop_level_real_rejects_level_zero_and_a_transparent_ciphertext() {
         .encrypt(&encoder.encode_complex(&values).unwrap(), &mut rng)
         .unwrap();
     assert!(evaluator.drop_level_real(&transparent_ct).is_err());
+}
+
+// Regression coverage for two findings from Workstream 6 item 2's scoping
+// (see `docs/internal/implementation-plan.md`): a genuine Horner-style
+// circuit (`x^3` computed as `x^2 * x`, not `x*x*x` directly) needs both
+// `mul_real` to accept operands whose scales don't match (real CKKS
+// multiplication never required this - only addition does, since the
+// result's scale is just the product of the inputs either way) and
+// `Scale::compatible` to tolerate the small, expected drift a real
+// `rescale_next_real` call introduces (dividing by the *actual* dropped
+// modulus, never exactly a power of two).
+
+#[test]
+fn mul_real_accepts_mismatched_scales_enabling_a_horner_style_cube() {
+    let ctx = CkksContext::new(horner_params());
+    let mut rng = seeded_rng(25);
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.real_decryptor(keys.secret.clone()).unwrap();
+    let evaluator = ctx.evaluator();
+    let relin_key = ctx
+        .keygen()
+        .unwrap()
+        .generate_hybrid_relinearization_key(&keys.secret, &p_moduli(), &mut rng)
+        .unwrap();
+
+    let x_values = sample_values(&encoder, 26);
+    let x_ct = encryptor
+        .encrypt_real(&encoder.encode_complex_real(&x_values).unwrap(), &mut rng)
+        .unwrap();
+    assert_eq!(x_ct.level(), 2);
+
+    // x^2, rescaled down to level 1 - its tracked scale is now
+    // `default_scale^2 / RESCALE_MODULUS`, not exactly `default_scale`.
+    let x_squared = evaluator
+        .relinearize_real(&evaluator.mul_real(&x_ct, &x_ct).unwrap(), &relin_key)
+        .unwrap();
+    let x_squared_rescaled = evaluator.rescale_next_real(&x_squared).unwrap();
+    assert_eq!(x_squared_rescaled.level(), 1);
+
+    // x itself, brought down to the same level via `drop_level_real` -
+    // scale untouched, so it's still exactly `default_scale`, deliberately
+    // *not* matching `x_squared_rescaled`'s own (slightly drifted) scale.
+    let x_dropped = evaluator.drop_level_real(&x_ct).unwrap();
+    assert_eq!(x_dropped.level(), 1);
+    assert_ne!(
+        x_dropped.scale().value(),
+        x_squared_rescaled.scale().value()
+    );
+
+    // The regression itself: before this fix, `mul_real` rejected this
+    // call outright (`check_binary`'s scale-compatibility check), even
+    // though real CKKS multiplication never required matching scales -
+    // the raw product decrypts correctly either way (verified below via
+    // `phantom_lattice::rlwe::Decryptor::decrypt`'s own degree-2 support,
+    // sidestepping the unrelated fact that `relin_key` was generated for
+    // the full-level ring and so isn't itself usable below level 2).
+    let cubed_raw = evaluator.mul_real(&x_squared_rescaled, &x_dropped).unwrap();
+    assert_eq!(cubed_raw.degree(), 2);
+    assert_eq!(cubed_raw.level(), 1);
+
+    let expected: Vec<Complex64> = x_values.iter().map(|x| *x * *x * *x).collect();
+    let decoded = encoder
+        .decode_complex_real(&decryptor.decrypt_real(&cubed_raw).unwrap())
+        .unwrap();
+    assert_close(&decoded, &expected, 1e-3);
+}
+
+#[test]
+fn add_plain_real_tolerates_the_scale_drift_a_real_rescale_introduces() {
+    let ctx = CkksContext::new(real_arith_params());
+    let mut rng = seeded_rng(27);
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let relin_key = ctx
+        .keygen()
+        .unwrap()
+        .generate_hybrid_relinearization_key(&keys.secret, &p_moduli(), &mut rng)
+        .unwrap();
+    let decryptor = ctx.real_decryptor(keys.secret).unwrap();
+    let evaluator = ctx.evaluator();
+
+    let x_values = sample_values(&encoder, 28);
+    let x_ct = encryptor
+        .encrypt_real(&encoder.encode_complex_real(&x_values).unwrap(), &mut rng)
+        .unwrap();
+    let x_squared = evaluator
+        .relinearize_real(&evaluator.mul_real(&x_ct, &x_ct).unwrap(), &relin_key)
+        .unwrap();
+    let x_squared_rescaled = evaluator.rescale_next_real(&x_squared).unwrap();
+
+    // A freshly-encoded plaintext at level 0's *nominal* default scale -
+    // not derived from any rescale, so it's exactly `2^SCALE_BITS`, while
+    // `x_squared_rescaled`'s own scale is `default_scale^2 / RESCALE_MODULUS`
+    // (close, but never bit-for-bit equal, since `RESCALE_MODULUS` is odd
+    // and so can never equal `2^SCALE_BITS` exactly).
+    let level_zero_encoder =
+        phantom_schemes::ckks::Encoder::new(real_arith_params().at_level(0).unwrap());
+    let c_values = sample_values(&level_zero_encoder, 29);
+    let c_pt = level_zero_encoder.encode_complex_real(&c_values).unwrap();
+    assert_ne!(c_pt.scale().value(), x_squared_rescaled.scale().value());
+
+    let sum = evaluator
+        .add_plain_real(&x_squared_rescaled, &c_pt)
+        .unwrap();
+
+    let expected: Vec<Complex64> = x_values
+        .iter()
+        .zip(&c_values)
+        .map(|(x, c)| *x * *x + *c)
+        .collect();
+    let decoded = level_zero_encoder
+        .decode_complex_real(&decryptor.decrypt_real(&sum).unwrap())
+        .unwrap();
+    assert_close(&decoded, &expected, 1e-3);
 }
