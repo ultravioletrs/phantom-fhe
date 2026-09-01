@@ -149,6 +149,26 @@ impl Evaluator {
         )))
     }
 
+    /// Relinearizes a degree-2 real BFV ciphertext (e.g. [`Self::mul_real`]'s
+    /// output) back to degree 1, using a key from
+    /// [`super::BfvKeyGenerator::generate_hybrid_relinearization_key`].
+    /// Real BFV ciphertexts are structurally plain RLWE ciphertexts (no
+    /// `Delta`-specific shape), so this is a direct, unmodified
+    /// pass-through to [`phantom_lattice::rlwe::Evaluator::relinearize`] -
+    /// unlike BGV, which can't reuse this key-switching machinery unmodified
+    /// for its own real ciphertexts (see
+    /// [`crate::bgv::BgvKeyGenerator::generate_raw_hybrid_relinearization_key`]'s
+    /// own doc comment for why).
+    pub fn relinearize_real(
+        &self,
+        ciphertext: &Ciphertext,
+        key: &phantom_lattice::rlwe::RelinearizationKey,
+    ) -> Result<Ciphertext> {
+        let rlwe_evaluator = phantom_lattice::rlwe::Evaluator::new(self.params.rlwe_params()?);
+        let relinearized = rlwe_evaluator.relinearize(ciphertext.inner().inner(), key)?;
+        Ok(Ciphertext::new(bgv::Ciphertext::new(relinearized)))
+    }
+
     /// Multiplies a ciphertext by a plaintext.
     pub fn mul_plain(&self, ciphertext: &Ciphertext, plaintext: &Plaintext) -> Result<Ciphertext> {
         Ok(Ciphertext::new(

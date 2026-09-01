@@ -330,6 +330,52 @@ fn real_multiplication_matches_schoolbook_reference_across_many_random_pairs() {
 }
 
 #[test]
+fn real_relinearization_reduces_degree_and_preserves_the_product() {
+    let ctx = BfvContext::new(real_params());
+    let mut rng = seeded_rng();
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair(&mut rng).unwrap();
+    let p_moduli = p_moduli();
+    let relin_key = keygen
+        .generate_hybrid_relinearization_key(&keys.secret, &p_moduli, &mut rng)
+        .unwrap();
+
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.decryptor(keys.secret).unwrap();
+    let evaluator = ctx.evaluator().unwrap();
+
+    for trial in 0..30u64 {
+        let a_values: Vec<u64> = (0..REAL_DEGREE as u64)
+            .map(|i| (i + trial) % REAL_T)
+            .collect();
+        let b_values: Vec<u64> = (0..REAL_DEGREE as u64)
+            .map(|i| (2 * i + trial) % REAL_T)
+            .collect();
+        let a_pt = encoder.encode_u64(&a_values).unwrap();
+        let b_pt = encoder.encode_u64(&b_values).unwrap();
+        let a_ct = encryptor.encrypt(&a_pt, &mut rng).unwrap();
+        let b_ct = encryptor.encrypt(&b_pt, &mut rng).unwrap();
+
+        let product = evaluator.mul_real(&a_ct, &b_ct, &p_moduli).unwrap();
+        let relinearized = evaluator.relinearize_real(&product, &relin_key).unwrap();
+        assert_eq!(
+            relinearized.degree(),
+            1,
+            "real relinearization must bring a degree-2 ciphertext back to degree 1"
+        );
+
+        let decrypted = decryptor.decrypt(&relinearized).unwrap();
+        let decoded = encoder.decode_u64_real(&decrypted).unwrap();
+        assert_eq!(
+            decoded,
+            expected_product(&ctx, &a_pt, &b_pt),
+            "trial {trial}"
+        );
+    }
+}
+
+#[test]
 fn rotation_and_slot_sum_are_exact() {
     let ctx = BfvContext::new(params());
     let mut rng = seeded_rng();

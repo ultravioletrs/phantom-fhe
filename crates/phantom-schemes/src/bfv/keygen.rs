@@ -58,4 +58,24 @@ impl BfvKeyGenerator {
                 .generate_evaluation_keys(secret, rotation_elements),
         }
     }
+
+    /// Generates a real relinearization key for [`super::Evaluator::relinearize_real`].
+    /// Unlike BGV (see [`bgv::BgvKeyGenerator::generate_raw_hybrid_relinearization_key`]'s
+    /// own doc comment), BFV has no `t`-scaled-noise requirement to
+    /// preserve - real BFV's decode only needs the total noise to stay
+    /// under `Delta/2`, which the key-switching key's own ordinary
+    /// (raw-noise) contribution comfortably satisfies - so this is a
+    /// direct, unmodified pass-through.
+    pub fn generate_hybrid_relinearization_key<R>(
+        &self,
+        sk: &phantom_lattice::rlwe::SecretKey,
+        p_moduli: &[phantom_ring::Modulus],
+        rng: &mut R,
+    ) -> Result<phantom_lattice::rlwe::RelinearizationKey>
+    where
+        R: RngCore + CryptoRng,
+    {
+        self.inner
+            .generate_raw_hybrid_relinearization_key(sk, p_moduli, rng)
+    }
 }

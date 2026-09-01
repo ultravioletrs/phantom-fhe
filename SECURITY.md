@@ -61,9 +61,19 @@ The following components are not yet at production cryptographic strength:
   `Delta` first (needed, since `add_plain`'s raw-add behavior is wrong for a
   real ciphertext), while `mul_plain` needed no separate real path at all -
   multiplying by a small unscaled plaintext doesn't have addition's
-  problem, verified numerically. Neither BGV's nor BFV's relinearization is
-  wired up for real ciphertexts (`mul_real`'s degree-2 output stays
-  unrelinearized). BGV also has a real RNS modulus-switching
+  problem, verified numerically. BFV can now also relinearize
+  `mul_real`'s degree-2 output back to degree 1
+  (`Evaluator::relinearize_real`, `BfvKeyGenerator::generate_hybrid_relinearization_key`)
+  - a direct reuse of `phantom_lattice::rlwe`'s existing real key-switching
+  machinery, safe for BFV since it has no `t`-scaled-noise requirement.
+  **BGV's relinearization is still not wired up**: the same key-switching
+  key would be unsafe for BGV's own real ciphertexts (its noise isn't a
+  multiple of `t`, so using it would silently corrupt BGV's mod-`t`
+  invariant rather than just add noise) - fixing that means either
+  extending the shared, scheme-agnostic key-switching primitive
+  (`phantom_lattice::rlwe::generate_key_switch_key`, which CKKS/Galois
+  rotation also use, with no `t` concept) or duplicating its logic
+  BGV-side, not attempted yet. BGV also has a real RNS modulus-switching
   path now (`ModulusSwitcher::switch_next_real`, alongside the original
   clone-only `switch_next`), with the same not-yet-migrated caller
   situation.

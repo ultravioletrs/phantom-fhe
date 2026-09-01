@@ -105,4 +105,43 @@ impl BgvKeyGenerator {
             galois: self.inner.generate_galois_keys(rotation_elements, secret),
         }
     }
+
+    /// Generates a real RNS hybrid relinearization key with **raw**
+    /// (not `t`-scaled) key-switching noise - a thin pass-through to
+    /// [`phantom_lattice::rlwe::KeyGenerator::generate_hybrid_relinearization_key`].
+    ///
+    /// **Not safe to use for relinearizing real BGV ciphertexts**: BGV's
+    /// mod-`t` decode invariant requires every noise contribution folded
+    /// into a ciphertext to be a multiple of `t` (see [`super::Encryptor`]'s
+    /// own module doc comment, and `ModulusSwitcher`'s, for the same
+    /// requirement elsewhere), but the generic
+    /// key-switching key this produces samples its own fresh noise raw,
+    /// the same way [`phantom_lattice::rlwe::generate_key_switch_key`]
+    /// always has - relinearizing a real BGV ciphertext with it would
+    /// silently corrupt the mod-`t` invariant, not just add noise. Giving
+    /// BGV relinearization the `t`-scaled key-switching noise it would
+    /// need is out of scope here (it would mean either changing the
+    /// shared, scheme-agnostic `phantom_lattice::rlwe` key-switching
+    /// primitive, which CKKS/Galois rotation also depend on with no `t`
+    /// concept, or duplicating its logic here) - tracked as follow-up.
+    ///
+    /// Exists on this type (rather than only on
+    /// [`BfvKeyGenerator`](crate::bfv::BfvKeyGenerator)) because that's
+    /// where the underlying
+    /// [`phantom_lattice::rlwe::KeyGenerator`] lives - BFV has no
+    /// `t`-scaled-noise requirement of its own, so this raw key is exactly
+    /// what its real relinearization needs unmodified.
+    pub fn generate_raw_hybrid_relinearization_key<R>(
+        &self,
+        sk: &SecretKey,
+        p_moduli: &[phantom_ring::Modulus],
+        rng: &mut R,
+    ) -> Result<RelinearizationKey>
+    where
+        R: RngCore + CryptoRng,
+    {
+        Ok(self
+            .inner
+            .generate_hybrid_relinearization_key(sk, p_moduli, rng)?)
+    }
 }
