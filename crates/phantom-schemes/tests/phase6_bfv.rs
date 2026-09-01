@@ -242,6 +242,58 @@ fn real_homomorphic_add_sub_neg_are_exact() {
 }
 
 #[test]
+fn real_add_plain_and_mul_plain_are_exact() {
+    let ctx = BfvContext::new(real_params());
+    let mut rng = seeded_rng();
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.decryptor(keys.secret).unwrap();
+    let evaluator = ctx.evaluator().unwrap();
+
+    for trial in 0..30u64 {
+        let a_values: Vec<u64> = (0..REAL_DEGREE as u64)
+            .map(|i| (i + trial) % REAL_T)
+            .collect();
+        let b_values: Vec<u64> = (0..REAL_DEGREE as u64)
+            .map(|i| (2 * i + trial) % REAL_T)
+            .collect();
+        let a_pt = encoder.encode_u64(&a_values).unwrap();
+        let b_pt = encoder.encode_u64(&b_values).unwrap();
+        let a_ct = encryptor.encrypt(&a_pt, &mut rng).unwrap();
+
+        // add_plain_real: scales the plaintext operand by Delta first (see
+        // Evaluator::add_plain_real's own doc comment) - plain add_plain
+        // would be wrong here.
+        let sum = decryptor
+            .decrypt(&evaluator.add_plain_real(&a_ct, &b_pt).unwrap())
+            .unwrap();
+        let expected_sum: Vec<u64> = a_values
+            .iter()
+            .zip(b_values.iter())
+            .map(|(&x, &y)| (x + y) % REAL_T)
+            .collect();
+        assert_eq!(
+            encoder.decode_u64_real(&sum).unwrap(),
+            expected_sum,
+            "add_plain_real trial {trial}"
+        );
+
+        // mul_plain needs no _real counterpart - verified to already be
+        // correct for real ciphertexts (see Evaluator::add_plain_real's own
+        // doc comment for why multiplication doesn't have add's problem).
+        let product = decryptor
+            .decrypt(&evaluator.mul_plain(&a_ct, &b_pt).unwrap())
+            .unwrap();
+        assert_eq!(
+            encoder.decode_u64_real(&product).unwrap(),
+            expected_product(&ctx, &a_pt, &b_pt),
+            "mul_plain trial {trial}"
+        );
+    }
+}
+
+#[test]
 fn real_multiplication_matches_schoolbook_reference_across_many_random_pairs() {
     let ctx = BfvContext::new(real_params());
     let mut rng = seeded_rng();

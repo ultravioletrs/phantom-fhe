@@ -44,6 +44,40 @@ impl Evaluator {
         ))
     }
 
+    /// Adds a plaintext to a **real** BFV ciphertext. Unlike [`Self::add_plain`]
+    /// (adds the raw plaintext directly, correct only for transparent
+    /// ciphertexts), this scales the plaintext by `Delta` first, the same
+    /// scaling [`super::Encryptor`]'s real path applies at encryption time,
+    /// so `c0 + Delta*m2` correctly combines with `c0 + c1*s = Delta*m1 +
+    /// noise` to give `Delta*(m1+m2) + noise`. Hand-derived and verified
+    /// numerically (Python) before implementing.
+    ///
+    /// [`Self::mul_plain`] needs no such counterpart: multiplying by a
+    /// small, unscaled plaintext doesn't need `Delta`-awareness the way
+    /// adding one does - `(c0+c1*s)*m2 = Delta*m1*m2 + noise*m2`, already
+    /// exactly the form a real ciphertext needs, verified numerically
+    /// alongside this.
+    pub fn add_plain_real(
+        &self,
+        ciphertext: &Ciphertext,
+        plaintext: &Plaintext,
+    ) -> Result<Ciphertext> {
+        let ring = self.params.ring();
+        let m = plaintext.inner().inner().value();
+        ring.check_poly(m)?;
+        let delta_m = super::encryptor::scale_by_delta(ring, m, self.params.plaintext_modulus())?;
+
+        let mut components = ciphertext.inner().inner().value().to_vec();
+        let Some(c0) = components.first_mut() else {
+            return Err(crate::SchemesError::DimensionMismatch);
+        };
+        *c0 = ring.add(c0, &delta_m)?;
+
+        Ok(Ciphertext::new(bgv::Ciphertext::new(
+            phantom_lattice::rlwe::Ciphertext::new(components),
+        )))
+    }
+
     /// Multiplies two ciphertexts and optionally relinearizes with evaluation keys.
     pub fn mul(
         &self,

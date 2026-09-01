@@ -56,12 +56,14 @@ The following components are not yet at production cryptographic strength:
   add/sub/neg) - a full tensor-and-rescale procedure computed in an
   auxiliary basis large enough to avoid wraparound, using new general
   bignum/bignum division (`phantom_ring::bignum::BigUint::divmod`) for the
-  rescale step's rounding. **`add_plain`/`mul_plain` still need
-  `Delta`-aware handling that doesn't exist yet**, and calling them against
-  a real-mode BFV ciphertext today silently produces a wrong result rather
-  than an error, so avoid them until that lands. Neither BGV's nor BFV's
-  relinearization is wired up for real ciphertexts (`mul_real`'s degree-2
-  output stays unrelinearized). BGV also has a real RNS modulus-switching
+  rescale step's rounding. BFV's plaintext operations are also both real
+  now: new `Evaluator::add_plain_real` scales its plaintext operand by
+  `Delta` first (needed, since `add_plain`'s raw-add behavior is wrong for a
+  real ciphertext), while `mul_plain` needed no separate real path at all -
+  multiplying by a small unscaled plaintext doesn't have addition's
+  problem, verified numerically. Neither BGV's nor BFV's relinearization is
+  wired up for real ciphertexts (`mul_real`'s degree-2 output stays
+  unrelinearized). BGV also has a real RNS modulus-switching
   path now (`ModulusSwitcher::switch_next_real`, alongside the original
   clone-only `switch_next`), with the same not-yet-migrated caller
   situation.

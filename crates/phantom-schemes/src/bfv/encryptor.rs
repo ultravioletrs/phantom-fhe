@@ -140,8 +140,10 @@ impl Encryptor {
 /// product), one RNS component at a time - `Delta` itself generally doesn't
 /// fit in a `u64` for a multi-modulus ring, so it can't be applied via a
 /// single scalar multiply; [`floor_divide_residues`] gives its residues per
-/// component instead.
-fn scale_by_delta(ring: &Ring, poly: &Poly, t: u64) -> phantom_ring::Result<Poly> {
+/// component instead. `pub(crate)` (not just used internally for
+/// encryption) because [`super::Evaluator::add_plain_real`] needs the exact
+/// same scaling for its plaintext operand.
+pub(crate) fn scale_by_delta(ring: &Ring, poly: &Poly, t: u64) -> phantom_ring::Result<Poly> {
     let basis = RnsBasis::new(ring.moduli().to_vec())?;
     let delta_residues = floor_divide_residues(&basis, t);
 
