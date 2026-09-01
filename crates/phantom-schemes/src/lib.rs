@@ -4,6 +4,7 @@ pub mod bfv;
 pub mod bgv;
 pub mod ckks;
 pub mod error;
+mod security;
 pub mod serialization;
 
 pub use error::{Result, SchemesError};

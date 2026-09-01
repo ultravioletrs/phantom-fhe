@@ -66,12 +66,16 @@ impl BgvParams {
     }
 }
 
-/// Builder for [`BgvParams`].
+/// Builder for [`BgvParams`]. See `crate::security`'s own module doc
+/// comment for the split between the consistency checks [`Self::build`]
+/// always applies and the security check [`Self::require_128_bit_security`]
+/// opts into.
 #[derive(Clone, Debug, Default)]
 pub struct BgvParamsBuilder {
     degree: Option<usize>,
     moduli: Vec<u64>,
     plaintext_modulus: Option<u64>,
+    require_128_bit_security: bool,
 }
 
 impl BgvParamsBuilder {
@@ -99,12 +103,20 @@ impl BgvParamsBuilder {
         self
     }
 
+    /// Requires [`Self::build`] to reject parameters that don't meet the
+    /// homomorphicencryption.org 128-bit security standard - see
+    /// `crate::security::check_128_bit_security`'s own doc comment.
+    pub const fn require_128_bit_security(mut self) -> Self {
+        self.require_128_bit_security = true;
+        self
+    }
+
     /// Builds parameters.
     pub fn build(self) -> Result<BgvParams> {
-        let degree = phantom_ring::Degree::new(
-            self.degree
-                .ok_or(SchemesError::InvalidParameters("missing degree"))?,
-        )?;
+        let degree_value = self
+            .degree
+            .ok_or(SchemesError::InvalidParameters("missing degree"))?;
+        let degree = phantom_ring::Degree::new(degree_value)?;
         let plaintext_modulus = self
             .plaintext_modulus
             .ok_or(SchemesError::InvalidParameters("missing plaintext modulus"))?;
@@ -115,6 +127,14 @@ impl BgvParamsBuilder {
         let mut moduli = Vec::with_capacity(self.moduli.len());
         for modulus in self.moduli {
             moduli.push(Modulus::new(modulus)?);
+        }
+        crate::security::check_distinct_moduli(&moduli)?;
+        crate::security::check_plaintext_modulus_coprime_to_ciphertext_moduli(
+            plaintext_modulus,
+            &moduli,
+        )?;
+        if self.require_128_bit_security {
+            crate::security::check_128_bit_security(degree_value, &moduli)?;
         }
         BgvParams::new(Ring::new(degree, moduli)?, plaintext_modulus)
     }

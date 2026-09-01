@@ -79,6 +79,14 @@ impl BfvParamsBuilder {
         self
     }
 
+    /// Requires [`Self::build`] to reject parameters that don't meet the
+    /// homomorphicencryption.org 128-bit security standard - see
+    /// `crate::security::check_128_bit_security`'s own doc comment.
+    pub fn require_128_bit_security(mut self) -> Self {
+        self.inner = self.inner.require_128_bit_security();
+        self
+    }
+
     /// Builds parameters.
     pub fn build(self) -> Result<BfvParams> {
         Ok(BfvParams {

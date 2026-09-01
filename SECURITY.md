@@ -148,7 +148,19 @@ The following components are not yet at production cryptographic strength:
   hand-rolled mixer, not a vetted cryptographic hash function.
 - All example and test parameter presets (see
   `docs/user-guide.md#choosing-parameters`) are small development sizes
-  chosen for fast iteration, not production security margins.
+  chosen for fast iteration, not production security margins. Every
+  `BgvParams`/`BfvParams`/`CkksParams` builder now has an opt-in
+  `.require_128_bit_security()` that checks a ring degree/total
+  ciphertext-modulus-bits combination against the
+  homomorphicencryption.org security standard's own published table
+  (`phantom_lattice::security::max_secure_total_modulus_bits_128`) - but
+  it's opt-in, not the `build()` default, precisely because every preset
+  above would otherwise fail to build at all (their ring degrees are far
+  below the table's smallest covered entry). The builders do
+  unconditionally reject a small set of always-wrong settings regardless
+  of security level (duplicate ciphertext moduli; for BGV/BFV, a
+  plaintext modulus not coprime to every ciphertext modulus) - genuine
+  correctness bugs, not a security-margin judgment call.
 
 For the precise, per-operation account of what each of the above means in
 code, see `docs/technical-manual.md`. This status is expected to change

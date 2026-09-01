@@ -46,6 +46,33 @@ pub fn fresh_error_bound() -> u64 {
     (STANDARD_ERROR_STD_DEV * ERROR_TAIL_CUT_STD_DEVS).ceil() as u64
 }
 
+/// Maximum total ciphertext-modulus bit-length (`sum_i log2(q_i)`) a
+/// degree-`degree` ring can use while still meeting the
+/// homomorphicencryption.org security standard's 128-bit classical
+/// security level for a ternary secret ([`recommended_secret_distribution`]),
+/// the same table (indexed by ring degree, in bits) reproduced across
+/// production FHE libraries' own parameter defaults (e.g. Microsoft SEAL's
+/// `hestdparms.h`). `None` for a degree the table doesn't cover: below its
+/// smallest entry (`1024`) or above its largest (`32768`) - every
+/// development/test preset this crate's own test suite uses (`degree` `8`
+/// to `64`) falls in the "not covered" range below `1024`, which is
+/// exactly why `SECURITY.md` describes those presets as not secure -
+/// there's no published guidance to check them against, not a table
+/// lookup that happens to pass. [`Degree`](phantom_ring::Degree) already
+/// enforces power-of-two, so every degree this table *could* apply to is
+/// an exact entry - no interpolation needed.
+pub fn max_secure_total_modulus_bits_128(degree: usize) -> Option<u32> {
+    match degree {
+        1024 => Some(27),
+        2048 => Some(54),
+        4096 => Some(109),
+        8192 => Some(218),
+        16384 => Some(438),
+        32768 => Some(881),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,5 +80,25 @@ mod tests {
     #[test]
     fn fresh_error_bound_matches_the_documented_sigma_times_tail_cut() {
         assert_eq!(fresh_error_bound(), 20); // ceil(3.2 * 6.0) == ceil(19.2) == 20
+    }
+
+    #[test]
+    fn max_secure_total_modulus_bits_128_covers_only_the_standard_table_degrees() {
+        assert_eq!(max_secure_total_modulus_bits_128(1024), Some(27));
+        assert_eq!(max_secure_total_modulus_bits_128(32768), Some(881));
+        assert_eq!(max_secure_total_modulus_bits_128(8), None);
+        assert_eq!(max_secure_total_modulus_bits_128(512), None);
+        assert_eq!(max_secure_total_modulus_bits_128(65536), None);
+    }
+
+    #[test]
+    fn max_secure_total_modulus_bits_128_grows_with_degree() {
+        let entries = [1024, 2048, 4096, 8192, 16384, 32768];
+        let mut previous = 0;
+        for degree in entries {
+            let bits = max_secure_total_modulus_bits_128(degree).unwrap();
+            assert!(bits > previous);
+            previous = bits;
+        }
     }
 }

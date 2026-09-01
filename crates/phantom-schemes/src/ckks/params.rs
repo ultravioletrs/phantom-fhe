@@ -85,13 +85,17 @@ impl CkksParams {
     }
 }
 
-/// Builder for [`CkksParams`].
+/// Builder for [`CkksParams`]. See `crate::security`'s own module doc
+/// comment for the split between the consistency check [`Self::build`]
+/// always applies and the security check [`Self::require_128_bit_security`]
+/// opts into.
 #[derive(Clone, Debug, Default)]
 pub struct CkksParamsBuilder {
     degree: Option<usize>,
     moduli: Vec<u64>,
     default_scale_bits: Option<u32>,
     conjugate_invariant: bool,
+    require_128_bit_security: bool,
 }
 
 impl CkksParamsBuilder {
@@ -125,18 +129,30 @@ impl CkksParamsBuilder {
         self
     }
 
+    /// Requires [`Self::build`] to reject parameters that don't meet the
+    /// homomorphicencryption.org 128-bit security standard - see
+    /// `crate::security::check_128_bit_security`'s own doc comment.
+    pub const fn require_128_bit_security(mut self) -> Self {
+        self.require_128_bit_security = true;
+        self
+    }
+
     /// Builds parameters.
     pub fn build(self) -> Result<CkksParams> {
-        let degree = Degree::new(
-            self.degree
-                .ok_or(SchemesError::InvalidParameters("missing degree"))?,
-        )?;
+        let degree_value = self
+            .degree
+            .ok_or(SchemesError::InvalidParameters("missing degree"))?;
+        let degree = Degree::new(degree_value)?;
         if self.moduli.is_empty() {
             return Err(SchemesError::InvalidParameters("missing ciphertext moduli"));
         }
         let mut moduli = Vec::with_capacity(self.moduli.len());
         for modulus in self.moduli {
             moduli.push(Modulus::new(modulus)?);
+        }
+        crate::security::check_distinct_moduli(&moduli)?;
+        if self.require_128_bit_security {
+            crate::security::check_128_bit_security(degree_value, &moduli)?;
         }
         let scale = Scale::from_bits(
             self.default_scale_bits

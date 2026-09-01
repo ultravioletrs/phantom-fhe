@@ -243,6 +243,8 @@ Every parameter set in this guide, in the examples, and in the test suite is a s
 
 There is currently no production parameter preset to graduate to — adding one is explicitly gated (per Alpha Hardening Workstream 2 in [`internal/implementation-plan.md`](internal/implementation-plan.md)) on the noise-management, RNS, and security-review work tracked in Workstreams 3–7 landing first. If you're evaluating this library for a real deployment, the honest current answer is: not yet: track the roadmap, and treat every parameter set you construct today as a development/testing convenience, not a security decision.
 
+If you're experimenting with a larger ring degree and want a sanity check against the [homomorphicencryption.org](https://homomorphicencryption.org/standard/) 128-bit security table, call `.require_128_bit_security()` on `BgvParams::builder()`/`BfvParams::builder()`/`CkksParams::builder()` before `.build()` — it rejects a ring degree/total-ciphertext-modulus-bits combination the standard's own published table doesn't cover as secure. It's opt-in (every preset in the table above is far below the table's smallest covered degree, `1024`, and would fail this check by design) and is a parameter-shape check only, not a substitute for the noise-management and review work still tracked in the roadmap above.
+
 ## Runnable examples
 
 `phantom-examples` (workspace-only; not part of the facade) has one binary per workflow below. Run any of them with `cargo run -p phantom-examples --example <name>`, or all of them with `make examples`:
