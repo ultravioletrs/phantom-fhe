@@ -1,7 +1,26 @@
 use phantom_ring::{Degree, Modulus, Ring};
-use phantom_schemes::bfv::{BfvContext, BfvParams};
+use phantom_schemes::bfv::{BfvContext, BfvParams, Plaintext};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+
+/// Independent oracle for what a BFV ciphertext-ciphertext multiplication
+/// should decode to: multiplies the two *plaintext* polynomials directly
+/// via `schoolbook_mul` (independent of the encryption/decryption pipeline
+/// under test - both operands are small, `< t`, so the raw product stays
+/// far below `Q`, meaning no `Delta`-rescale is needed to decode it - a
+/// plain `decode_u64`, not `decode_u64_real`, correctly recovers `mod t`
+/// from this already-small value).
+fn expected_product(ctx: &BfvContext, a: &Plaintext, b: &Plaintext) -> Vec<u64> {
+    let product = ctx
+        .params()
+        .ring()
+        .schoolbook_mul(a.inner().inner().value(), b.inner().inner().value())
+        .unwrap();
+    let plaintext = Plaintext::new(phantom_schemes::bgv::Plaintext::new(
+        phantom_lattice::rlwe::Plaintext::new(product),
+    ));
+    ctx.encoder().decode_u64(&plaintext).unwrap()
+}
 
 fn params() -> BfvParams {
     let ring = Ring::new(
@@ -33,6 +52,18 @@ fn real_params() -> BfvParams {
     )
     .unwrap();
     BfvParams::new(ring, REAL_T).unwrap()
+}
+
+// Auxiliary "P" moduli for real BFV multiplication's rescale-and-round step
+// (see Evaluator::mul_real's own doc comment) - needs enough headroom that
+// Q*P1*P2 comfortably exceeds the raw tensor product's worst-case true
+// magnitude, roughly degree*(Q/2)^2. Both individually prime (Miller-Rabin
+// verified in Python before use, matching REAL_MODULUS's own precedent).
+const P1: u64 = 1_000_000_000_000_091;
+const P2: u64 = 1_000_000_000_000_159;
+
+fn p_moduli() -> Vec<Modulus> {
+    vec![Modulus::new(P1).unwrap(), Modulus::new(P2).unwrap()]
 }
 
 #[test]
@@ -208,6 +239,42 @@ fn real_homomorphic_add_sub_neg_are_exact() {
         &encoder.decode_u64_real(&neg).unwrap()[..4],
         &[16, 14, 12, 10]
     );
+}
+
+#[test]
+fn real_multiplication_matches_schoolbook_reference_across_many_random_pairs() {
+    let ctx = BfvContext::new(real_params());
+    let mut rng = seeded_rng();
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.decryptor(keys.secret).unwrap();
+    let evaluator = ctx.evaluator().unwrap();
+    let p_moduli = p_moduli();
+
+    for trial in 0..30u64 {
+        let a_values: Vec<u64> = (0..REAL_DEGREE as u64)
+            .map(|i| (i + trial) % REAL_T)
+            .collect();
+        let b_values: Vec<u64> = (0..REAL_DEGREE as u64)
+            .map(|i| (2 * i + trial) % REAL_T)
+            .collect();
+        let a_pt = encoder.encode_u64(&a_values).unwrap();
+        let b_pt = encoder.encode_u64(&b_values).unwrap();
+        let a_ct = encryptor.encrypt(&a_pt, &mut rng).unwrap();
+        let b_ct = encryptor.encrypt(&b_pt, &mut rng).unwrap();
+
+        let product = evaluator.mul_real(&a_ct, &b_ct, &p_moduli).unwrap();
+        assert_eq!(product.degree(), 2);
+        let decrypted = decryptor.decrypt(&product).unwrap();
+        let decoded = encoder.decode_u64_real(&decrypted).unwrap();
+
+        assert_eq!(
+            decoded,
+            expected_product(&ctx, &a_pt, &b_pt),
+            "trial {trial}"
+        );
+    }
 }
 
 #[test]

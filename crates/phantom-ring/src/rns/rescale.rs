@@ -1,8 +1,10 @@
 //! RNS rescaling and modulus dropping helpers.
 
+use core::cmp::Ordering;
+
 use crate::bignum::BigUint;
 use crate::reduce::{add_mod, inv_mod, mul_mod, neg_mod, sub_mod};
-use crate::rns::extension::extend_basis;
+use crate::rns::extension::{extend_basis, reconstruct_true_values};
 use crate::{Modulus, Poly, Result, RingError, RnsBasis};
 
 /// Drops the last RNS component.
@@ -156,6 +158,103 @@ pub fn modulus_switch_down(poly: &Poly, q_basis: &RnsBasis, t: Modulus) -> Resul
             let c_qj = poly.coeffs()[j][i];
             let inv_qlast_mod_qj = inv_mod(q_last % qj, qj);
             out_coeffs[j][i] = mul_mod(add_mod(c_qj, correction_qj, qj), inv_qlast_mod_qj, qj);
+        }
+    }
+
+    Poly::from_coeffs(out_coeffs)
+}
+
+/// BFV multiplication's rescale-and-round step: given `poly` represented in
+/// an extended `q_basis ∪ p_basis` basis (components ordered `[q_basis...,
+/// p_basis...]`), reconstructs each coefficient's true signed value,
+/// computes `round(true_value * t / Q)` (`Q` = `q_basis`'s own modulus
+/// product), and reduces the (small again, comparable in size to `Q`)
+/// result back into `q_basis`'s own moduli.
+///
+/// # Why an extended basis is required
+///
+/// A raw BFV ciphertext-ciphertext tensor product's true coefficient
+/// magnitude can reach roughly `degree * (Q/2)^2` - far larger than `Q`
+/// itself (`Q` alone has no room to represent it without wraparound, the
+/// same reason [`extend_basis`]/[`mod_down`] exist for key-switching, just
+/// at a much larger scale here since the values involved are *squared*).
+/// `p_basis` must be chosen large enough that `q_basis ∪ p_basis`'s full
+/// product comfortably exceeds that bound (with margin for centering) -
+/// callers are responsible for that; this function only performs the
+/// reconstruction/rescale once given a basis already big enough.
+///
+/// # Algorithm
+///
+/// Reconstructs each coefficient's true value via CRT (`reconstruct_true_values`,
+/// shared with [`extend_basis`]), centers it into `(-QP/2, QP/2]` (via
+/// `2*value` vs `QP` - avoids needing a "divide `BigUint` by 2" primitive),
+/// then computes `round(|centered| * t / Q)` using `BigUint`'s general
+/// `divmod` (general bignum/bignum division - `Q` doesn't fit in a `u64` for a
+/// multi-modulus ring, unlike every other divisor this crate's RNS
+/// primitives use) with round-half-up (compare `2*remainder` against `Q`),
+/// reapplies `centered`'s sign, then reduces the result mod each of
+/// `q_basis`'s own moduli. Verified numerically (Python, first against true
+/// unbounded-integer arithmetic with no modular reduction at all, then
+/// again against an RNS-mechanized simulation using actual CRT
+/// reconstruction from residues - both cross-checked against real BFV
+/// encrypt/multiply/decrypt round trips, 30 randomized trials each) before
+/// implementing.
+pub fn rescale_and_round(
+    poly: &Poly,
+    q_basis: &RnsBasis,
+    p_basis: &RnsBasis,
+    t: Modulus,
+) -> Result<Poly> {
+    let q_len = q_basis.moduli().len();
+    let p_len = p_basis.moduli().len();
+    if poly.moduli_count() != q_len + p_len {
+        return Err(RingError::DimensionMismatch);
+    }
+
+    let qp_moduli: Vec<Modulus> = q_basis
+        .moduli()
+        .iter()
+        .chain(p_basis.moduli().iter())
+        .copied()
+        .collect();
+    let qp_basis = RnsBasis::new(qp_moduli)?;
+    let (big_qp, values) = reconstruct_true_values(poly, &qp_basis)?;
+
+    let big_q = q_basis
+        .moduli()
+        .iter()
+        .fold(BigUint::from_u64(1), |acc, m| acc.mul_u64(m.value()));
+    let t_value = t.value();
+
+    let degree = poly.degree();
+    let mut out_coeffs = vec![vec![0u64; degree]; q_len];
+
+    for (i, value) in values.iter().enumerate() {
+        // Center into (-QP/2, QP/2]: negative iff 2*value > QP.
+        let doubled = value.mul_u64(2);
+        let negative = doubled.cmp(&big_qp) == Ordering::Greater;
+        let magnitude = if negative {
+            big_qp.sub(value)
+        } else {
+            value.clone()
+        };
+
+        let scaled = magnitude.mul_u64(t_value);
+        let (quotient, remainder) = scaled.divmod(&big_q);
+        let rounded = if remainder.mul_u64(2).cmp(&big_q) != Ordering::Less {
+            quotient.add(&BigUint::from_u64(1))
+        } else {
+            quotient
+        };
+
+        for (j, modulus) in q_basis.moduli().iter().enumerate() {
+            let qj = modulus.value();
+            let (_, residue) = rounded.divmod_u64(qj);
+            out_coeffs[j][i] = if negative {
+                neg_mod(residue, qj)
+            } else {
+                residue
+            };
         }
     }
 

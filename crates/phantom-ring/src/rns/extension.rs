@@ -39,6 +39,31 @@ use crate::{Poly, Result, RingError, RnsBasis};
 ///   subtractions of `Q` - a bounded loop, not division.
 /// - Extracting each target residue is one more divide-by-u64.
 pub fn extend_basis(poly: &Poly, source: &RnsBasis, target: &RnsBasis) -> Result<Poly> {
+    let (_big_q, values) = reconstruct_true_values(poly, source)?;
+
+    let degree = poly.degree();
+    let mut coeffs = vec![vec![0u64; degree]; target.moduli().len()];
+    for (i, value) in values.iter().enumerate() {
+        for (j, modulus) in target.moduli().iter().enumerate() {
+            let (_, residue) = value.divmod_u64(modulus.value());
+            coeffs[j][i] = residue;
+        }
+    }
+
+    Poly::from_coeffs(coeffs)
+}
+
+/// Reconstructs every coefficient's true value mod `source`'s own modulus
+/// product `Q`, as an exact [`BigUint`] in `[0, Q)` - the common first half
+/// of both [`extend_basis`] (which reduces each result into a *different*
+/// target basis) and [`crate::rns::rescale::rescale_and_round`] (which
+/// instead scales and divides it) - see [`extend_basis`]'s own doc comment
+/// for the underlying CRT algorithm this carries out. Returns `Q` itself
+/// alongside the per-coefficient values, since both callers need it too.
+pub(crate) fn reconstruct_true_values(
+    poly: &Poly,
+    source: &RnsBasis,
+) -> Result<(BigUint, Vec<BigUint>)> {
     if poly.moduli_count() != source.moduli().len() {
         return Err(RingError::DimensionMismatch);
     }
@@ -67,7 +92,7 @@ pub fn extend_basis(poly: &Poly, source: &RnsBasis, target: &RnsBasis) -> Result
     }
 
     let degree = poly.degree();
-    let mut coeffs = vec![vec![0u64; degree]; target.moduli().len()];
+    let mut values = Vec::with_capacity(degree);
 
     // `i` indexes two independently-shaped collections at once (a source
     // component's coefficients and every target component's coefficients),
@@ -86,13 +111,10 @@ pub fn extend_basis(poly: &Poly, source: &RnsBasis, target: &RnsBasis) -> Result
         while t.cmp(&big_q) != Ordering::Less {
             t = t.sub(&big_q);
         }
-        for (j, modulus) in target.moduli().iter().enumerate() {
-            let (_, residue) = t.divmod_u64(modulus.value());
-            coeffs[j][i] = residue;
-        }
+        values.push(t);
     }
 
-    Poly::from_coeffs(coeffs)
+    Ok((big_q, values))
 }
 
 /// Computes `(product(source.moduli()) / source.moduli()[index]) mod t` for

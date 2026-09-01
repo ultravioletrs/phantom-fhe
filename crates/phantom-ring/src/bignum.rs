@@ -1,16 +1,19 @@
 //! Minimal exact unsigned big integer.
 //!
-//! Two call sites: exact CRT reconstruction in
+//! Call sites: exact CRT reconstruction in
 //! [`crate::rns::extension::extend_basis`] (build from a `u64`, add,
-//! subtract, multiply by a `u64` scalar, divide-by-`u64`), and computing
+//! subtract, multiply by a `u64` scalar, divide-by-`u64`); computing
 //! [`crate::reduce::BarrettReducer`]'s precomputed constant for the full
 //! 64-bit modulus range (needs `2^128` represented exactly, hence
-//! `from_u128`/`to_u128`/`shl_limbs`). `mul` (general bignum multiplication)
-//! is used only as an independent test oracle for `BarrettReducer`'s
-//! stack-only wide-multiply hot path, not on any hot path itself - nothing
-//! here needs general bignum/bignum division, which is what keeps this small
-//! and easy to verify exactly rather than approximately. `pub(crate)` only:
-//! this is an implementation detail, not a general-purpose bignum type.
+//! `from_u128`/`to_u128`/`shl_limbs`); and real BFV multiplication's
+//! rescale-and-round step (general bignum/bignum [`BigUint::divmod`], since
+//! there `self` is a tensor-product coefficient that can be far larger than
+//! any single modulus, divided by the full ciphertext modulus product -
+//! genuinely needs a multi-limb divisor, unlike every other call site here).
+//! `mul` (general bignum multiplication) is used only as an independent
+//! test oracle for `BarrettReducer`'s stack-only wide-multiply hot path, not
+//! on any hot path itself. `pub(crate)` only: this is an implementation
+//! detail, not a general-purpose bignum type.
 
 use core::cmp::Ordering;
 
@@ -175,6 +178,81 @@ impl BigUint {
             remainder = current % divisor as u128;
         }
         (Self::normalized(quotient), remainder as u64)
+    }
+
+    /// Number of bits needed to represent `self` (`0` for zero).
+    fn bit_length(&self) -> usize {
+        match self.0.last() {
+            None => 0,
+            Some(&top) => (self.0.len() - 1) * 64 + (64 - top.leading_zeros() as usize),
+        }
+    }
+
+    /// Returns bit `n` (`0` = least significant), `false` past the end.
+    fn bit_at(&self, n: usize) -> bool {
+        match self.0.get(n / 64) {
+            Some(&limb) => (limb >> (n % 64)) & 1 == 1,
+            None => false,
+        }
+    }
+
+    /// Shifts left by `bits` bits (a general bit shift, unlike
+    /// [`Self::shl_limbs`]'s whole-`u64`-limb one).
+    fn shl(&self, bits: usize) -> Self {
+        if self.is_zero() || bits == 0 {
+            return self.clone();
+        }
+        let limb_shift = bits / 64;
+        let bit_shift = bits % 64;
+        let mut limbs = vec![0u64; limb_shift];
+        if bit_shift == 0 {
+            limbs.extend_from_slice(&self.0);
+        } else {
+            let mut carry = 0u64;
+            for &limb in &self.0 {
+                limbs.push((limb << bit_shift) | carry);
+                carry = limb >> (64 - bit_shift);
+            }
+            if carry != 0 {
+                limbs.push(carry);
+            }
+        }
+        Self::normalized(limbs)
+    }
+
+    /// General bignum division: `self = quotient * divisor + remainder`,
+    /// `0 <= remainder < divisor`. Binary long division (process `self`'s
+    /// bits from most to least significant, doubling a running remainder
+    /// and subtracting `divisor` whenever it fits) - simple to verify
+    /// exactly rather than a faster but more intricate multi-limb-digit
+    /// algorithm (e.g. Knuth's Algorithm D), matching this module's own
+    /// stated preference (see its doc comment). `O(self.bit_length())`
+    /// iterations, each `O(divisor's limb count)` - not hot-path-critical
+    /// (called once per coefficient in BFV's rescale step, not per
+    /// arithmetic operation), so this tradeoff is the right one here.
+    pub(crate) fn divmod(&self, divisor: &Self) -> (Self, Self) {
+        assert!(!divisor.is_zero(), "divmod: division by zero");
+        if self.cmp(divisor) == Ordering::Less {
+            return (Self::zero(), self.clone());
+        }
+        if divisor.0.len() == 1 {
+            let (q, r) = self.divmod_u64(divisor.0[0]);
+            return (q, Self::from_u64(r));
+        }
+
+        let mut quotient = vec![0u64; self.0.len()];
+        let mut remainder = Self::zero();
+        for bit in (0..self.bit_length()).rev() {
+            remainder = remainder.shl(1);
+            if self.bit_at(bit) {
+                remainder = remainder.add(&Self::from_u64(1));
+            }
+            if remainder.cmp(divisor) != Ordering::Less {
+                remainder = remainder.sub(divisor);
+                quotient[bit / 64] |= 1u64 << (bit % 64);
+            }
+        }
+        (Self::normalized(quotient), remainder)
     }
 }
 
@@ -426,6 +504,107 @@ mod tests {
             let product = BigUint::from_u64(a).mul(&BigUint::from_u64(b));
             let expected = a as u128 * b as u128;
             assert_eq!(product, BigUint::from_u128(expected), "a={a}, b={b}");
+        }
+    }
+
+    #[test]
+    fn divmod_matches_an_independently_computed_multi_limb_case() {
+        // Same 8-prime product `a` as
+        // reconstructs_a_value_known_to_exceed_u128_via_multiply_add_divmod_only
+        // above (a 488-bit value), divided by a two-prime product `b`
+        // (1152921504606846883 * 1152921504606846869, itself exceeding
+        // u64). Expected quotient/remainder limbs computed independently in
+        // Python (`divmod`, arbitrary-precision integers), then verified
+        // there against q*b+r == a before being copied here.
+        let a_moduli: [u64; 8] = [
+            2305843009213693951,
+            2305843009213693907,
+            2305843009213693881,
+            2305843009213693829,
+            2305843009213693807,
+            2305843009213693719,
+            2305843009213693697,
+            2305843009213693677,
+        ];
+        let a = a_moduli
+            .iter()
+            .fold(BigUint::from_u64(1), |acc, &m| acc.mul_u64(m));
+        let b = BigUint::from_u64(1152921504606846883).mul_u64(1152921504606846869);
+
+        let (quotient, remainder) = a.divmod(&b);
+
+        let expected_quotient = BigUint(vec![
+            785937008448,
+            11529215034307079614,
+            5188146770810392624,
+            2954361355554859465,
+            16762397813072986308,
+            281474976710655,
+        ]);
+        let expected_remainder = BigUint(vec![9216482227184237885, 3127289509633]);
+
+        assert_eq!(quotient, expected_quotient);
+        assert_eq!(remainder, expected_remainder);
+        // Cross-check the defining relation directly, independent of the
+        // hardcoded expected values above.
+        assert_eq!(quotient.mul(&b).add(&remainder), a);
+    }
+
+    #[test]
+    fn divmod_satisfies_its_own_defining_relation_across_random_multi_limb_cases() {
+        // self = quotient * divisor + remainder, 0 <= remainder < divisor -
+        // checked algebraically (not against an external oracle) across
+        // many random multi-limb dividend/divisor pairs of varying relative
+        // size, since divmod's own multiplication/comparison/subtraction
+        // are already independently tested above.
+        let mut rng_state = 0x2468_ACE1_3579_BDF0u64;
+        let mut next = || {
+            rng_state ^= rng_state >> 12;
+            rng_state ^= rng_state << 25;
+            rng_state ^= rng_state >> 27;
+            rng_state
+        };
+
+        for _ in 0..200 {
+            let a_limbs = 1 + (next() % 6) as usize;
+            let b_limbs = 1 + (next() % a_limbs as u64) as usize;
+            let a = (0..a_limbs)
+                .map(|_| next())
+                .fold(BigUint::zero(), |acc, limb| {
+                    acc.shl_limbs(1).add(&BigUint::from_u64(limb))
+                });
+            let mut b = (0..b_limbs)
+                .map(|_| next())
+                .fold(BigUint::zero(), |acc, limb| {
+                    acc.shl_limbs(1).add(&BigUint::from_u64(limb))
+                });
+            if b.is_zero() {
+                b = BigUint::from_u64(1);
+            }
+
+            let (quotient, remainder) = a.divmod(&b);
+            assert_eq!(quotient.mul(&b).add(&remainder), a);
+            assert_eq!(remainder.cmp(&b), Ordering::Less);
+        }
+    }
+
+    #[test]
+    fn divmod_matches_divmod_u64_for_single_limb_divisors() {
+        let mut rng_state = 0x1111_2222_3333_4444u64;
+        for _ in 0..500 {
+            rng_state ^= rng_state >> 12;
+            rng_state ^= rng_state << 25;
+            rng_state ^= rng_state >> 27;
+            let a = BigUint::from_u64(rng_state).mul_u64(rng_state);
+            rng_state ^= rng_state >> 12;
+            rng_state ^= rng_state << 25;
+            rng_state ^= rng_state >> 27;
+            let divisor = (rng_state % (u64::MAX - 1)) + 1;
+
+            let (q_general, r_general) = a.divmod(&BigUint::from_u64(divisor));
+            let (q_specialized, r_specialized) = a.divmod_u64(divisor);
+            assert_eq!(q_general, q_specialized);
+            assert_eq!(r_general, BigUint::from_u64(r_specialized));
         }
     }
 

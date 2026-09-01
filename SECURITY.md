@@ -51,13 +51,18 @@ The following components are not yet at production cryptographic strength:
   exact scheme reused directly, with no Δ-scaling anywhere). Real BGV
   relinearization isn't wired up either (would need the key-switching
   key's own noise scaled by the plaintext modulus too, not just fresh
-  encryption's), and **BFV's real path only covers encrypt/decrypt and
-  ciphertext-ciphertext add/sub/neg** - `add_plain`/`mul_plain`/`mul` all
-  need `Delta`-aware handling that doesn't exist yet, and calling them
-  against a real-mode BFV ciphertext today silently produces a wrong
-  result rather than an error, so avoid them until that lands. BGV also
-  has a real RNS modulus-switching path now
-  (`ModulusSwitcher::switch_next_real`, alongside the original
+  encryption's). BFV now also has real multiplication
+  (`Evaluator::mul_real`, alongside encrypt/decrypt and ciphertext-ciphertext
+  add/sub/neg) - a full tensor-and-rescale procedure computed in an
+  auxiliary basis large enough to avoid wraparound, using new general
+  bignum/bignum division (`phantom_ring::bignum::BigUint::divmod`) for the
+  rescale step's rounding. **`add_plain`/`mul_plain` still need
+  `Delta`-aware handling that doesn't exist yet**, and calling them against
+  a real-mode BFV ciphertext today silently produces a wrong result rather
+  than an error, so avoid them until that lands. Neither BGV's nor BFV's
+  relinearization is wired up for real ciphertexts (`mul_real`'s degree-2
+  output stays unrelinearized). BGV also has a real RNS modulus-switching
+  path now (`ModulusSwitcher::switch_next_real`, alongside the original
   clone-only `switch_next`), with the same not-yet-migrated caller
   situation.
 - `phantom-schemes::ckks` implements approximate encoding and rescale

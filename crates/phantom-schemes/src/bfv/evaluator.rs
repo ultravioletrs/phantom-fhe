@@ -1,20 +1,24 @@
 //! BFV evaluator.
 
+use phantom_ring::rns::extension::extend_basis;
+use phantom_ring::rns::rescale::rescale_and_round;
+use phantom_ring::{Degree, Modulus, Poly, Ring, RnsBasis};
+
 use super::{BfvParams, Ciphertext, EvaluationKeys, Plaintext};
 use crate::{bgv, Result};
 
 /// BFV homomorphic evaluator.
 #[derive(Clone, Debug)]
 pub struct Evaluator {
+    params: BfvParams,
     inner: bgv::Evaluator,
 }
 
 impl Evaluator {
     /// Creates an evaluator.
     pub fn new(params: BfvParams) -> Result<Self> {
-        Ok(Self {
-            inner: bgv::Evaluator::new(params.inner().clone())?,
-        })
+        let inner = bgv::Evaluator::new(params.inner().clone())?;
+        Ok(Self { params, inner })
     }
 
     /// Adds two ciphertexts.
@@ -53,6 +57,62 @@ impl Evaluator {
             rhs.inner(),
             keys,
         )?))
+    }
+
+    /// Multiplies two **real** BFV ciphertexts, producing a degree-2
+    /// (3-component) result - no relinearization is applied. Unlike
+    /// [`Self::mul`] (correct only for transparent ciphertexts, since it's
+    /// a raw ring product with no `Delta`-awareness), this performs the
+    /// real BFV tensor-and-rescale procedure: the raw tensor product's true
+    /// coefficient magnitude can reach roughly `degree * (Q/2)^2` (far
+    /// larger than `Q` itself has room for), so both ciphertexts are first
+    /// extended into an auxiliary `Q ∪ P` basis (`p_moduli` chosen with
+    /// enough headroom - see [`phantom_ring::rns::rescale::rescale_and_round`]'s
+    /// own doc comment) where the tensor product can be computed without
+    /// wraparound, then [`rescale_and_round`] scales each component by
+    /// `t/Q` and reduces it back into `Q`'s own basis. Hand-derived and
+    /// verified numerically (Python, both true unbounded-integer arithmetic
+    /// and an RNS-mechanized simulation, each cross-checked against real
+    /// BFV encrypt/multiply/decrypt round trips) before implementing.
+    pub fn mul_real(
+        &self,
+        lhs: &Ciphertext,
+        rhs: &Ciphertext,
+        p_moduli: &[Modulus],
+    ) -> Result<Ciphertext> {
+        let ring = self.params.ring();
+        let q_basis = RnsBasis::new(ring.moduli().to_vec())?;
+        let p_basis = RnsBasis::new(p_moduli.to_vec())?;
+        let qp_moduli: Vec<Modulus> = ring
+            .moduli()
+            .iter()
+            .chain(p_moduli.iter())
+            .copied()
+            .collect();
+        let qp_ring = Ring::new(Degree::new(ring.degree())?, qp_moduli.clone())?;
+        let qp_basis = RnsBasis::new(qp_moduli)?;
+
+        let extend = |poly: &Poly| extend_basis(poly, &q_basis, &qp_basis);
+        let lhs_c0 = extend(&lhs.inner().inner().value()[0])?;
+        let lhs_c1 = extend(&lhs.inner().inner().value()[1])?;
+        let rhs_c0 = extend(&rhs.inner().inner().value()[0])?;
+        let rhs_c1 = extend(&rhs.inner().inner().value()[1])?;
+
+        let d0 = qp_ring.mul(&lhs_c0, &rhs_c0)?;
+        let d1 = qp_ring.add(
+            &qp_ring.mul(&lhs_c0, &rhs_c1)?,
+            &qp_ring.mul(&lhs_c1, &rhs_c0)?,
+        )?;
+        let d2 = qp_ring.mul(&lhs_c1, &rhs_c1)?;
+
+        let t = Modulus::new(self.params.plaintext_modulus())?;
+        let new_c0 = rescale_and_round(&d0, &q_basis, &p_basis, t)?;
+        let new_c1 = rescale_and_round(&d1, &q_basis, &p_basis, t)?;
+        let new_c2 = rescale_and_round(&d2, &q_basis, &p_basis, t)?;
+
+        Ok(Ciphertext::new(bgv::Ciphertext::new(
+            phantom_lattice::rlwe::Ciphertext::new(vec![new_c0, new_c1, new_c2]),
+        )))
     }
 
     /// Multiplies a ciphertext by a plaintext.
