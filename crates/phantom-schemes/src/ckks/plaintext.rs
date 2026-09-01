@@ -1,24 +1,62 @@
 //! CKKS plaintext.
 
+use phantom_ring::Poly;
+
 use super::{Complex64, Precision, Scale};
 
 /// CKKS plaintext carrying approximate slots.
+///
+/// `poly` is `None` for the long-standing transparent representation
+/// ([`Plaintext::new`], unchanged so every existing caller keeps compiling
+/// and behaving identically) and `Some` for the real canonical-embedding
+/// representation (`Plaintext::new_real`, produced only by
+/// [`super::Encoder::encode_complex_real`] - see that method's own doc
+/// comment for the encoding itself). `slots()` always returns the values
+/// the plaintext was constructed from either way; for the real
+/// representation those are the *pre-rounding* inputs, not necessarily
+/// exactly what [`super::Encoder::decode_complex_real`] recovers from
+/// `poly` (canonical embedding is an approximate round trip by
+/// construction - see [`Scale`]'s own role in bounding that error).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plaintext {
     slots: Vec<Complex64>,
     scale: Scale,
     level: usize,
     precision: Precision,
+    poly: Option<Poly>,
 }
 
 impl Plaintext {
-    /// Creates a plaintext.
+    /// Creates a transparent plaintext (no real ring representation - see
+    /// the type's own doc comment).
     pub fn new(slots: Vec<Complex64>, scale: Scale, level: usize, precision: Precision) -> Self {
         Self {
             slots,
             scale,
             level,
             precision,
+            poly: None,
+        }
+    }
+
+    /// Creates a real plaintext backed by `poly` - see the type's own doc
+    /// comment. `pub(crate)`: only [`super::Encoder::encode_complex_real`]
+    /// should construct one, since `poly` must actually be that encoder's
+    /// own canonical-embedding output for [`super::Encoder::decode_complex_real`]
+    /// to recover anything meaningful from it.
+    pub(crate) fn new_real(
+        slots: Vec<Complex64>,
+        scale: Scale,
+        level: usize,
+        precision: Precision,
+        poly: Poly,
+    ) -> Self {
+        Self {
+            slots,
+            scale,
+            level,
+            precision,
+            poly: Some(poly),
         }
     }
 
@@ -40,5 +78,11 @@ impl Plaintext {
     /// Returns the precision estimate.
     pub const fn precision(&self) -> Precision {
         self.precision
+    }
+
+    /// Returns the real ring representation, if this is a real (not
+    /// transparent) plaintext.
+    pub const fn poly(&self) -> Option<&Poly> {
+        self.poly.as_ref()
     }
 }

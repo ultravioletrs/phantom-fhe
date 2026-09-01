@@ -59,6 +59,20 @@ impl BigUint {
         lo | (hi << 64)
     }
 
+    /// Converts to a `u128`, returning `None` (rather than the
+    /// `debug_assert!`-guarded UB-in-release-mode [`Self::to_u128`] risks)
+    /// if the value doesn't fit - needed by CKKS's real decoder, which
+    /// reconstructs a coefficient's true value from residues whose modulus
+    /// product is caller-controlled, not a size this module's own call
+    /// sites can guarantee in advance the way [`Self::to_u128`]'s existing
+    /// callers can.
+    pub(crate) fn checked_to_u128(&self) -> Option<u128> {
+        if self.0.len() > 2 {
+            return None;
+        }
+        Some(self.to_u128())
+    }
+
     pub(crate) fn is_zero(&self) -> bool {
         self.0.is_empty()
     }

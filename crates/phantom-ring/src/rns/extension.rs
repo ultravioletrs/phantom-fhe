@@ -171,3 +171,34 @@ pub fn floor_divide_residues(basis: &RnsBasis, divisor: u64) -> Vec<u64> {
     let (quotient, _remainder) = big_q.divmod_u64(divisor);
     moduli.iter().map(|&q| quotient.divmod_u64(q).1).collect()
 }
+
+/// Reconstructs each coefficient's true value via CRT (`reconstruct_true_values`),
+/// centered into `(-Q/2, Q/2]` (`Q` = `source`'s own modulus product), as a
+/// signed `i128` - CKKS's real encoder/decoder need this to recover a
+/// polynomial's actual (possibly negative) coefficient values across
+/// however many RNS moduli its ring uses, not just per-modulus residues.
+/// Errors ([`RingError::CrtOverflow`]) if any centered value's magnitude
+/// doesn't fit in `i128` - `Q` would need to exceed roughly 127 bits for
+/// that, far beyond any realistic single-coefficient parameter set this
+/// crate targets.
+pub fn reconstruct_centered_values(poly: &Poly, source: &RnsBasis) -> Result<Vec<i128>> {
+    let (big_q, values) = reconstruct_true_values(poly, source)?;
+
+    let mut out = Vec::with_capacity(values.len());
+    for value in &values {
+        let doubled = value.mul_u64(2);
+        let negative = doubled.cmp(&big_q) == Ordering::Greater;
+        let magnitude = if negative {
+            big_q.sub(value)
+        } else {
+            value.clone()
+        };
+        let magnitude = magnitude.checked_to_u128().ok_or(RingError::CrtOverflow)?;
+        if magnitude > i128::MAX as u128 {
+            return Err(RingError::CrtOverflow);
+        }
+        let magnitude = magnitude as i128;
+        out.push(if negative { -magnitude } else { magnitude });
+    }
+    Ok(out)
+}

@@ -1,4 +1,53 @@
 //! CKKS approximate encoders.
+//!
+//! [`Encoder::encode_complex_real`]/[`Encoder::decode_complex_real`] are the
+//! **real** canonical-embedding encode/decode pair - unlike
+//! [`Encoder::encode_complex`]/[`Encoder::decode_complex`] (transparent, no
+//! real ring representation, kept unchanged so every existing caller keeps
+//! compiling and behaving identically), these actually round-trip through
+//! a `phantom_ring::Poly` the way real CKKS does.
+//!
+//! # Canonical embedding
+//!
+//! For `R = Z[X]/(X^N+1)`, the canonical embedding evaluates a polynomial
+//! at the `N` odd powers of `zeta = e^{i*pi/N}` (a primitive `2N`-th root
+//! of unity): `y_j = m(zeta^(2j+1))` for `j = 0..N`. For a polynomial with
+//! *real* coefficients, `y_j` and `y_{N-1-j}` are complex conjugates (since
+//! `zeta^(2(N-1-j)+1) = zeta^(2N-1-2j) = conj(zeta^(2j+1))`), so only `N/2`
+//! of the `N` embedding coordinates are independent - CKKS packs `N/2`
+//! complex slots by filling the other half with their conjugates before
+//! inverting the embedding.
+//!
+//! **Encode**: given `N/2` slots `z`, form the length-`N`
+//! conjugate-symmetric vector `y = [z_0, ..., z_{N/2-1}, conj(z_{N/2-1}),
+//! ..., conj(z_0)]`, scale it by `Delta` (the plaintext's scale), and
+//! recover the (real, up to floating-point error) coefficients via the
+//! closed-form inverse `m_k = (1/N) * sum_j conj(zeta^((2j+1)k)) * y_j` -
+//! the canonical embedding matrix `U` (`U[j][k] = zeta^((2j+1)k)`)
+//! satisfies `U * conj(U)^T = N * I`, so `U^{-1} = (1/N) * conj(U)^T`
+//! exactly (verified numerically, Python, before implementing: both the
+//! `U^{-1}` identity itself and the full encode-with-rounding/decode round
+//! trip, recovering slots to within the expected `~0.5/Delta` rounding
+//! error). Each `m_k` is rounded to the nearest integer and embedded into
+//! the ring's own RNS residues (negative values via `q - |value|`, the
+//! same convention `bgv`/`bfv`'s own encoders use).
+//!
+//! **Decode**: reconstruct each coefficient's true signed value from its
+//! RNS residues (`phantom_ring::rns::extension::reconstruct_centered_values`,
+//! CRT-based, so it works across however many moduli the polynomial's own
+//! ring level has), evaluate at the same embedding points (`y_j = sum_k
+//! zeta^((2j+1)k) * m_k`), and divide by `Delta` - the first `N/2` entries
+//! are the recovered slots.
+//!
+//! Conjugate-invariant CKKS (`N` real slots via a different ring
+//! structure) isn't supported by the real path yet - `encode_complex_real`
+//! rejects it explicitly rather than silently producing wrong results.
+//! This is a straightforward `O(N^2)` evaluation (no NTT/FFT fast path),
+//! matching this crate's existing "correctness first" primitives -
+//! tracked as a future optimization, not attempted here.
+
+use phantom_ring::rns::extension::reconstruct_centered_values;
+use phantom_ring::{Poly, Ring, RnsBasis};
 
 use super::{CkksParams, Complex64, Plaintext, Precision, Scale};
 use crate::{Result, SchemesError};
@@ -80,4 +129,120 @@ impl Encoder {
             .map(|value| value.re)
             .collect())
     }
+
+    /// Encodes complex slots as a **real** plaintext (canonical embedding,
+    /// with the default scale) - see the module doc comment for the
+    /// algorithm.
+    pub fn encode_complex_real(&self, values: &[Complex64]) -> Result<Plaintext> {
+        if self.params.conjugate_invariant() {
+            return Err(SchemesError::InvalidParameters(
+                "real CKKS encoding doesn't support conjugate-invariant packing yet",
+            ));
+        }
+        let ring = self.params.ring();
+        let n = ring.degree();
+        let slot_count = n / 2;
+        if values.len() > slot_count {
+            return Err(SchemesError::InvalidSlotCount);
+        }
+        if values
+            .iter()
+            .any(|v| !v.re.is_finite() || !v.im.is_finite())
+        {
+            return Err(SchemesError::InvalidParameters("CKKS slots must be finite"));
+        }
+
+        let scale = self.params.default_scale();
+        let mut padded = values.to_vec();
+        padded.resize(slot_count, Complex64::default());
+        let mut y = padded.clone();
+        y.extend(padded.iter().rev().map(|v| v.conj()));
+
+        let powers = root_powers(n);
+        let two_n = 2 * n;
+        let delta = scale.value();
+
+        let mut coeffs = Vec::with_capacity(n);
+        for k in 0..n {
+            let mut acc = Complex64::default();
+            for (j, &y_j) in y.iter().enumerate() {
+                let exp = ((2 * j + 1) * k) % two_n;
+                let conj_root = powers[(two_n - exp) % two_n];
+                acc = acc + conj_root * y_j;
+            }
+            let scaled = acc * Complex64::real(delta / n as f64);
+            coeffs.push(scaled.re.round() as i128);
+        }
+
+        let poly = embed_signed_coeffs(&coeffs, ring)?;
+        let precision = Precision::new(delta.log2().max(0.0));
+        Ok(Plaintext::new_real(
+            values.to_vec(),
+            scale,
+            self.params.initial_level(),
+            precision,
+            poly,
+        ))
+    }
+
+    /// Decodes a **real** plaintext's complex slots - see the module doc
+    /// comment for the algorithm.
+    pub fn decode_complex_real(&self, plaintext: &Plaintext) -> Result<Vec<Complex64>> {
+        let poly = plaintext.poly().ok_or(SchemesError::InvalidParameters(
+            "plaintext has no real ring representation - encode with encode_complex_real",
+        ))?;
+        let ring = self.params.ring();
+        let n = ring.degree();
+        let moduli = &ring.moduli()[..poly.moduli_count()];
+        let basis = RnsBasis::new(moduli.to_vec())?;
+        let values = reconstruct_centered_values(poly, &basis)?;
+
+        let powers = root_powers(n);
+        let two_n = 2 * n;
+        let delta = plaintext.scale().value();
+        let slot_count = n / 2;
+
+        let mut slots = Vec::with_capacity(slot_count);
+        for j in 0..slot_count {
+            let mut acc = Complex64::default();
+            for (k, &m_k) in values.iter().enumerate() {
+                let exp = ((2 * j + 1) * k) % two_n;
+                acc = acc + powers[exp] * Complex64::real(m_k as f64);
+            }
+            slots.push(acc * Complex64::real(1.0 / delta));
+        }
+        Ok(slots)
+    }
+}
+
+/// Precomputed powers of the `2N`-th primitive root of unity `zeta =
+/// e^{i*pi/N}`: `powers[k] = zeta^k` for `k = 0..2N`, built via one `O(N)`
+/// running-product pass (rather than an `O(N)` `cos`/`sin` call per lookup)
+/// - reused for every `(j, k)` pair the embedding matrix needs.
+fn root_powers(n: usize) -> Vec<Complex64> {
+    let two_n = 2 * n;
+    let theta = core::f64::consts::PI / n as f64;
+    let zeta = Complex64::new(theta.cos(), theta.sin());
+    let mut powers = Vec::with_capacity(two_n);
+    let mut current = Complex64::real(1.0);
+    for _ in 0..two_n {
+        powers.push(current);
+        current = current * zeta;
+    }
+    powers
+}
+
+/// Embeds signed coefficients into `ring`'s own RNS residues, one modulus
+/// at a time - `rem_euclid` gives a residue in `[0, q)` regardless of
+/// sign, the same signed-embedding convention `bgv`/`bfv`'s own encoders
+/// use (there via an explicit `q - magnitude` branch).
+fn embed_signed_coeffs(coeffs: &[i128], ring: &Ring) -> Result<Poly> {
+    let mut out = vec![vec![0u64; coeffs.len()]; ring.moduli().len()];
+    for (j, modulus) in ring.moduli().iter().enumerate() {
+        let q = i128::from(modulus.value());
+        for (i, &c) in coeffs.iter().enumerate() {
+            out[j][i] = c.rem_euclid(q) as u64;
+        }
+    }
+    Ok(Poly::from_coeffs(out)?)
 }

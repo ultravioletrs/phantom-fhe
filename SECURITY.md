@@ -81,8 +81,17 @@ The following components are not yet at production cryptographic strength:
   real RNS modulus-switching path now (`ModulusSwitcher::switch_next_real`,
   alongside the original clone-only `switch_next`), with the same
   not-yet-migrated caller situation as everything else here.
-- `phantom-schemes::ckks` implements approximate encoding and rescale
-  bookkeeping without real noise/precision analysis.
+- `phantom-schemes::ckks` still has approximate encoding
+  (`Encoder::encode_complex`/`decode_complex`) and rescale bookkeeping
+  without real noise/precision analysis as its default path, but now also
+  has a real canonical-embedding encoder alongside it
+  (`Encoder::encode_complex_real`/`decode_complex_real`), which actually
+  round-trips slots through a `phantom_ring::Poly` (`Plaintext`'s new,
+  `Option`-typed `poly` field) rather than carrying them in the clear -
+  the first piece of CKKS's own rebuild onto real ring types, matching
+  what BGV/BFV already have. `Ciphertext`, `Encryptor`, `Decryptor`, and
+  every `Evaluator` operation are still transparent and unaffected by
+  this; that's the rest of the CKKS rebuild, not yet done.
 - `phantom-bootstrapping::ckks` is a message-preserving pipeline, not yet a
   production refresh pipeline. BGV/BFV bootstrapping modules are reserved
   but unimplemented.
