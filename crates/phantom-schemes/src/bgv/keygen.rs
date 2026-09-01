@@ -1,5 +1,6 @@
 //! BGV key generation.
 
+use phantom_lattice::rgsw::GadgetDecompositionParams;
 use phantom_lattice::rlwe::{
     GaloisKey, PublicKey, RelinearizationKey, SecretDistribution, SecretKey,
 };
@@ -7,7 +8,7 @@ use phantom_lattice::security::STANDARD_ERROR_STD_DEV;
 use phantom_ring::sampling::{sample_discrete_gaussian, sample_uniform};
 use rand_core::{CryptoRng, RngCore};
 
-use super::BgvParams;
+use super::{BgvParams, BgvRelinearizationKey};
 use crate::Result;
 
 /// Generated BGV key pair.
@@ -143,5 +144,31 @@ impl BgvKeyGenerator {
         Ok(self
             .inner
             .generate_hybrid_relinearization_key(sk, p_moduli, rng)?)
+    }
+
+    /// Generates a **real BGV** relinearization key (`s^2 -> s`), using
+    /// classical gadget-decomposition key-switching with `t`-scaled noise -
+    /// see [`BgvRelinearizationKey`]'s own module doc comment for why this,
+    /// not [`Self::generate_raw_hybrid_relinearization_key`], is what real
+    /// BGV relinearization needs.
+    pub fn generate_relinearization_key_real<R>(
+        &self,
+        sk: &SecretKey,
+        decomposition_params: GadgetDecompositionParams,
+        rng: &mut R,
+    ) -> Result<BgvRelinearizationKey>
+    where
+        R: RngCore + CryptoRng,
+    {
+        let ring = self.params.ring();
+        let s_squared = ring.mul(sk.value(), sk.value())?;
+        BgvRelinearizationKey::generate(
+            &self.params.rlwe_params()?,
+            &s_squared,
+            sk,
+            decomposition_params,
+            self.params.plaintext_modulus(),
+            rng,
+        )
     }
 }

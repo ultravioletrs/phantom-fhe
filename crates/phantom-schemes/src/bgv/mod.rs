@@ -10,6 +10,7 @@ mod keygen;
 mod modulus_switch;
 mod params;
 mod plaintext;
+mod relinearization;
 
 pub use ciphertext::Ciphertext;
 pub use context::BgvContext;
@@ -21,3 +22,4 @@ pub use keygen::{BgvKeyGenerator, BgvKeyPair, EvaluationKeys};
 pub use modulus_switch::ModulusSwitcher;
 pub use params::{BgvParams, BgvParamsBuilder};
 pub use plaintext::Plaintext;
+pub use relinearization::BgvRelinearizationKey;

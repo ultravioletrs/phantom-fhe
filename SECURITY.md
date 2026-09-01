@@ -66,17 +66,21 @@ The following components are not yet at production cryptographic strength:
   (`Evaluator::relinearize_real`, `BfvKeyGenerator::generate_hybrid_relinearization_key`)
   - a direct reuse of `phantom_lattice::rlwe`'s existing real key-switching
   machinery, safe for BFV since it has no `t`-scaled-noise requirement.
-  **BGV's relinearization is still not wired up**: the same key-switching
-  key would be unsafe for BGV's own real ciphertexts (its noise isn't a
-  multiple of `t`, so using it would silently corrupt BGV's mod-`t`
-  invariant rather than just add noise) - fixing that means either
-  extending the shared, scheme-agnostic key-switching primitive
-  (`phantom_lattice::rlwe::generate_key_switch_key`, which CKKS/Galois
-  rotation also use, with no `t` concept) or duplicating its logic
-  BGV-side, not attempted yet. BGV also has a real RNS modulus-switching
-  path now (`ModulusSwitcher::switch_next_real`, alongside the original
-  clone-only `switch_next`), with the same not-yet-migrated caller
-  situation.
+  **BGV's own relinearization is real now too**
+  (`Evaluator::relinearize_real`, `BgvKeyGenerator::generate_relinearization_key_real`),
+  but needed a genuinely different construction from BFV's: BFV's
+  key-switching key would be unsafe for BGV's own real ciphertexts (its
+  noise isn't a multiple of `t`, so using it - or even a version with its
+  noise naively scaled by `t` - silently corrupts BGV's mod-`t` invariant,
+  verified numerically before ruling it out). BGV's relinearization key
+  (`phantom-schemes::bgv::relinearization::BgvRelinearizationKey`) instead
+  uses classical (power-of-base) gadget decomposition, which has no
+  division/rounding step to corrupt `t`-scaled noise the way the RNS hybrid
+  technique's `mod_down` does - verified to recover the exact product (not
+  just within a noise bound) across 30 randomized trials. BGV also has a
+  real RNS modulus-switching path now (`ModulusSwitcher::switch_next_real`,
+  alongside the original clone-only `switch_next`), with the same
+  not-yet-migrated caller situation as everything else here.
 - `phantom-schemes::ckks` implements approximate encoding and rescale
   bookkeeping without real noise/precision analysis.
 - `phantom-bootstrapping::ckks` is a message-preserving pipeline, not yet a

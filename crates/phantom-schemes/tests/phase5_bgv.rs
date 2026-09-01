@@ -1,3 +1,4 @@
+use phantom_lattice::rgsw::GadgetDecompositionParams;
 use phantom_ring::{Degree, Modulus, Ring};
 use phantom_schemes::bgv::{BgvContext, BgvParams, Plaintext};
 use rand_chacha::rand_core::SeedableRng;
@@ -295,6 +296,61 @@ fn real_raw_multiplication_without_relinearization_is_exact() {
         let decrypted = decryptor.decrypt(&product).unwrap();
         let decoded = encoder.decode_u64(&decrypted).unwrap();
 
+        assert_eq!(
+            decoded,
+            expected_product(&ctx, &a_pt, &b_pt),
+            "trial {trial}"
+        );
+    }
+}
+
+#[test]
+fn real_relinearization_reduces_degree_and_preserves_the_product_exactly() {
+    let ctx = BgvContext::new(real_params());
+    let mut rng = seeded_rng();
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair_real(&mut rng).unwrap();
+    // base=2^8=256, 7 levels covers REAL_MODULUS's ~50 bits (7*8=56) with
+    // margin - see BgvRelinearizationKey's own module doc comment for why
+    // a small base matters here (a large one reintroduces the same kind of
+    // exactness problem this whole primitive exists to avoid).
+    let decomposition_params = GadgetDecompositionParams::new(8, 7).unwrap();
+    let relin_key = keygen
+        .generate_relinearization_key_real(&keys.secret, decomposition_params, &mut rng)
+        .unwrap();
+
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.decryptor(keys.secret).unwrap();
+    let evaluator = ctx.evaluator().unwrap();
+
+    for trial in 0..30u64 {
+        let a_values: Vec<u64> = (0..REAL_DEGREE as u64)
+            .map(|i| (i + trial) % REAL_T)
+            .collect();
+        let b_values: Vec<u64> = (0..REAL_DEGREE as u64)
+            .map(|i| (2 * i + trial) % REAL_T)
+            .collect();
+        let a_pt = encoder.encode_u64(&a_values).unwrap();
+        let b_pt = encoder.encode_u64(&b_values).unwrap();
+        let a_ct = encryptor.encrypt(&a_pt, &mut rng).unwrap();
+        let b_ct = encryptor.encrypt(&b_pt, &mut rng).unwrap();
+
+        let product = evaluator.mul(&a_ct, &b_ct, None).unwrap();
+        let relinearized = evaluator.relinearize_real(&product, &relin_key).unwrap();
+        assert_eq!(
+            relinearized.degree(),
+            1,
+            "real BGV relinearization must bring a degree-2 ciphertext back to degree 1"
+        );
+
+        let decrypted = decryptor.decrypt(&relinearized).unwrap();
+        let decoded = encoder.decode_u64(&decrypted).unwrap();
+
+        // Exact, not just within a noise bound: this is the whole point of
+        // the classical-gadget-decomposition construction - see
+        // BgvRelinearizationKey's own module doc comment for why the RNS
+        // hybrid technique can't give this.
         assert_eq!(
             decoded,
             expected_product(&ctx, &a_pt, &b_pt),

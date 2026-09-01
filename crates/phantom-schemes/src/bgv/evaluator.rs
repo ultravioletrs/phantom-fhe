@@ -1,11 +1,13 @@
 //! BGV evaluator.
 
+use super::relinearization::{key_switch, BgvRelinearizationKey};
 use super::{BgvParams, Ciphertext, EvaluationKeys, ModulusSwitcher, Plaintext};
 use crate::Result;
 
 /// BGV homomorphic evaluator.
 #[derive(Clone, Debug)]
 pub struct Evaluator {
+    params: BgvParams,
     inner: phantom_lattice::rlwe::Evaluator,
     modulus_switcher: ModulusSwitcher,
 }
@@ -13,9 +15,12 @@ pub struct Evaluator {
 impl Evaluator {
     /// Creates an evaluator.
     pub fn new(params: BgvParams) -> Result<Self> {
+        let inner = phantom_lattice::rlwe::Evaluator::new(params.rlwe_params()?);
+        let modulus_switcher = ModulusSwitcher::new(params.clone());
         Ok(Self {
-            inner: phantom_lattice::rlwe::Evaluator::new(params.rlwe_params()?),
-            modulus_switcher: ModulusSwitcher::new(params),
+            params,
+            inner,
+            modulus_switcher,
         })
     }
 
@@ -56,6 +61,32 @@ impl Evaluator {
             product
         };
         Ok(Ciphertext::new(product))
+    }
+
+    /// Relinearizes a **real** degree-2 BGV ciphertext back to degree 1,
+    /// using a key from
+    /// [`super::BgvKeyGenerator::generate_relinearization_key_real`]. See
+    /// [`BgvRelinearizationKey`]'s own module doc comment for why this -
+    /// not [`Self::mul`]'s `RelinearizationKey`/[`phantom_lattice::rlwe::key_switch`]
+    /// path - is what real BGV relinearization needs.
+    pub fn relinearize_real(
+        &self,
+        ciphertext: &Ciphertext,
+        key: &BgvRelinearizationKey,
+    ) -> Result<Ciphertext> {
+        let ring = self.params.ring();
+        let components = ciphertext.inner().value();
+        if components.len() != 3 {
+            return Err(crate::SchemesError::InvalidParameters(
+                "relinearize_real expects a degree-2 ciphertext (3 components)",
+            ));
+        }
+        let (acc_b, acc_a) = key_switch(&components[2], key, ring)?;
+        let new_c0 = ring.add(&components[0], &acc_b)?;
+        let new_c1 = ring.add(&components[1], &acc_a)?;
+        Ok(Ciphertext::new(phantom_lattice::rlwe::Ciphertext::new(
+            vec![new_c0, new_c1],
+        )))
     }
 
     /// Multiplies a ciphertext by a plaintext.
