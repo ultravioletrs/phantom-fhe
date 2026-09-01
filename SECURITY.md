@@ -35,23 +35,31 @@ The following components are not yet at production cryptographic strength:
   ciphertexts aren't yet consumed anywhere (no bootstrapping construction
   built on top), and, like the rest of `phantom-lattice::rlwe`, its noise
   tracking is a sound-but-loose worst-case bound.
-- `phantom-schemes::bgv` now has a real, noise-bearing encryption path
-  (`Encryptor::with_secret_key_real`/`with_public_key_real`,
-  `BgvKeyGenerator::generate_keypair_real`) alongside the original
-  transparent one - every existing caller (`phantom-circuits`,
-  `phantom-bootstrapping`, `phantom-multiparty`, `phantom-examples`,
-  `phantom-schemes::bfv`) still only constructs the transparent
+- `phantom-schemes::bgv` and `phantom-schemes::bfv` each now have a real,
+  noise-bearing encryption path
+  (`Encryptor::with_secret_key_real`/`with_public_key_real`) alongside
+  their original transparent one - every existing caller
+  (`phantom-circuits`, `phantom-bootstrapping`, `phantom-multiparty`,
+  `phantom-examples`) still only constructs the transparent
   (non-encrypted) path, since their toy ring parameters have no headroom
-  for real noise and haven't been migrated yet. Real BGV relinearization
-  isn't wired up either (would need the key-switching key's own noise
-  scaled by the plaintext modulus too, not just fresh encryption's). BGV
-  also has a real RNS modulus-switching path now
+  for real noise and haven't been migrated yet. BGV's real path needs
+  noise scaled by the plaintext modulus `t` and a matching real public key
+  (`BgvKeyGenerator::generate_keypair_real`); BFV's real path scales the
+  *message* by `Delta = floor(Q/t)` instead and reuses a standard public
+  key unchanged - genuinely different math, not a relabeling (the
+  pre-existing "BFV" scheme, before this, was actually just BGV's own
+  exact scheme reused directly, with no Δ-scaling anywhere). Real BGV
+  relinearization isn't wired up either (would need the key-switching
+  key's own noise scaled by the plaintext modulus too, not just fresh
+  encryption's), and **BFV's real path only covers encrypt/decrypt and
+  ciphertext-ciphertext add/sub/neg** - `add_plain`/`mul_plain`/`mul` all
+  need `Delta`-aware handling that doesn't exist yet, and calling them
+  against a real-mode BFV ciphertext today silently produces a wrong
+  result rather than an error, so avoid them until that lands. BGV also
+  has a real RNS modulus-switching path now
   (`ModulusSwitcher::switch_next_real`, alongside the original
   clone-only `switch_next`), with the same not-yet-migrated caller
   situation.
-  `phantom-schemes::bfv` uses transparent (non-encrypted) ciphertext
-  semantics; a real BFV path needs its own Δ-scaled-message noise model,
-  distinct from BGV's `t`-scaled-noise one, and hasn't been built yet.
 - `phantom-schemes::ckks` implements approximate encoding and rescale
   bookkeeping without real noise/precision analysis.
 - `phantom-bootstrapping::ckks` is a message-preserving pipeline, not yet a

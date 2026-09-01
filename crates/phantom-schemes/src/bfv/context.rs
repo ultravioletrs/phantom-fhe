@@ -43,6 +43,21 @@ impl BfvContext {
         Encryptor::with_secret_key(self.params.clone(), secret_key)
     }
 
+    /// Creates a real public-key encryptor. `public_key` can come from the
+    /// same [`BfvKeyGenerator::generate_keypair`] the transparent path
+    /// uses.
+    pub fn real_encryptor(&self, public_key: phantom_lattice::rlwe::PublicKey) -> Encryptor {
+        Encryptor::with_public_key_real(self.params.clone(), public_key)
+    }
+
+    /// Creates a real secret-key encryptor.
+    pub fn real_secret_key_encryptor(
+        &self,
+        secret_key: phantom_lattice::rlwe::SecretKey,
+    ) -> Encryptor {
+        Encryptor::with_secret_key_real(self.params.clone(), secret_key)
+    }
+
     /// Creates a decryptor.
     pub fn decryptor(&self, secret_key: phantom_lattice::rlwe::SecretKey) -> Result<Decryptor> {
         Decryptor::new(self.params.clone(), secret_key)

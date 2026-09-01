@@ -131,3 +131,21 @@ pub fn crt_basis_constant(
         .map(|t| m_i.divmod_u64(t.value()).1)
         .collect())
 }
+
+/// Computes `floor(product(basis.moduli()) / divisor) mod q_j` for every
+/// modulus `q_j` in `basis` - a genuine floor division, unlike
+/// [`crt_basis_constant`]'s `M_i` (which only ever divides `Q` by one of
+/// `Q`'s own factors, so it's always exact). This is BFV's "Delta" scaling
+/// factor's own residues (`divisor` = the plaintext modulus `t`, `Delta =
+/// floor(Q/t)`, the amount a plaintext message gets scaled by before
+/// encryption so its noise has room to grow without overwhelming it) - or
+/// any other "big constant reduced into a basis" computation with the same
+/// shape.
+pub fn floor_divide_residues(basis: &RnsBasis, divisor: u64) -> Vec<u64> {
+    let moduli: Vec<u64> = basis.moduli().iter().map(|m| m.value()).collect();
+    let big_q = moduli
+        .iter()
+        .fold(BigUint::from_u64(1), |acc, &q| acc.mul_u64(q));
+    let (quotient, _remainder) = big_q.divmod_u64(divisor);
+    moduli.iter().map(|&q| quotient.divmod_u64(q).1).collect()
+}
