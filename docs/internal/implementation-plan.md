@@ -913,7 +913,7 @@ Each phase is complete only when:
 
 ## 25. Immediate Next Coding Tasks
 
-Current next implementation target: Alpha Hardening Workstream 5 (production BFV/BGV/CKKS track) - the next workstream up now that Workstream 4 (production RLWE/RGSW track) is complete. Workstreams 1 (Phase 0 cleanup), 2 (scaffold boundary and API honesty), 3 (ring and RNS foundation hardening, item 5b intentionally deferred, see its own entry), and 4 are done - see below.
+Current next implementation target: Alpha Hardening Workstream 6 (bootstrapping and circuits hardening) - the next workstream up now that Workstream 5 (production BFV/BGV/CKKS track) is complete. Workstreams 1 (Phase 0 cleanup), 2 (scaffold boundary and API honesty), 3 (ring and RNS foundation hardening, item 5b intentionally deferred, see its own entry), 4 (production RLWE/RGSW track), and 5 are done - see below.
 
 ## 26. Next Release Plan - Alpha Hardening
 
@@ -1141,11 +1141,13 @@ Tasks:
 
    The other four cross-operation pipelines all passed on the first attempt: BFV (encrypt→add→multiply→relinearize→serialize, real tensor-and-rescale multiplication plus RNS hybrid relinearization chained together for the first time in a single test), CKKS (encrypt→add→multiply→relinearize→rescale→serialize, the fullest real CKKS pipeline exercised anywhere in the test suite), and one transparent-scaffold pipeline each for BGV and CKKS (encrypt→add→multiply(or just add)→rotate→serialize) - rotation is covered only via the transparent scaffold, since real rotation isn't wired up for any scheme yet (`SECURITY.md`: BGV/BFV still only call the raw-coefficient `rotate_coefficients` placeholder; CKKS's real path has no rotation method at all), so exercising it on a real ciphertext would test something not proven correct there rather than validate real behavior.
 
+Workstream 5 is now complete (items 1-7 all done) - BGV, BFV, and CKKS each have a real encrypted-state path (encryption, homomorphic add/multiply, relinearization) alongside their unchanged transparent scaffolds, all three have real noise/error estimates and parameter-builder validation, and cross-operation testing exercises them chained together. One genuine gap remains, found (not introduced) by this workstream's own item 7 and tracked rather than hidden: BGV's real relinearization chained with real modulus switching is not yet known to work correctly for a multi-modulus ring (see item 7's own entry and `SECURITY.md`) - every other real-path combination tested is verified correct. Wiring any real path into `phantom-circuits`/`phantom-bootstrapping`/`phantom-multiparty` remains out of scope here (each item's own entry notes this as deliberately deferred), which is why the exit criteria below are met at the scheme layer specifically, not end to end through every consumer crate.
+
 Exit criteria:
 
-- Scheme ciphertexts carry real encrypted state.
-- Existing examples still run, but over non-transparent scheme behavior where possible.
-- CKKS precision metadata reflects real approximation behavior rather than scaffold bookkeeping.
+- Scheme ciphertexts carry real encrypted state. Met (BGV/BFV/CKKS all have a real path now).
+- Existing examples still run, but over non-transparent scheme behavior where possible. Partially met: `phantom-examples` has a dedicated real-path workflow per scheme (`bgv_real_basic`, `bfv_real_basic`, `ckks_real_basic`), additive rather than migrating the existing toy-preset examples (their toy parameters have no real-noise headroom) - full migration remains future work.
+- CKKS precision metadata reflects real approximation behavior rather than scaffold bookkeeping. Met (item 4's `ckks::noise`).
 
 ### Workstream 6 - Bootstrapping and Circuits Hardening
 
