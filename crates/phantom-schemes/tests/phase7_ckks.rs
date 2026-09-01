@@ -11,6 +11,21 @@ fn params() -> CkksParams {
         .unwrap()
 }
 
+// `params()`'s toy scale (2^10) has less headroom than a single fresh RLWE
+// noise term (see `phantom_schemes::ckks::noise::fresh_precision_bits`'s
+// own doc comment), so a freshly-encrypted ciphertext there now correctly
+// starts at 0 bits of precision - too little for this test's own "precision
+// decreases after a multiply" claim to say anything meaningful. A larger
+// scale, otherwise identical, gives it real headroom to observe.
+fn precision_params() -> CkksParams {
+    CkksParams::builder()
+        .degree(8)
+        .moduli(vec![257, 769, 3329])
+        .default_scale_bits(40)
+        .build()
+        .unwrap()
+}
+
 fn real_params() -> CkksParams {
     CkksParams::builder()
         .degree(8)
@@ -65,7 +80,7 @@ fn encrypt_decrypt_roundtrip_is_approximate() {
 
 #[test]
 fn add_mul_and_rescale_track_scale_level_and_precision() {
-    let ctx = CkksContext::new(params());
+    let ctx = CkksContext::new(precision_params());
     let mut rng = rng();
     let keygen = ctx.keygen().unwrap();
     let keys = keygen.generate_keypair(&mut rng).unwrap();
@@ -91,8 +106,8 @@ fn add_mul_and_rescale_track_scale_level_and_precision() {
     assert_eq!(product.degree(), 1);
     assert!(product.scale().value() > lhs.scale().value());
     let product = evaluator.rescale_next(&product).unwrap();
-    assert_eq!(product.level(), params().initial_level() - 1);
-    assert_eq!(product.scale(), params().default_scale());
+    assert_eq!(product.level(), precision_params().initial_level() - 1);
+    assert_eq!(product.scale(), precision_params().default_scale());
     assert!(product.precision().bits() < lhs.precision().bits());
     let product = decryptor.decrypt(&product).unwrap();
     assert_close(&encoder.decode_real(&product).unwrap(), &[4.5, -8.0]);

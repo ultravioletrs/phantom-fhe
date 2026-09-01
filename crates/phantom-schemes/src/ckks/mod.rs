@@ -8,6 +8,7 @@ mod encoder;
 mod encryptor;
 mod evaluator;
 mod keygen;
+pub mod noise;
 mod params;
 mod plaintext;
 mod precision;

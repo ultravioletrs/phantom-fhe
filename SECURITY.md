@@ -85,10 +85,22 @@ The following components are not yet at production cryptographic strength:
   alongside the original clone-only `switch_next`), with the same
   not-yet-migrated caller situation as everything else here.
 - `phantom-schemes::ckks` still has its original approximate encoding
-  (`Encoder::encode_complex`/`decode_complex`), transparent
-  `Ciphertext`/`Encryptor`/`Decryptor`, and rescale bookkeeping without real
-  noise/precision analysis as its default path, but now also has a full
-  real path alongside it: `Encoder::encode_complex_real`/`decode_complex_real`
+  (`Encoder::encode_complex`/`decode_complex`) and transparent
+  `Ciphertext`/`Encryptor`/`Decryptor` as its default path - the actual
+  slot values are still carried in the clear - but its `Precision`
+  bookkeeping is now derived from real noise analysis (new `ckks::noise`,
+  the same triangle-inequality style `phantom_lattice::noise` already uses
+  for BGV/BFV/RGSW, adapted to CKKS's canonical-embedding/scale setting)
+  rather than the flat illustrative constants (`degrade(0.25)`,
+  `degrade(1.0)`) every `Evaluator` operation used before - see
+  `ckks::noise`'s own module doc comment for the per-operation formulas
+  and what's deliberately still left unmodeled (relinearization's and
+  Galois key-switching's own noise contribution, since
+  `phantom_lattice::rlwe`'s hybrid key-switching doesn't have a
+  formally-derived noise bound of its own yet either - the same gap noted
+  above for BGV/BFV). `phantom-schemes::ckks` also now has a full real
+  ciphertext/encryption/arithmetic path alongside the transparent one:
+  `Encoder::encode_complex_real`/`decode_complex_real`
   round-trip slots through a `phantom_ring::Poly` rather than carrying them
   in the clear (`Plaintext`'s `Option`-typed `poly` field), and
   `Ciphertext` gained the same kind of `Option`-typed real RLWE

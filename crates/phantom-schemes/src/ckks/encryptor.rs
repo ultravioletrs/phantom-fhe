@@ -18,11 +18,13 @@
 //! standard generic RLWE public key works unchanged here, the same as
 //! BFV's.
 
+use phantom_lattice::noise::{fresh_public_key_noise_bound, fresh_secret_key_noise_bound};
 use phantom_lattice::rlwe::{Ciphertext as RlweCiphertext, PublicKey, SecretKey};
 use phantom_lattice::security::STANDARD_ERROR_STD_DEV;
 use phantom_ring::sampling::{sample_discrete_gaussian, sample_ternary, sample_uniform};
 use rand_core::{CryptoRng, RngCore};
 
+use super::noise::{fresh_precision_bits, precision_bits_from_noise};
 use super::{Ciphertext, CkksParams, Plaintext};
 use crate::{Result, SchemesError};
 
@@ -89,6 +91,13 @@ impl Encryptor {
     }
 
     /// Encrypts a CKKS plaintext.
+    ///
+    /// Precision degrades from `plaintext.precision()` (encode-rounding
+    /// only, no RLWE noise at all) to [`super::noise::fresh_precision_bits`]'s
+    /// estimate of what fresh encryption noise costs - see that function's
+    /// own doc comment for why passing the plaintext's precision straight
+    /// through (the previous behavior) was itself part of what made the
+    /// old flat-constant `Evaluator` degrades hard to make sense of.
     pub fn encrypt<R>(&self, plaintext: &Plaintext, rng: &mut R) -> Result<Ciphertext>
     where
         R: RngCore + CryptoRng,
@@ -97,11 +106,12 @@ impl Encryptor {
         if plaintext.slots().len() > self.params.slot_count() {
             return Err(SchemesError::InvalidSlotCount);
         }
+        let fresh = fresh_precision_bits(self.params.ring().degree(), plaintext.scale().value());
         Ok(Ciphertext::new(
             plaintext.slots().to_vec(),
             plaintext.scale(),
             plaintext.level(),
-            plaintext.precision(),
+            plaintext.precision().min(super::Precision::new(fresh)),
             1,
         ))
     }
@@ -119,7 +129,8 @@ impl Encryptor {
         let ring = self.params.ring();
         ring.check_poly(m)?;
 
-        let (c0, c1) = match &self.mode {
+        let degree = ring.degree();
+        let (c0, c1, noise_bound) = match &self.mode {
             Mode::Transparent => {
                 return Err(SchemesError::InvalidParameters(
                     "encrypt_real requires a real encryptor - use with_secret_key_real/with_public_key_real",
@@ -130,7 +141,7 @@ impl Encryptor {
                 let e = sample_discrete_gaussian(ring, rng, STANDARD_ERROR_STD_DEV);
                 let a_s = ring.mul(&a, sk.value())?;
                 let c0 = ring.sub(&ring.add(m, &e)?, &a_s)?;
-                (c0, a)
+                (c0, a, fresh_secret_key_noise_bound())
             }
             Mode::RealPublicKey(pk) => {
                 let u = sample_ternary(ring, rng);
@@ -140,15 +151,17 @@ impl Encryptor {
                 let a_u = ring.mul(&pk.value()[1], &u)?;
                 let c0 = ring.add(&ring.add(m, &b_u)?, &e0)?;
                 let c1 = ring.add(&a_u, &e1)?;
-                (c0, c1)
+                (c0, c1, fresh_public_key_noise_bound(degree))
             }
         };
 
+        let precision =
+            precision_bits_from_noise(plaintext.scale().value(), degree, noise_bound as f64);
         Ok(Ciphertext::new_real(
             RlweCiphertext::new(vec![c0, c1]),
             plaintext.scale(),
             plaintext.level(),
-            plaintext.precision(),
+            plaintext.precision().min(super::Precision::new(precision)),
             1,
         ))
     }

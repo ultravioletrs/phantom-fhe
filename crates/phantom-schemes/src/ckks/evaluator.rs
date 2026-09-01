@@ -40,6 +40,10 @@ use phantom_lattice::rlwe::{Ciphertext as RlweCiphertext, Evaluator as RlweEvalu
 use phantom_ring::rns::rescale::mod_down;
 use phantom_ring::RnsBasis;
 
+use super::noise::{
+    add_degrade_bits, align_degrade_bits, mul_degrade_bits, rescale_degrade_bits,
+    ASSUMED_REAL_MESSAGE_BOUND,
+};
 use super::{Ciphertext, CkksParams, Complex64, EvaluationKeys, Plaintext, Scale};
 use crate::{Result, SchemesError};
 
@@ -67,14 +71,27 @@ impl Evaluator {
         ))
     }
 
+    /// The ring degree every [`super::noise`] precision formula needs -
+    /// shared here so each call site doesn't repeat `self.params.ring().degree()`.
+    fn degree(&self) -> usize {
+        self.params.ring().degree()
+    }
+
     /// Adds two ciphertexts.
     pub fn add(&self, lhs: &Ciphertext, rhs: &Ciphertext) -> Result<Ciphertext> {
         self.check_binary(lhs, rhs)?;
+        let degrade = add_degrade_bits(
+            self.degree(),
+            lhs.scale().value(),
+            lhs.precision().bits(),
+            rhs.scale().value(),
+            rhs.precision().bits(),
+        );
         Ok(Ciphertext::new(
             zip_slots(lhs, rhs, |a, b| a + b),
             lhs.scale(),
             lhs.level(),
-            lhs.precision().min(rhs.precision()).degrade(0.25),
+            lhs.precision().min(rhs.precision()).degrade(degrade),
             lhs.degree().max(rhs.degree()),
         ))
     }
@@ -82,11 +99,18 @@ impl Evaluator {
     /// Subtracts two ciphertexts.
     pub fn sub(&self, lhs: &Ciphertext, rhs: &Ciphertext) -> Result<Ciphertext> {
         self.check_binary(lhs, rhs)?;
+        let degrade = add_degrade_bits(
+            self.degree(),
+            lhs.scale().value(),
+            lhs.precision().bits(),
+            rhs.scale().value(),
+            rhs.precision().bits(),
+        );
         Ok(Ciphertext::new(
             zip_slots(lhs, rhs, |a, b| a - b),
             lhs.scale(),
             lhs.level(),
-            lhs.precision().min(rhs.precision()).degrade(0.25),
+            lhs.precision().min(rhs.precision()).degrade(degrade),
             lhs.degree().max(rhs.degree()),
         ))
     }
@@ -106,6 +130,13 @@ impl Evaluator {
     /// Adds a plaintext to a ciphertext.
     pub fn add_plain(&self, ciphertext: &Ciphertext, plaintext: &Plaintext) -> Result<Ciphertext> {
         self.check_plain_binary(ciphertext, plaintext)?;
+        let degrade = add_degrade_bits(
+            self.degree(),
+            ciphertext.scale().value(),
+            ciphertext.precision().bits(),
+            plaintext.scale().value(),
+            plaintext.precision().bits(),
+        );
         Ok(Ciphertext::new(
             ciphertext
                 .slots()
@@ -119,12 +150,18 @@ impl Evaluator {
             ciphertext
                 .precision()
                 .min(plaintext.precision())
-                .degrade(0.25),
+                .degrade(degrade),
             ciphertext.degree(),
         ))
     }
 
     /// Multiplies two ciphertexts and optionally relinearizes with evaluation keys.
+    ///
+    /// The precision degrade applies [`super::noise::mul_degrade_bits`]
+    /// regardless of whether `evaluation_keys` is given - relinearization's
+    /// own key-switching noise contribution isn't modeled separately (see
+    /// `super::noise`'s module doc comment for why), so this is a slight
+    /// underestimate of the true cost when keys are provided.
     pub fn mul(
         &self,
         lhs: &Ciphertext,
@@ -137,11 +174,20 @@ impl Evaluator {
         } else {
             lhs.degree() + rhs.degree()
         };
+        let degrade = mul_degrade_bits(
+            self.degree(),
+            lhs.scale().value(),
+            lhs.precision().bits(),
+            message_bound(lhs.slots()),
+            rhs.scale().value(),
+            rhs.precision().bits(),
+            message_bound(rhs.slots()),
+        );
         Ok(Ciphertext::new(
             zip_slots(lhs, rhs, |a, b| a * b),
             super::Scale::new(lhs.scale().value() * rhs.scale().value())?,
             lhs.level().min(rhs.level()),
-            lhs.precision().min(rhs.precision()).degrade(1.0),
+            lhs.precision().min(rhs.precision()).degrade(degrade),
             degree,
         ))
     }
@@ -149,6 +195,15 @@ impl Evaluator {
     /// Multiplies a ciphertext by a plaintext.
     pub fn mul_plain(&self, ciphertext: &Ciphertext, plaintext: &Plaintext) -> Result<Ciphertext> {
         self.check_plain_binary(ciphertext, plaintext)?;
+        let degrade = mul_degrade_bits(
+            self.degree(),
+            ciphertext.scale().value(),
+            ciphertext.precision().bits(),
+            message_bound(ciphertext.slots()),
+            plaintext.scale().value(),
+            plaintext.precision().bits(),
+            message_bound(plaintext.slots()),
+        );
         Ok(Ciphertext::new(
             ciphertext
                 .slots()
@@ -162,7 +217,7 @@ impl Evaluator {
             ciphertext
                 .precision()
                 .min(plaintext.precision())
-                .degrade(1.0),
+                .degrade(degrade),
             ciphertext.degree(),
         ))
     }
@@ -175,11 +230,17 @@ impl Evaluator {
                 "cannot rescale at level zero",
             ));
         }
+        let degrade = rescale_degrade_bits(
+            self.degree(),
+            ciphertext.scale().value(),
+            ciphertext.precision().bits(),
+            self.params.default_scale().value(),
+        );
         Ok(Ciphertext::new(
             ciphertext.slots().to_vec(),
             self.params.default_scale(),
             ciphertext.level() - 1,
-            ciphertext.precision().degrade(1.0),
+            ciphertext.precision().degrade(degrade),
             ciphertext.degree(),
         ))
     }
@@ -196,21 +257,33 @@ impl Evaluator {
             return Err(SchemesError::InvalidParameters("scale mismatch"));
         }
         let level = lhs.level().min(rhs.level());
+        let lhs_degrade = align_degrade_bits(
+            self.degree(),
+            lhs.scale().value(),
+            lhs.precision().bits(),
+            lhs.level() - level,
+        );
+        let rhs_degrade = align_degrade_bits(
+            self.degree(),
+            rhs.scale().value(),
+            rhs.precision().bits(),
+            rhs.level() - level,
+        );
         Ok((
-            with_level(
-                lhs,
-                level,
-                lhs.precision().degrade((lhs.level() - level) as f64),
-            ),
-            with_level(
-                rhs,
-                level,
-                rhs.precision().degrade((rhs.level() - level) as f64),
-            ),
+            with_level(lhs, level, lhs.precision().degrade(lhs_degrade)),
+            with_level(rhs, level, rhs.precision().degrade(rhs_degrade)),
         ))
     }
 
     /// Rotates packed slots.
+    ///
+    /// No precision degrade is applied: a Galois automorphism is a pure
+    /// coefficient permutation with sign flips, which doesn't change any
+    /// coefficient's magnitude - see `super::noise`'s module doc comment
+    /// for why the key-switch this would need in a real implementation
+    /// (to bring the permuted secret key back to the original one) isn't
+    /// modeled here either, the same not-yet-derived gap as
+    /// relinearization's own key-switching noise.
     pub fn rotate_slots(&self, ciphertext: &Ciphertext, shift: usize) -> Result<Ciphertext> {
         self.check_ciphertext(ciphertext)?;
         let len = ciphertext.slots().len();
@@ -223,12 +296,13 @@ impl Evaluator {
             slots,
             ciphertext.scale(),
             ciphertext.level(),
-            ciphertext.precision().degrade(0.25),
+            ciphertext.precision(),
             ciphertext.degree(),
         ))
     }
 
-    /// Conjugates packed complex slots.
+    /// Conjugates packed complex slots. See [`Self::rotate_slots`]'s own
+    /// doc comment for why no precision degrade is applied.
     pub fn conjugate(&self, ciphertext: &Ciphertext) -> Result<Ciphertext> {
         self.check_ciphertext(ciphertext)?;
         Ok(Ciphertext::new(
@@ -240,7 +314,7 @@ impl Evaluator {
                 .collect(),
             ciphertext.scale(),
             ciphertext.level(),
-            ciphertext.precision().degrade(0.25),
+            ciphertext.precision(),
             ciphertext.degree(),
         ))
     }
@@ -250,11 +324,18 @@ impl Evaluator {
         self.check_binary(lhs, rhs)?;
         let (lhs_poly, rhs_poly) = (self.real_poly(lhs)?, self.real_poly(rhs)?);
         let sum = self.inner_at(lhs.level())?.add(lhs_poly, rhs_poly)?;
+        let degrade = add_degrade_bits(
+            self.degree(),
+            lhs.scale().value(),
+            lhs.precision().bits(),
+            rhs.scale().value(),
+            rhs.precision().bits(),
+        );
         Ok(Ciphertext::new_real(
             sum,
             lhs.scale(),
             lhs.level(),
-            lhs.precision().min(rhs.precision()).degrade(0.25),
+            lhs.precision().min(rhs.precision()).degrade(degrade),
             lhs.degree().max(rhs.degree()),
         ))
     }
@@ -264,11 +345,18 @@ impl Evaluator {
         self.check_binary(lhs, rhs)?;
         let (lhs_poly, rhs_poly) = (self.real_poly(lhs)?, self.real_poly(rhs)?);
         let diff = self.inner_at(lhs.level())?.sub(lhs_poly, rhs_poly)?;
+        let degrade = add_degrade_bits(
+            self.degree(),
+            lhs.scale().value(),
+            lhs.precision().bits(),
+            rhs.scale().value(),
+            rhs.precision().bits(),
+        );
         Ok(Ciphertext::new_real(
             diff,
             lhs.scale(),
             lhs.level(),
-            lhs.precision().min(rhs.precision()).degrade(0.25),
+            lhs.precision().min(rhs.precision()).degrade(degrade),
             lhs.degree().max(rhs.degree()),
         ))
     }
@@ -307,6 +395,13 @@ impl Evaluator {
         let sum = self
             .inner_at(ciphertext.level())?
             .add_plain(poly, &phantom_lattice::rlwe::Plaintext::new(m.clone()))?;
+        let degrade = add_degrade_bits(
+            self.degree(),
+            ciphertext.scale().value(),
+            ciphertext.precision().bits(),
+            plaintext.scale().value(),
+            plaintext.precision().bits(),
+        );
         Ok(Ciphertext::new_real(
             sum,
             ciphertext.scale(),
@@ -314,7 +409,7 @@ impl Evaluator {
             ciphertext
                 .precision()
                 .min(plaintext.precision())
-                .degrade(0.25),
+                .degrade(degrade),
             ciphertext.degree(),
         ))
     }
@@ -326,11 +421,20 @@ impl Evaluator {
         self.check_binary(lhs, rhs)?;
         let (lhs_poly, rhs_poly) = (self.real_poly(lhs)?, self.real_poly(rhs)?);
         let product = self.inner_at(lhs.level())?.mul(lhs_poly, rhs_poly)?;
+        let degrade = mul_degrade_bits(
+            self.degree(),
+            lhs.scale().value(),
+            lhs.precision().bits(),
+            ASSUMED_REAL_MESSAGE_BOUND,
+            rhs.scale().value(),
+            rhs.precision().bits(),
+            ASSUMED_REAL_MESSAGE_BOUND,
+        );
         Ok(Ciphertext::new_real(
             product,
             Scale::new(lhs.scale().value() * rhs.scale().value())?,
             lhs.level(),
-            lhs.precision().min(rhs.precision()).degrade(1.0),
+            lhs.precision().min(rhs.precision()).degrade(degrade),
             lhs.degree() + rhs.degree(),
         ))
     }
@@ -375,11 +479,18 @@ impl Evaluator {
             out.push(mod_down(component, &q_basis, &p_basis)?);
         }
 
+        let new_scale = ciphertext.scale().value() / q_last as f64;
+        let degrade = rescale_degrade_bits(
+            self.degree(),
+            ciphertext.scale().value(),
+            ciphertext.precision().bits(),
+            new_scale,
+        );
         Ok(Ciphertext::new_real(
             RlweCiphertext::new(out),
-            Scale::new(ciphertext.scale().value() / q_last as f64)?,
+            Scale::new(new_scale)?,
             ciphertext.level() - 1,
-            ciphertext.precision().degrade(1.0),
+            ciphertext.precision().degrade(degrade),
             ciphertext.degree(),
         ))
     }
@@ -437,6 +548,15 @@ fn zip_slots(
         .zip(rhs.slots().iter().copied())
         .map(|(a, b)| f(a, b))
         .collect()
+}
+
+/// The largest slot magnitude among `slots` - `0.0` for an empty slice,
+/// which [`mul_degrade_bits`] handles without a special case (the
+/// `noise*noise` cross term alone still bounds the result). Used by the
+/// transparent scaffold's `mul`/`mul_plain`, which - unlike the real
+/// path's `mul_real` - know their operands' actual values directly.
+fn message_bound(slots: &[Complex64]) -> f64 {
+    slots.iter().map(|c| c.re.hypot(c.im)).fold(0.0, f64::max)
 }
 
 fn with_level(ciphertext: &Ciphertext, level: usize, precision: super::Precision) -> Ciphertext {
