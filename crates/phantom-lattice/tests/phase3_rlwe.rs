@@ -284,6 +284,50 @@ fn real_galois_automorphism_matches_plaintext_sigma_and_preserves_decryptability
 }
 
 #[test]
+fn repack_combines_scalar_ciphertexts_into_one_coefficient_packed_ciphertext() {
+    let (params, sk, _) = key_material();
+    let mut rng = ChaCha20Rng::from_seed([10u8; 32]);
+    let encryptor = Encryptor::with_secret_key(params.clone(), sk.clone());
+    let decryptor = Decryptor::new(params.clone(), sk);
+    let evaluator = Evaluator::new(params.clone());
+
+    let messages = [7u64, 11, 13, 17];
+    let cts: Vec<Ciphertext> = messages
+        .iter()
+        .map(|&m| encryptor.encrypt(&plaintext(&[m]), &mut rng).unwrap())
+        .collect();
+
+    let repacked = evaluator.repack(&cts).unwrap();
+    assert_eq!(repacked.degree(), 1);
+
+    let expected = plaintext(&messages);
+    // Each input contributes independent fresh noise, permuted (not grown)
+    // by its own monomial shift, then summed - N independent noise sources,
+    // triangle-inequality bounded by N times a single fresh bound.
+    let bound = messages.len() as u64 * fresh_secret_key_noise_bound();
+    assert_noise_bounded(
+        &decryptor.decrypt(&repacked).unwrap(),
+        &expected,
+        bound,
+        MODULUS,
+    );
+}
+
+#[test]
+fn repack_rejects_empty_input_and_too_many_ciphertexts() {
+    let (params, sk, _) = key_material();
+    let mut rng = ChaCha20Rng::from_seed([11u8; 32]);
+    let encryptor = Encryptor::with_secret_key(params.clone(), sk);
+    let evaluator = Evaluator::new(params);
+
+    assert!(evaluator.repack(&[]).is_err());
+
+    let ct = encryptor.encrypt(&plaintext(&[1]), &mut rng).unwrap();
+    let too_many: Vec<Ciphertext> = (0..=DEGREE).map(|_| ct.clone()).collect();
+    assert!(evaluator.repack(&too_many).is_err());
+}
+
+#[test]
 fn rotation_changes_coefficients_without_changing_shape() {
     // Pure coefficient-rotation mechanics, no encryption/noise involved -
     // kept on its own small ring rather than the shared noise-tolerant

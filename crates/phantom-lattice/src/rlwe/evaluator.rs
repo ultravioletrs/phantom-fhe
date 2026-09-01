@@ -1,6 +1,7 @@
 //! RLWE evaluator operations.
 
 use crate::rlwe::keyswitch::key_switch;
+use crate::rlwe::repacking;
 use crate::rlwe::{Ciphertext, GaloisKey, Plaintext, RelinearizationKey, RlweParams};
 use crate::{LatticeError, Result};
 
@@ -157,6 +158,14 @@ impl Evaluator {
             }
         }
         Ok(out)
+    }
+
+    /// Packs `cts` into a single ciphertext, each input's message ending
+    /// up at its own coefficient position - see
+    /// [`crate::rlwe::repacking`]'s module doc comment for the derivation
+    /// and the requirements `cts` must satisfy.
+    pub fn repack(&self, cts: &[Ciphertext]) -> Result<Ciphertext> {
+        repacking::repack(cts, self.params.ring())
     }
 
     fn check_ciphertext(&self, ct: &Ciphertext) -> Result<()> {

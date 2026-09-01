@@ -26,4 +26,5 @@ pub use keyswitch::{
 pub use params::RlweParams;
 pub use plaintext::Plaintext;
 pub use public_key::PublicKey;
+pub use repacking::repack;
 pub use secret_key::SecretKey;
