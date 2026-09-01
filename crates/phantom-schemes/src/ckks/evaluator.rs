@@ -1,6 +1,6 @@
 //! CKKS evaluator.
 //!
-//! [`Evaluator::add_real`]/[`sub_real`](Evaluator::sub_real)/[`neg_real`](Evaluator::neg_real)/[`add_plain_real`](Evaluator::add_plain_real)/[`mul_real`](Evaluator::mul_real)/[`relinearize_real`](Evaluator::relinearize_real)/[`rescale_next_real`](Evaluator::rescale_next_real)
+//! [`Evaluator::add_real`]/[`sub_real`](Evaluator::sub_real)/[`neg_real`](Evaluator::neg_real)/[`add_plain_real`](Evaluator::add_plain_real)/[`mul_real`](Evaluator::mul_real)/[`relinearize_real`](Evaluator::relinearize_real)/[`rescale_next_real`](Evaluator::rescale_next_real)/[`drop_level_real`](Evaluator::drop_level_real)
 //! are CKKS's real-path arithmetic, alongside the long-standing transparent
 //! [`Evaluator::add`]/[`sub`](Evaluator::sub)/etc. (kept unchanged so every
 //! existing caller keeps compiling and behaving identically - see this
@@ -491,6 +491,50 @@ impl Evaluator {
             Scale::new(new_scale)?,
             ciphertext.level() - 1,
             ciphertext.precision().degrade(degrade),
+            ciphertext.degree(),
+        ))
+    }
+
+    /// Drops a **real** ciphertext's last RNS component from every
+    /// component, *without* dividing scale or noise the way
+    /// [`Self::rescale_next_real`] does - a plain
+    /// [`phantom_ring::rns::rescale::drop_last_modulus`] applied to `c0`
+    /// and `c1` each (the same operation `bgv::ModulusSwitcher::switch_secret_key`
+    /// already uses for a secret key, here applied to a ciphertext
+    /// instead). Needed for multi-level circuits (e.g. Horner-method
+    /// polynomial evaluation) that must bring one ciphertext's *level*
+    /// down to match another's without disturbing its *scale* - unlike
+    /// `rescale_next_real`, which always changes both together.
+    ///
+    /// **Precondition, not checked here**: the ciphertext's true decrypted
+    /// value must already fit within the *remaining* (smaller) modulus
+    /// product - i.e. this is only valid for a ciphertext whose noise
+    /// hasn't grown enough to need the dropped modulus's own headroom.
+    /// Dropping a component from a ciphertext that doesn't satisfy this
+    /// silently produces garbage (the same way any RNS modulus product
+    /// too small for its own contents would) rather than erroring - the
+    /// same caveat [`Self::rescale_next_real`]'s own sibling in
+    /// `phantom_ring::rns::rescale` documents for `drop_last_modulus`
+    /// generally. Precision is left unchanged (not degraded): assuming the
+    /// precondition holds, decryption recovers exactly the same value as
+    /// before dropping, since nothing about the represented value or its
+    /// noise actually changed - only its own RNS representation shrank.
+    pub fn drop_level_real(&self, ciphertext: &Ciphertext) -> Result<Ciphertext> {
+        let poly = self.real_poly(ciphertext)?;
+        if ciphertext.level() == 0 {
+            return Err(SchemesError::InvalidParameters(
+                "cannot drop level at level zero",
+            ));
+        }
+        let mut out = Vec::with_capacity(poly.value().len());
+        for component in poly.value() {
+            out.push(phantom_ring::rns::rescale::drop_last_modulus(component)?);
+        }
+        Ok(Ciphertext::new_real(
+            RlweCiphertext::new(out),
+            ciphertext.scale(),
+            ciphertext.level() - 1,
+            ciphertext.precision(),
             ciphertext.degree(),
         ))
     }

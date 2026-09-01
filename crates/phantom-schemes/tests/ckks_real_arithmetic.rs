@@ -327,3 +327,55 @@ fn real_path_methods_reject_a_transparent_ciphertext() {
     assert!(evaluator.neg_real(&transparent_ct).is_err());
     assert!(evaluator.rescale_next_real(&transparent_ct).is_err());
 }
+
+#[test]
+fn drop_level_real_reduces_level_without_changing_scale_or_the_decrypted_value() {
+    let ctx = CkksContext::new(real_arith_params());
+    let mut rng = seeded_rng(21);
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.real_decryptor(keys.secret).unwrap();
+    let evaluator = ctx.evaluator();
+
+    let values = sample_values(&encoder, 22);
+    let ct = encryptor
+        .encrypt_real(&encoder.encode_complex_real(&values).unwrap(), &mut rng)
+        .unwrap();
+    assert_eq!(ct.level(), 1);
+
+    let dropped = evaluator.drop_level_real(&ct).unwrap();
+    assert_eq!(dropped.level(), 0);
+    // Unlike rescale_next_real, scale is untouched - exactly the value
+    // multi-level circuits need to bring one ciphertext's level down to
+    // match another's without also changing its scale.
+    assert_eq!(dropped.scale(), ct.scale());
+
+    let decoded = encoder
+        .decode_complex_real(&decryptor.decrypt_real(&dropped).unwrap())
+        .unwrap();
+    assert_close(&decoded, &values, 1e-6);
+}
+
+#[test]
+fn drop_level_real_rejects_level_zero_and_a_transparent_ciphertext() {
+    let ctx = CkksContext::new(real_arith_params());
+    let mut rng = seeded_rng(23);
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let evaluator = ctx.evaluator();
+
+    let values = sample_values(&encoder, 24);
+    let ct = encryptor
+        .encrypt_real(&encoder.encode_complex_real(&values).unwrap(), &mut rng)
+        .unwrap();
+    let at_level_zero = evaluator.rescale_next_real(&ct).unwrap();
+    assert!(evaluator.drop_level_real(&at_level_zero).is_err());
+
+    let transparent_encryptor = ctx.encryptor(keys.public).unwrap();
+    let transparent_ct = transparent_encryptor
+        .encrypt(&encoder.encode_complex(&values).unwrap(), &mut rng)
+        .unwrap();
+    assert!(evaluator.drop_level_real(&transparent_ct).is_err());
+}
