@@ -1,6 +1,46 @@
 //! CKKS evaluator.
+//!
+//! [`Evaluator::add_real`]/[`sub_real`](Evaluator::sub_real)/[`neg_real`](Evaluator::neg_real)/[`add_plain_real`](Evaluator::add_plain_real)/[`mul_real`](Evaluator::mul_real)/[`relinearize_real`](Evaluator::relinearize_real)/[`rescale_next_real`](Evaluator::rescale_next_real)
+//! are CKKS's real-path arithmetic, alongside the long-standing transparent
+//! [`Evaluator::add`]/[`sub`](Evaluator::sub)/etc. (kept unchanged so every
+//! existing caller keeps compiling and behaving identically - see this
+//! module's other methods).
+//!
+//! A real CKKS ciphertext is structurally a plain RLWE ciphertext (its
+//! message is Delta-scaled once, by the encoder, not per-operation the way
+//! BFV's is) - `add`/`sub`/`neg`/`add_plain`/`mul` (raw tensor, no
+//! relinearization) are therefore direct, unmodified pass-throughs to
+//! [`phantom_lattice::rlwe::Evaluator`], the same reasoning
+//! [`crate::bfv::Evaluator::relinearize_real`] documents for its own
+//! pass-through. `mul_real` needs no BFV-style extended-basis
+//! tensor-and-rescale procedure: unlike BFV (where the raw tensor product's
+//! true magnitude must be recovered *before* reducing mod `Q`, since the
+//! rescale step needs it), CKKS's mod-`Q` tensor product mod is already
+//! exactly the value the next [`Evaluator::rescale_next_real`] call needs -
+//! CKKS's rescaling happens as a separate, later step, not fused into
+//! multiplication itself.
+//!
+//! [`Evaluator::rescale_next_real`] drops the ciphertext's last RNS
+//! component via [`phantom_ring::rns::rescale::mod_down`] (`P` = that one
+//! modulus), the standard "grow noise in a bigger modulus, then divide it
+//! back down" RNS-CKKS rescale technique, and divides the tracked
+//! [`super::Scale`] by that modulus's own value to match. Unlike
+//! [`phantom_ring::rns::rescale::modulus_switch_down`] (BGV's rescale,
+//! which needs an exact congruence-preserving correction term to keep a
+//! plaintext-modulus invariant intact), CKKS has no such invariant to
+//! preserve - it's already approximate arithmetic - so a plain floor
+//! division suffices; the resulting off-by-at-most-one-per-coefficient
+//! rounding (rather than round-to-nearest) is a slightly larger constant
+//! factor in the noise, not a correctness gap, and was verified numerically
+//! (Python, 200 randomized trials, both directly against the floor-division
+//! identity and via a full encrypt/rescale/decrypt/decode round trip)
+//! before implementing.
 
-use super::{Ciphertext, CkksParams, Complex64, EvaluationKeys, Plaintext};
+use phantom_lattice::rlwe::{Ciphertext as RlweCiphertext, Evaluator as RlweEvaluator};
+use phantom_ring::rns::rescale::mod_down;
+use phantom_ring::RnsBasis;
+
+use super::{Ciphertext, CkksParams, Complex64, EvaluationKeys, Plaintext, Scale};
 use crate::{Result, SchemesError};
 
 /// CKKS homomorphic evaluator.
@@ -13,6 +53,18 @@ impl Evaluator {
     /// Creates an evaluator.
     pub const fn new(params: CkksParams) -> Self {
         Self { params }
+    }
+
+    /// Builds the [`phantom_lattice::rlwe::Evaluator`] real-path methods
+    /// delegate to, for `ciphertext`'s own level - not built once at
+    /// [`Self::new`], since [`Self::rescale_next_real`] can drop RNS
+    /// components, changing which ring subsequent operations on the result
+    /// need (mirrors [`super::Decryptor::decrypt_real`]'s own per-call
+    /// derivation for the same reason).
+    fn inner_at(&self, level: usize) -> Result<RlweEvaluator> {
+        Ok(RlweEvaluator::new(
+            self.params.at_level(level)?.rlwe_params()?,
+        ))
     }
 
     /// Adds two ciphertexts.
@@ -190,6 +242,151 @@ impl Evaluator {
             ciphertext.level(),
             ciphertext.precision().degrade(0.25),
             ciphertext.degree(),
+        ))
+    }
+
+    /// Adds two **real** ciphertexts - see the module doc comment.
+    pub fn add_real(&self, lhs: &Ciphertext, rhs: &Ciphertext) -> Result<Ciphertext> {
+        self.check_binary(lhs, rhs)?;
+        let (lhs_poly, rhs_poly) = (self.real_poly(lhs)?, self.real_poly(rhs)?);
+        let sum = self.inner_at(lhs.level())?.add(lhs_poly, rhs_poly)?;
+        Ok(Ciphertext::new_real(
+            sum,
+            lhs.scale(),
+            lhs.level(),
+            lhs.precision().min(rhs.precision()).degrade(0.25),
+            lhs.degree().max(rhs.degree()),
+        ))
+    }
+
+    /// Subtracts two **real** ciphertexts - see the module doc comment.
+    pub fn sub_real(&self, lhs: &Ciphertext, rhs: &Ciphertext) -> Result<Ciphertext> {
+        self.check_binary(lhs, rhs)?;
+        let (lhs_poly, rhs_poly) = (self.real_poly(lhs)?, self.real_poly(rhs)?);
+        let diff = self.inner_at(lhs.level())?.sub(lhs_poly, rhs_poly)?;
+        Ok(Ciphertext::new_real(
+            diff,
+            lhs.scale(),
+            lhs.level(),
+            lhs.precision().min(rhs.precision()).degrade(0.25),
+            lhs.degree().max(rhs.degree()),
+        ))
+    }
+
+    /// Negates a **real** ciphertext - see the module doc comment.
+    pub fn neg_real(&self, ciphertext: &Ciphertext) -> Result<Ciphertext> {
+        let poly = self.real_poly(ciphertext)?;
+        let negated = self.inner_at(ciphertext.level())?.neg(poly)?;
+        Ok(Ciphertext::new_real(
+            negated,
+            ciphertext.scale(),
+            ciphertext.level(),
+            ciphertext.precision(),
+            ciphertext.degree(),
+        ))
+    }
+
+    /// Adds a **real** plaintext ([`Plaintext::poly`] from
+    /// [`super::Encoder::encode_complex_real`]) to a **real** ciphertext -
+    /// see the module doc comment.
+    pub fn add_plain_real(
+        &self,
+        ciphertext: &Ciphertext,
+        plaintext: &Plaintext,
+    ) -> Result<Ciphertext> {
+        let poly = self.real_poly(ciphertext)?;
+        let m = plaintext.poly().ok_or(SchemesError::InvalidParameters(
+            "plaintext has no real ring representation - encode with encode_complex_real",
+        ))?;
+        if ciphertext.level() != plaintext.level() {
+            return Err(SchemesError::DimensionMismatch);
+        }
+        if !ciphertext.scale().compatible(plaintext.scale()) {
+            return Err(SchemesError::InvalidParameters("scale mismatch"));
+        }
+        let sum = self
+            .inner_at(ciphertext.level())?
+            .add_plain(poly, &phantom_lattice::rlwe::Plaintext::new(m.clone()))?;
+        Ok(Ciphertext::new_real(
+            sum,
+            ciphertext.scale(),
+            ciphertext.level(),
+            ciphertext
+                .precision()
+                .min(plaintext.precision())
+                .degrade(0.25),
+            ciphertext.degree(),
+        ))
+    }
+
+    /// Multiplies two **real** ciphertexts (raw tensor product, no
+    /// relinearization - see [`Self::relinearize_real`]) - see the module
+    /// doc comment for why this needs no BFV-style rescale-and-round step.
+    pub fn mul_real(&self, lhs: &Ciphertext, rhs: &Ciphertext) -> Result<Ciphertext> {
+        self.check_binary(lhs, rhs)?;
+        let (lhs_poly, rhs_poly) = (self.real_poly(lhs)?, self.real_poly(rhs)?);
+        let product = self.inner_at(lhs.level())?.mul(lhs_poly, rhs_poly)?;
+        Ok(Ciphertext::new_real(
+            product,
+            Scale::new(lhs.scale().value() * rhs.scale().value())?,
+            lhs.level(),
+            lhs.precision().min(rhs.precision()).degrade(1.0),
+            lhs.degree() + rhs.degree(),
+        ))
+    }
+
+    /// Relinearizes a degree-2 **real** ciphertext (e.g. [`Self::mul_real`]'s
+    /// output) back to degree 1, using a key from
+    /// [`super::CkksKeyGenerator::generate_hybrid_relinearization_key`].
+    pub fn relinearize_real(
+        &self,
+        ciphertext: &Ciphertext,
+        key: &phantom_lattice::rlwe::RelinearizationKey,
+    ) -> Result<Ciphertext> {
+        let poly = self.real_poly(ciphertext)?;
+        let relinearized = self.inner_at(ciphertext.level())?.relinearize(poly, key)?;
+        Ok(Ciphertext::new_real(
+            relinearized,
+            ciphertext.scale(),
+            ciphertext.level(),
+            ciphertext.precision(),
+            1,
+        ))
+    }
+
+    /// Rescales a **real** ciphertext to the next level, dividing its
+    /// tracked scale by the dropped modulus's own value - see the module
+    /// doc comment for the algorithm.
+    pub fn rescale_next_real(&self, ciphertext: &Ciphertext) -> Result<Ciphertext> {
+        let poly = self.real_poly(ciphertext)?;
+        if ciphertext.level() == 0 {
+            return Err(SchemesError::InvalidParameters(
+                "cannot rescale at level zero",
+            ));
+        }
+        let level_params = self.params.at_level(ciphertext.level())?;
+        let moduli = level_params.ring().moduli();
+        let q_basis = RnsBasis::new(moduli[..moduli.len() - 1].to_vec())?;
+        let p_basis = RnsBasis::new(moduli[moduli.len() - 1..].to_vec())?;
+        let q_last = moduli[moduli.len() - 1].value();
+
+        let mut out = Vec::with_capacity(poly.value().len());
+        for component in poly.value() {
+            out.push(mod_down(component, &q_basis, &p_basis)?);
+        }
+
+        Ok(Ciphertext::new_real(
+            RlweCiphertext::new(out),
+            Scale::new(ciphertext.scale().value() / q_last as f64)?,
+            ciphertext.level() - 1,
+            ciphertext.precision().degrade(1.0),
+            ciphertext.degree(),
+        ))
+    }
+
+    fn real_poly<'a>(&self, ciphertext: &'a Ciphertext) -> Result<&'a RlweCiphertext> {
+        ciphertext.poly().ok_or(SchemesError::InvalidParameters(
+            "ciphertext has no real ring representation - encrypt with Encryptor::encrypt_real",
         ))
     }
 

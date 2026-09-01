@@ -56,6 +56,24 @@ impl CkksParams {
         self.ring.moduli().len().saturating_sub(1)
     }
 
+    /// Returns params with the ring truncated to its first `level + 1`
+    /// moduli - the same convention [`Self::initial_level`] uses. Needed to
+    /// decrypt or operate on a real ciphertext after
+    /// [`super::Evaluator::rescale_next_real`] has dropped one or more of
+    /// its own RNS components, since such a ciphertext's `Poly`s carry
+    /// fewer moduli than the context's own full-level ring.
+    pub fn at_level(&self, level: usize) -> Result<Self> {
+        let moduli = self.ring.moduli();
+        if level >= moduli.len() {
+            return Err(SchemesError::InvalidParameters(
+                "level exceeds the ring's available moduli",
+            ));
+        }
+        let degree = Degree::new(self.ring.degree())?;
+        let ring = Ring::new(degree, moduli[..=level].to_vec())?;
+        Self::new(ring, self.default_scale, self.conjugate_invariant)
+    }
+
     /// Converts to scheme-agnostic RLWE parameters.
     pub fn rlwe_params(&self) -> phantom_lattice::Result<RlweParams> {
         RlweParams::new(self.ring.clone())

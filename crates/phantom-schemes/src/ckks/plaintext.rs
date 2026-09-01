@@ -9,14 +9,19 @@ use super::{Complex64, Precision, Scale};
 /// `poly` is `None` for the long-standing transparent representation
 /// ([`Plaintext::new`], unchanged so every existing caller keeps compiling
 /// and behaving identically) and `Some` for the real canonical-embedding
-/// representation (`Plaintext::new_real`, produced only by
+/// representation (`Plaintext::new_real`, produced by
 /// [`super::Encoder::encode_complex_real`] - see that method's own doc
-/// comment for the encoding itself). `slots()` always returns the values
+/// comment for the encoding itself - or by
+/// [`super::Decryptor::decrypt_real`], which recovers a `poly` without
+/// knowing the slots it decodes to). `slots()` always returns the values
 /// the plaintext was constructed from either way; for the real
-/// representation those are the *pre-rounding* inputs, not necessarily
-/// exactly what [`super::Encoder::decode_complex_real`] recovers from
-/// `poly` (canonical embedding is an approximate round trip by
-/// construction - see [`Scale`]'s own role in bounding that error).
+/// representation from `encode_complex_real` those are the *pre-rounding*
+/// inputs, not necessarily exactly what
+/// [`super::Encoder::decode_complex_real`] recovers from `poly` (canonical
+/// embedding is an approximate round trip by construction - see
+/// [`Scale`]'s own role in bounding that error); for the real
+/// representation from `decrypt_real`, `slots()` is empty (decryption alone
+/// doesn't decode - call `decode_complex_real` for that).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Plaintext {
     slots: Vec<Complex64>,
@@ -41,9 +46,10 @@ impl Plaintext {
 
     /// Creates a real plaintext backed by `poly` - see the type's own doc
     /// comment. `pub(crate)`: only [`super::Encoder::encode_complex_real`]
-    /// should construct one, since `poly` must actually be that encoder's
-    /// own canonical-embedding output for [`super::Encoder::decode_complex_real`]
-    /// to recover anything meaningful from it.
+    /// and [`super::Decryptor::decrypt_real`] should construct one, since
+    /// `poly` must actually be one of those methods' own output for
+    /// [`super::Encoder::decode_complex_real`] to recover anything
+    /// meaningful from it.
     pub(crate) fn new_real(
         slots: Vec<Complex64>,
         scale: Scale,

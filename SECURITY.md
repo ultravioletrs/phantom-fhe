@@ -81,17 +81,33 @@ The following components are not yet at production cryptographic strength:
   real RNS modulus-switching path now (`ModulusSwitcher::switch_next_real`,
   alongside the original clone-only `switch_next`), with the same
   not-yet-migrated caller situation as everything else here.
-- `phantom-schemes::ckks` still has approximate encoding
-  (`Encoder::encode_complex`/`decode_complex`) and rescale bookkeeping
-  without real noise/precision analysis as its default path, but now also
-  has a real canonical-embedding encoder alongside it
-  (`Encoder::encode_complex_real`/`decode_complex_real`), which actually
-  round-trips slots through a `phantom_ring::Poly` (`Plaintext`'s new,
-  `Option`-typed `poly` field) rather than carrying them in the clear -
-  the first piece of CKKS's own rebuild onto real ring types, matching
-  what BGV/BFV already have. `Ciphertext`, `Encryptor`, `Decryptor`, and
-  every `Evaluator` operation are still transparent and unaffected by
-  this; that's the rest of the CKKS rebuild, not yet done.
+- `phantom-schemes::ckks` still has its original approximate encoding
+  (`Encoder::encode_complex`/`decode_complex`), transparent
+  `Ciphertext`/`Encryptor`/`Decryptor`, and rescale bookkeeping without real
+  noise/precision analysis as its default path, but now also has a full
+  real path alongside it: `Encoder::encode_complex_real`/`decode_complex_real`
+  round-trip slots through a `phantom_ring::Poly` rather than carrying them
+  in the clear (`Plaintext`'s `Option`-typed `poly` field), and
+  `Ciphertext` gained the same kind of `Option`-typed real RLWE
+  representation. `Encryptor::encrypt_real`/`Decryptor::decrypt_real` do
+  genuine RLWE encryption/decryption (structurally BFV's own real path,
+  since CKKS's message is already `Delta`-scaled by the encoder rather than
+  needing per-operation scaling), and `Evaluator::{add,sub,neg,add_plain,mul,relinearize,rescale_next}_real`
+  do genuine ring arithmetic - `add`/`sub`/`neg`/`add_plain`/`mul` (raw
+  tensor, no relinearization) are direct pass-throughs to
+  `phantom_lattice::rlwe::Evaluator`, `relinearize_real` reuses the same
+  real hybrid key-switching machinery BFV's relinearization does, and
+  `rescale_next_real` drops the ciphertext's last RNS component via the
+  existing `phantom_ring::rns::rescale::mod_down` primitive and divides the
+  tracked `Scale` to match - CKKS has no plaintext-modulus invariant to
+  protect the way BGV's own rescale does, so a plain floor division
+  suffices. Real CKKS multiplication needs no BFV-style extended-basis
+  tensor-and-rescale procedure: its mod-`Q` tensor product is already
+  exactly what the *next*, separate rescale step needs. This real path
+  isn't wired into `phantom-circuits`/`phantom-bootstrapping`/`phantom-multiparty`/`phantom-examples`
+  yet, the same not-yet-migrated situation as BGV/BFV's own real paths
+  above - and conjugate-invariant real packing and an NTT/FFT fast path
+  for encode/decode remain unimplemented.
 - `phantom-bootstrapping::ckks` is a message-preserving pipeline, not yet a
   production refresh pipeline. BGV/BFV bootstrapping modules are reserved
   but unimplemented.

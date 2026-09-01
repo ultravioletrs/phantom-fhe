@@ -63,4 +63,26 @@ impl CkksKeyGenerator {
             galois: self.inner.generate_galois_keys(rotation_elements, secret),
         }
     }
+
+    /// Generates a real relinearization key for
+    /// [`super::Evaluator::relinearize_real`]. A real CKKS ciphertext is
+    /// structurally a plain RLWE ciphertext (its message is Delta-scaled by
+    /// the encoder, not by any relinearization-key-specific mechanism), so
+    /// this is a direct, unmodified pass-through to
+    /// [`phantom_lattice::rlwe::KeyGenerator::generate_hybrid_relinearization_key`],
+    /// the same reasoning [`crate::bfv::BfvKeyGenerator::generate_hybrid_relinearization_key`]
+    /// documents for BFV.
+    pub fn generate_hybrid_relinearization_key<R>(
+        &self,
+        sk: &SecretKey,
+        p_moduli: &[phantom_ring::Modulus],
+        rng: &mut R,
+    ) -> Result<phantom_lattice::rlwe::RelinearizationKey>
+    where
+        R: RngCore + CryptoRng,
+    {
+        Ok(self
+            .inner
+            .generate_hybrid_relinearization_key(sk, p_moduli, rng)?)
+    }
 }

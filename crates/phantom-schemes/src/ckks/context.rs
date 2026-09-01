@@ -48,6 +48,27 @@ impl CkksContext {
         Decryptor::new(self.params.clone(), secret_key)
     }
 
+    /// Creates a real public-key encryptor.
+    pub fn real_encryptor(&self, public_key: phantom_lattice::rlwe::PublicKey) -> Encryptor {
+        Encryptor::with_public_key_real(self.params.clone(), public_key)
+    }
+
+    /// Creates a real secret-key encryptor.
+    pub fn real_secret_key_encryptor(
+        &self,
+        secret_key: phantom_lattice::rlwe::SecretKey,
+    ) -> Encryptor {
+        Encryptor::with_secret_key_real(self.params.clone(), secret_key)
+    }
+
+    /// Creates a real decryptor.
+    pub fn real_decryptor(
+        &self,
+        secret_key: phantom_lattice::rlwe::SecretKey,
+    ) -> Result<Decryptor> {
+        Decryptor::new_real(self.params.clone(), secret_key)
+    }
+
     /// Creates an evaluator.
     pub fn evaluator(&self) -> Evaluator {
         Evaluator::new(self.params.clone())
