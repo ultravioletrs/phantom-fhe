@@ -6,7 +6,7 @@
 //! values below are computed independently in Python (arbitrary-precision
 //! integers, not this crate's own logic).
 
-use phantom_ring::rns::extension::crt_basis_constant;
+use phantom_ring::rns::extension::{crt_basis_constant, crt_lift_constant};
 use phantom_ring::rns::rescale::mod_down;
 use phantom_ring::{Modulus, Poly, RnsBasis};
 
@@ -45,6 +45,76 @@ fn crt_basis_constant_rejects_an_out_of_range_index() {
     let source = basis(&[1000000007, 1000000009]);
     let targets = [Modulus::new(1000000021).unwrap()];
     assert!(crt_basis_constant(&source, 2, &targets).is_err());
+}
+
+#[test]
+fn crt_lift_constant_matches_independently_computed_values() {
+    // Same source/targets as `crt_basis_constant_matches_independently_computed_values`
+    // - `crt_lift_constant` differs by the extra `(Q/q_i)^{-1} mod q_i`
+    // factor, so its own expected values (independently computed in
+    // Python) are different from that test's.
+    let source = basis(&[1000000007, 1000000009, 1000000021]);
+    let targets = [
+        Modulus::new(1000000033).unwrap(),
+        Modulus::new(1000000087).unwrap(),
+        Modulus::new(1000000021).unwrap(),
+    ];
+
+    assert_eq!(
+        crt_lift_constant(&source, 0, &targets).unwrap(),
+        vec![285714038, 857128407, 0]
+    );
+    assert_eq!(
+        crt_lift_constant(&source, 1, &targets).unwrap(),
+        vec![999999708, 999982707, 0]
+    );
+    assert_eq!(
+        crt_lift_constant(&source, 2, &targets).unwrap(),
+        vec![714278833, 142477221, 1]
+    );
+}
+
+#[test]
+fn crt_lift_constant_reconstructs_the_true_value_via_crt() {
+    // The defining identity: sum_i G_i * (x mod q_i) == x (mod Q), for any
+    // x - verified directly here (not just against independently computed
+    // constants) since this identity is exactly what a CRT-coherent RNS
+    // gadget decomposition's key material relies on.
+    let moduli = [1000000007u64, 1000000009, 1000000021];
+    let source = basis(&moduli);
+    let targets: Vec<Modulus> = moduli.iter().map(|&m| Modulus::new(m).unwrap()).collect();
+    let big_q: u128 = moduli.iter().map(|&m| m as u128).product();
+
+    for &x in &[0u128, 1, 12345, 999999999999u128, big_q - 1] {
+        let x = x % big_q;
+        let residues: Vec<u64> = moduli.iter().map(|&q| (x % q as u128) as u64).collect();
+
+        // sum_i G_i * (x mod q_i), reduced mod each modulus in the source
+        // basis itself (targets == moduli here) - should equal x mod q_j
+        // for every j, the defining CRT reconstruction identity.
+        let mut per_modulus_sum = vec![0u128; moduli.len()];
+        for (i, &residue) in residues.iter().enumerate() {
+            let gi = crt_lift_constant(&source, i, &targets).unwrap();
+            for (j, &qj) in moduli.iter().enumerate() {
+                per_modulus_sum[j] =
+                    (per_modulus_sum[j] + u128::from(gi[j]) * u128::from(residue)) % u128::from(qj);
+            }
+        }
+        for (j, &qj) in moduli.iter().enumerate() {
+            assert_eq!(
+                per_modulus_sum[j],
+                x % u128::from(qj),
+                "modulus index {j}, x={x}"
+            );
+        }
+    }
+}
+
+#[test]
+fn crt_lift_constant_rejects_an_out_of_range_index() {
+    let source = basis(&[1000000007, 1000000009]);
+    let targets = [Modulus::new(1000000021).unwrap()];
+    assert!(crt_lift_constant(&source, 2, &targets).is_err());
 }
 
 #[test]

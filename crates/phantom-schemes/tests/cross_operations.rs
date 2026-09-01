@@ -108,27 +108,21 @@ fn negacyclic_mul_mod(a: &[u64], b: &[u64], t: u64) -> Vec<u64> {
         .collect()
 }
 
-// `bgv_real_pipeline_*` below is split into two tests rather than one long
-// encrypt->add->multiply->relinearize->switch->serialize chain, because
-// building that single chain is exactly what surfaced a genuine,
-// previously-unknown correctness gap: relinearize_real's output, though it
-// decrypts correctly on its own (both real_relinearization_reduces_degree_and_preserves_the_product_exactly
-// and this file's own relinearize-then-serialize test below confirm that),
-// produces wrong results when *subsequently* modulus-switched, specifically
-// for a ring with more than one auxiliary modulus - reproduced with both
-// the base=2^8 gadget this crate's own tests use and a much smaller
-// base=2^4, and with or without a preceding `add`, so it isn't a
-// noise-amplification-from-a-large-base issue (the concern the base
-// choice was originally picked to avoid). Neither
-// `real_relinearization_reduces_degree_and_preserves_the_product_exactly`
-// (single-modulus ring, no switch possible) nor
-// `real_modulus_switch_reduces_ring_and_preserves_plaintext` (switches a
-// fresh, never-relinearized ciphertext) exercised this combination before
-// - exactly the kind of bug cross-operation testing exists to catch. Not
-// yet root-caused or fixed here (tracked in
-// `docs/internal/implementation-plan.md`'s Workstream 5 item 7 entry) -
-// each test below instead covers the combinations that *are* verified
-// correct, rather than asserting a broken one as if it were validated.
+// `bgv_real_pipeline_*` below was originally split into two tests rather
+// than one long encrypt->add->multiply->relinearize->switch->serialize
+// chain, because building that single chain is exactly what surfaced a
+// genuine, previously-unknown correctness gap: relinearize_real's output,
+// though it decrypts correctly on its own, produced wrong results when
+// *subsequently* modulus-switched, for a ring with more than one auxiliary
+// modulus. Root-caused since: not a BGV-specific interaction at all, but a
+// soundness gap in the shared `phantom_lattice::rgsw::GadgetDecomposition`
+// primitive on any ring with more than one RNS modulus (see that module's
+// own doc comment for the full derivation) - now fixed there directly, so
+// both split tests below AND the combined chain
+// (`bgv_real_pipeline_encrypt_add_multiply_relinearize_switch_and_serialize`)
+// are verified correct. The split tests are kept anyway (redundant with the
+// combined one, but cheap and each isolates one operation's own
+// correctness without the other).
 
 #[test]
 fn bgv_real_pipeline_encrypt_add_multiply_relinearize_and_serialize() {
@@ -226,6 +220,68 @@ fn bgv_real_pipeline_encrypt_add_switch_and_serialize() {
         .zip(&b_values)
         .map(|(a, b)| (a + b) % REAL_T)
         .collect();
+    assert_eq!(switched_encoder.decode_u64(&decrypted).unwrap(), expected);
+}
+
+// Regression coverage for the fixed `GadgetDecomposition` gap (see this
+// file's own module doc comment above and
+// `phantom_lattice::rgsw::decomposition`'s): the full chain that used to
+// produce an incorrect plaintext - relinearizing a real BGV ciphertext on a
+// multi-modulus ring, then modulus-switching the result.
+#[test]
+fn bgv_real_pipeline_encrypt_add_multiply_relinearize_switch_and_serialize() {
+    let ctx = BgvContext::new(bgv_real_params());
+    let mut rng = rng();
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair_real(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let evaluator = ctx.evaluator().unwrap();
+
+    let a_values: Vec<u64> = (0..REAL_DEGREE as u64).map(|i| i % REAL_T).collect();
+    let b_values: Vec<u64> = (0..REAL_DEGREE as u64).map(|i| (3 * i) % REAL_T).collect();
+    let a_ct = encryptor
+        .encrypt(&encoder.encode_u64(&a_values).unwrap(), &mut rng)
+        .unwrap();
+    let b_ct = encryptor
+        .encrypt(&encoder.encode_u64(&b_values).unwrap(), &mut rng)
+        .unwrap();
+
+    // encrypt -> add
+    let sum = evaluator.add(&a_ct, &b_ct).unwrap();
+
+    // add -> multiply (raw, unrelinearized)
+    let product = evaluator.mul(&sum, &a_ct, None).unwrap();
+
+    // multiply -> relinearize
+    let decomposition_params = GadgetDecompositionParams::new(8, 7).unwrap();
+    let relin_key = keygen
+        .generate_relinearization_key_real(&keys.secret, decomposition_params, &mut rng)
+        .unwrap();
+    let relinearized = evaluator.relinearize_real(&product, &relin_key).unwrap();
+
+    // relinearize -> modulus switch
+    let switched = evaluator.modulus_switch_next_real(&relinearized).unwrap();
+    let switched_params = evaluator.next_modulus_switch_params().unwrap();
+    let switched_secret = evaluator.switch_secret_key(&keys.secret).unwrap();
+
+    // modulus switch -> serialize -> deserialize -> decrypt (against the
+    // switched ring's own smaller params/encoder)
+    let bytes = serialization::encode_bgv_ciphertext(&switched).unwrap();
+    let decoded = serialization::decode_bgv_ciphertext(&bytes).unwrap();
+    let switched_ctx = BgvContext::new(switched_params);
+    let switched_encoder = switched_ctx.encoder();
+    let decryptor = switched_ctx.decryptor(switched_secret).unwrap();
+    let decrypted = decryptor.decrypt(&decoded).unwrap();
+
+    // add is elementwise, but mul is the negacyclic ring product - expected
+    // = (a+b) (x) a.
+    let ab_sum: Vec<u64> = a_values
+        .iter()
+        .zip(&b_values)
+        .map(|(a, b)| (a + b) % REAL_T)
+        .collect();
+    let expected = negacyclic_mul_mod(&ab_sum, &a_values, REAL_T);
     assert_eq!(switched_encoder.decode_u64(&decrypted).unwrap(), expected);
 }
 

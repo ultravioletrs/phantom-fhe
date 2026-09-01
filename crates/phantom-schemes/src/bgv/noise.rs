@@ -77,18 +77,22 @@ pub fn mul_noise_bound(degree: usize, t: u64, noise_bound: u64) -> u64 {
 }
 
 /// Noise bound after relinearizing with
-/// [`super::BgvRelinearizationKey`]/`bgv::relinearization::key_switch`
-/// (`levels`/`base_log` from the same [`phantom_lattice::rgsw::GadgetDecompositionParams`]
-/// the key was generated with) - see the module doc comment for the
-/// derivation.
+/// [`super::BgvRelinearizationKey`]/`bgv::relinearization::key_switch` -
+/// `total_levels` is the key's *total* row count (`moduli.len() *
+/// decomposition_params.levels()`, not just `levels()` - see
+/// `phantom_lattice::rgsw::decomposition`'s own module doc comment for why
+/// an RNS gadget decomposition needs one digit block per modulus), `base_log`
+/// from the same [`phantom_lattice::rgsw::GadgetDecompositionParams`] the
+/// key was generated with - see the module doc comment for the derivation.
 pub fn relinearize_noise_bound(
     degree: usize,
-    levels: usize,
+    total_levels: usize,
     base_log: u32,
     noise_bound_before: u64,
 ) -> u64 {
     let digit_bound = (1u64 << base_log) - 1;
-    let from_switch = levels as u64 * ring_product_bound(degree, digit_bound, fresh_error_bound());
+    let from_switch =
+        total_levels as u64 * ring_product_bound(degree, digit_bound, fresh_error_bound());
     noise_bound_before + from_switch
 }
 

@@ -154,6 +154,51 @@ pub fn crt_basis_constant(
         .collect())
 }
 
+/// Computes the full CRT lifting constant `G_i = (Q/q_i) * ((Q/q_i)^{-1} mod
+/// q_i)`, reduced into each modulus in `targets` - the standard "CRT basis
+/// polynomial" coefficient satisfying `sum_i G_i * (x mod q_i) ≡ x (mod Q)`
+/// for any `x` (the exact identity `reconstruct_true_values`'s own loop
+/// computes on the fly per coefficient, here returned standalone so it can
+/// be baked into key material once and reused across every coefficient).
+///
+/// Differs from [`crt_basis_constant`] by the extra `(Q/q_i)^{-1} mod q_i`
+/// factor - `crt_basis_constant` alone (`M_i` without the inverse) is what
+/// RNS hybrid key-switching needs for its own, different derivation; an RNS
+/// gadget decomposition that treats each RNS modulus as one gadget "level"
+/// needs the full `G_i` so that a small per-modulus digit `x mod q_i`,
+/// scaled by `G_i` and summed over every modulus, reconstructs `x` itself
+/// (mod `Q`) rather than something scaled by an uninverted `M_i`.
+pub fn crt_lift_constant(
+    source: &RnsBasis,
+    index: usize,
+    targets: &[crate::Modulus],
+) -> Result<Vec<u64>> {
+    let source_moduli: Vec<u64> = source.moduli().iter().map(|m| m.value()).collect();
+    if index >= source_moduli.len() {
+        return Err(RingError::DimensionMismatch);
+    }
+    let qi = source_moduli[index];
+
+    let big_q = source_moduli
+        .iter()
+        .fold(BigUint::from_u64(1), |acc, &q| acc.mul_u64(q));
+    let (m_i, remainder) = big_q.divmod_u64(qi);
+    debug_assert_eq!(
+        remainder, 0,
+        "source modulus must divide the basis product exactly"
+    );
+    let m_i_mod_qi = m_i.divmod_u64(qi).1;
+    let y_i = inv_mod(m_i_mod_qi, qi);
+
+    Ok(targets
+        .iter()
+        .map(|t| {
+            let m_i_mod_t = m_i.divmod_u64(t.value()).1;
+            mul_mod(m_i_mod_t, y_i, t.value())
+        })
+        .collect())
+}
+
 /// Computes `floor(product(basis.moduli()) / divisor) mod q_j` for every
 /// modulus `q_j` in `basis` - a genuine floor division, unlike
 /// [`crt_basis_constant`]'s `M_i` (which only ever divides `Q` by one of

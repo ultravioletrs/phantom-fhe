@@ -81,7 +81,9 @@ fn gadget_decomposition_recomposes_small_polynomial() {
     let poly = Poly::from_coeffs(vec![vec![0, 1, 17, 96]]).unwrap();
     let decomposition_params = GadgetDecompositionParams::new(2, 4).unwrap();
 
-    let decomposition = GadgetDecomposition::decompose(&poly, decomposition_params).unwrap();
+    let decomposition =
+        GadgetDecomposition::decompose(&poly, decomposition_params, params.ring().moduli())
+            .unwrap();
     let recomposed = decomposition.recompose(params.ring().moduli()).unwrap();
 
     assert_eq!(recomposed, poly);

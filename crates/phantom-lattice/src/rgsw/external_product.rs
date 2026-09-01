@@ -32,8 +32,9 @@ pub fn external_product(
     ring.check_poly(&ct.value()[0])?;
     ring.check_poly(&ct.value()[1])?;
 
-    let c0_digits = GadgetDecomposition::decompose(&ct.value()[0], decomposition_params)?;
-    let c1_digits = GadgetDecomposition::decompose(&ct.value()[1], decomposition_params)?;
+    let moduli = ring.moduli();
+    let c0_digits = GadgetDecomposition::decompose(&ct.value()[0], decomposition_params, moduli)?;
+    let c1_digits = GadgetDecomposition::decompose(&ct.value()[1], decomposition_params, moduli)?;
 
     let mut acc0 = ring.zero();
     let mut acc1 = ring.zero();

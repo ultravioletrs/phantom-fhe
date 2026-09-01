@@ -75,29 +75,35 @@ pub fn mul_noise_bound(degree: usize, plaintext_bound: u64, noise_bound: u64) ->
 /// Worst-case noise bound for a real RGSW `external_product(RGSW(m), ct)`,
 /// given the **RGSW-encrypted message `m`'s** coefficient bound
 /// `message_bound`, the **input ciphertext `ct`'s** own decryption-noise
-/// bound `ct_noise_bound`, and the RGSW ciphertext's gadget decomposition
-/// `levels`/`base_log`.
+/// bound `ct_noise_bound`, and the RGSW ciphertext's *total* gadget
+/// decomposition digit count `total_levels` (`= moduli.len() *
+/// decomposition_params.levels()` - see
+/// `phantom_lattice::rgsw::decomposition`'s own module doc comment for why
+/// an RNS gadget decomposition needs one digit block per modulus, not just
+/// `levels`) and `base_log`.
 ///
 /// Deriving `m * mu` from `ct = (c0, c1)` (`c0 + c1*s = mu + e_ct`) via
-/// `sum_i c0_i * RLWE_s(B^i*m) + sum_i c1_i * RLWE_s(B^i*m*s)` (`c0_i`/`c1_i`
-/// the gadget digits of `c0`/`c1`) gives decryption noise `m*e_ct + sum_i
-/// c0_i*e_i + sum_i c1_i*e'_i`, where `e_i`/`e'_i` are each RGSW row's own
-/// fresh secret-key-encryption noise. The first term (`m*e_ct`) is one ring
-/// product of `m` against `ct`'s noise ([`ring_product_bound`]); the sum is
-/// `2 * levels` more ring products, each of a gadget digit (bounded by
-/// `2^base_log - 1`) against a fresh noise term (bounded by
+/// `sum_i c0_i * RLWE_s(B^i*G_i*m) + sum_i c1_i * RLWE_s(B^i*G_i*m*s)`
+/// (`c0_i`/`c1_i` the gadget digits of `c0`/`c1`) gives decryption noise
+/// `m*e_ct + sum_i c0_i*e_i + sum_i c1_i*e'_i`, where `e_i`/`e'_i` are each
+/// RGSW row's own fresh secret-key-encryption noise. The first term
+/// (`m*e_ct`) is one ring product of `m` against `ct`'s noise
+/// ([`ring_product_bound`]); the sum is `2 * total_levels` more ring
+/// products, each of a gadget digit (bounded by `2^base_log - 1` regardless
+/// of the CRT lift factor baked into the *key material* rather than the
+/// digit itself) against a fresh noise term (bounded by
 /// [`crate::security::fresh_error_bound`]).
 pub fn external_product_noise_bound(
     degree: usize,
     message_bound: u64,
     ct_noise_bound: u64,
-    levels: usize,
+    total_levels: usize,
     base_log: u32,
 ) -> u64 {
     let digit_bound = (1u64 << base_log) - 1;
     let message_term = ring_product_bound(degree, message_bound, ct_noise_bound);
     let gadget_term =
-        2 * levels as u64 * ring_product_bound(degree, digit_bound, fresh_error_bound());
+        2 * total_levels as u64 * ring_product_bound(degree, digit_bound, fresh_error_bound());
     message_term + gadget_term
 }
 

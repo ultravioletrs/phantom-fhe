@@ -83,59 +83,66 @@ The following components are not yet at production cryptographic strength:
   just within a noise bound) across 30 randomized trials. BGV also has a
   real RNS modulus-switching path now (`ModulusSwitcher::switch_next_real`,
   alongside the original clone-only `switch_next`), with the same
-  not-yet-migrated caller situation as everything else here. **Known gap,
-  found while writing cross-operation tests (Workstream 5 item 7),
-  root-caused since:** `Evaluator::modulus_switch_next_real`, applied to
-  `Evaluator::relinearize_real`'s own output, produces an incorrect
-  plaintext for a ring with more than one auxiliary modulus. Switching a
-  *fresh* (non-relinearized) real ciphertext is unaffected and still
-  verified correct (`real_modulus_switch_reduces_ring_and_preserves_plaintext`,
-  `phantom-schemes/tests/cross_operations.rs::bgv_real_pipeline_encrypt_add_switch_and_serialize`),
-  as is relinearizing without a subsequent switch
-  (`real_relinearization_reduces_degree_and_preserves_the_product_exactly`,
-  `cross_operations.rs::bgv_real_pipeline_encrypt_add_multiply_relinearize_and_serialize`)
-  - avoid chaining the two until this is resolved.
+  not-yet-migrated caller situation as everything else here. **Gap found
+  while writing cross-operation tests (Workstream 5 item 7), root-caused
+  and fixed since:** `Evaluator::modulus_switch_next_real`, applied to
+  `Evaluator::relinearize_real`'s own output, used to produce an incorrect
+  plaintext for a ring with more than one auxiliary modulus - switching a
+  *fresh* (non-relinearized) real ciphertext, and relinearizing without a
+  subsequent switch, were both already independently correct.
 
   **Root cause**: not a BGV-specific interaction bug, but a soundness gap
   in the *shared* `phantom_lattice::rgsw::GadgetDecomposition` primitive
   (used by both BGV's classical relinearization and RGSW's external
   product) whenever the ring has more than one RNS modulus.
-  `GadgetDecomposition::decompose` extracts each digit via
+  `GadgetDecomposition::decompose` extracted each digit via
   `(coeff >> shift) & mask` applied independently to *every RNS
   component's own residue* - for coefficient value `x` with residues
-  `x mod q_0`, `x mod q_1`, ..., it bit-slices `x mod q_0` and `x mod q_1`
+  `x mod q_0`, `x mod q_1`, ..., it bit-sliced `x mod q_0` and `x mod q_1`
   *separately*, producing a digit polynomial whose `q_0`-component and
-  `q_1`-component are base-`B` digits of two *different* numbers (the two
+  `q_1`-component were base-`B` digits of two *different* numbers (the two
   unrelated residues), not of a single common small value. `decompose`
-  then `recompose`s correctly *per modulus* (`sum_i digit_i[j]*B^i ≡ c[j]
+  still `recompose`d correctly *per modulus* (`sum_i digit_i[j]*B^i ≡ c[j]
   (mod q_j)` holds independently for each `j`, verified directly), so a
   ciphertext's first-modulus component alone (all `BatchEncoder::decode_u64`
-  ever reads) still decodes correctly after relinearization on its own -
+  ever reads) still decoded correctly after relinearization on its own -
   exactly why `real_relinearization_reduces_degree_and_preserves_the_product_exactly`
-  passes. But the digit polynomial carries no meaningful CRT-consistent
-  value once more than one modulus is involved, so the ciphertext's *other*
-  RNS components end up holding noise uncorrelated with the first
-  modulus's - invisible to `decode_u64` (which only ever reads the first
-  component) until `modulus_switch_down` explicitly combines *all*
-  components via CRT reconstruction to rescale, at which point the
-  incoherent extra components corrupt the result. Confirmed directly:
-  reconstructing `relinearize_real`'s own output across its full RNS basis
+  passed even before the fix. But the digit polynomial carried no
+  meaningful CRT-consistent value once more than one modulus was involved,
+  so the ciphertext's *other* RNS components ended up holding noise
+  uncorrelated with the first modulus's - invisible to `decode_u64` (which
+  only ever reads the first component) until `modulus_switch_down`
+  explicitly combined *all* components via CRT reconstruction to rescale,
+  at which point the incoherent extra components corrupted the result.
+  Confirmed directly: reconstructing `relinearize_real`'s own output
+  across its full RNS basis
   (`phantom_ring::rns::extension::reconstruct_centered_values`, the same
-  primitive `mod_down`/`modulus_switch_down` use internally) gives a value
+  primitive `mod_down`/`modulus_switch_down` use internally) gave a value
   many orders of magnitude larger than the noise bound
-  `bgv::noise::relinearize_noise_bound` predicts, while the first
-  modulus's own component alone matches that bound closely - and neither
+  `bgv::noise::relinearize_noise_bound` predicted, while the first
+  modulus's own component alone matched that bound closely - and neither
   `phantom-lattice`'s own `GadgetDecomposition` tests
   (`phase4_rgsw.rs`, `randomized.rs`) nor BGV's single-modulus
-  relinearization test ever exercise a multi-modulus ring, so this has
-  never been caught before. A correct fix needs a CRT-coherent RNS gadget
-  decomposition (e.g. the standard technique of using each RNS modulus
-  itself as one gadget "level" - one key row per modulus, rather than
-  per-modulus bit-slicing within a shared base-`B` level count) - a
-  redesign of shared `phantom-lattice` infrastructure, not a
-  `phantom-schemes`-local patch, deliberately not attempted in this pass
-  (needs its own Python-verified derivation before touching either BGV's
-  relinearization or RGSW's external product). Both schemes
+  relinearization test had ever exercised a multi-modulus ring, so this
+  had never been caught before.
+
+  **Fixed** with a CRT-coherent redesign of `GadgetDecomposition` itself:
+  each RNS modulus is now its own gadget "level" (one digit block per
+  modulus, base-`B` sub-split within it, matching how a production
+  RNS-BGV/CKKS library structures the same construction), each block
+  scaled by the new `phantom_ring::rns::extension::crt_lift_constant`
+  (`(Q/q_j) * ((Q/q_j)^{-1} mod q_j)`) so the digits reconstruct via the
+  standard CRT identity instead of independent per-component bit-slicing.
+  For a single-modulus ring this reduces exactly to the previous
+  construction (`crt_lift_constant == 1`), so every existing single-modulus
+  BGV/RGSW test still passes unchanged. Verified: the derivation itself in
+  Python first (100 randomized trials of the full decompose→key-material→
+  recombine identity across 2-4 moduli, 200 trials of the plain
+  decompose/recompose round trip), then in Rust - new `crt_lift_constant`
+  tests, a new `phantom-lattice/tests/rgsw_multi_modulus.rs` proving RGSW's
+  external product on a multi-modulus ring (never exercised before), and a
+  new `cross_operations.rs::bgv_real_pipeline_encrypt_add_multiply_relinearize_switch_and_serialize`
+  reproducing the exact originally-broken chain end to end. Both schemes
   now also have noise/error estimate functions (`bgv::noise`/`bfv::noise`,
   plus `BgvContext`/`BfvContext::noise_budget_bits` and
   `fresh_*_noise_budget_bits` convenience wrappers) - unlike CKKS's

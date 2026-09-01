@@ -6,5 +6,7 @@ pub mod extension;
 pub mod rescale;
 
 pub use basis::RnsBasis;
-pub use extension::{crt_basis_constant, floor_divide_residues, reconstruct_centered_values};
+pub use extension::{
+    crt_basis_constant, crt_lift_constant, floor_divide_residues, reconstruct_centered_values,
+};
 pub use rescale::{mod_down, modulus_switch_down, rescale_and_round};
