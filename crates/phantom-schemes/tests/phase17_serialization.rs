@@ -156,6 +156,66 @@ fn ckks_params_plaintexts_and_ciphertexts_round_trip() {
     assert_eq!(decoded_ciphertext.degree(), ciphertext.degree());
 }
 
+#[test]
+fn ckks_real_plaintext_and_ciphertext_round_trip() {
+    // encode_ckks_plaintext/encode_ckks_ciphertext (the transparent path
+    // above) only ever write `slots` - reusing them on a real
+    // plaintext/ciphertext would silently drop its actual `poly` content,
+    // a gap `cross_operations.rs`'s own pipeline test found. These need
+    // the dedicated real encode/decode pair instead.
+    let params = CkksParams::builder()
+        .degree(8)
+        .moduli(vec![1_000_000_000_000_037, 1_073_741_827])
+        .default_scale_bits(30)
+        .build()
+        .unwrap();
+    let ctx = CkksContext::new(params);
+    let mut rng = ChaCha20Rng::from_seed([20; 32]);
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+
+    let values = [Complex64::new(1.5, -0.5), Complex64::new(-2.0, 1.0)];
+    let plaintext = encoder.encode_complex_real(&values).unwrap();
+    let decoded_plaintext = serialization::decode_ckks_plaintext_real(
+        &serialization::encode_ckks_plaintext_real(&plaintext).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(decoded_plaintext.scale(), plaintext.scale());
+    assert_eq!(decoded_plaintext.level(), plaintext.level());
+    let redecoded = encoder.decode_complex_real(&decoded_plaintext).unwrap();
+    let original = encoder.decode_complex_real(&plaintext).unwrap();
+    for (a, b) in redecoded.iter().zip(&original) {
+        assert!((a.re - b.re).abs() < 1e-9 && (a.im - b.im).abs() < 1e-9);
+    }
+
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let ciphertext = encryptor.encrypt_real(&plaintext, &mut rng).unwrap();
+    let decoded_ciphertext = serialization::decode_ckks_ciphertext_real(
+        &serialization::encode_ckks_ciphertext_real(&ciphertext).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(decoded_ciphertext.scale(), ciphertext.scale());
+    assert_eq!(decoded_ciphertext.level(), ciphertext.level());
+    assert_eq!(decoded_ciphertext.degree(), ciphertext.degree());
+
+    let decryptor = ctx.real_decryptor(keys.secret).unwrap();
+    let decrypted = decryptor.decrypt_real(&decoded_ciphertext).unwrap();
+    let decoded_values = encoder.decode_complex_real(&decrypted).unwrap();
+    for (a, b) in decoded_values.iter().zip(&values) {
+        assert!((a.re - b.re).abs() < 1e-6 && (a.im - b.im).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn ckks_real_encoding_rejects_transparent_values() {
+    let ctx = CkksContext::new(ckks_params());
+    let transparent = ctx
+        .encoder()
+        .encode_complex(&[Complex64::real(1.0)])
+        .unwrap();
+    assert!(serialization::encode_ckks_plaintext_real(&transparent).is_err());
+}
+
 fn assert_same_ring(actual: &Ring, expected: &Ring) {
     assert_eq!(actual.degree(), expected.degree());
     assert_eq!(

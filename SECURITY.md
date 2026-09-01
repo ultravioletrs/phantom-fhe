@@ -83,7 +83,22 @@ The following components are not yet at production cryptographic strength:
   just within a noise bound) across 30 randomized trials. BGV also has a
   real RNS modulus-switching path now (`ModulusSwitcher::switch_next_real`,
   alongside the original clone-only `switch_next`), with the same
-  not-yet-migrated caller situation as everything else here. Both schemes
+  not-yet-migrated caller situation as everything else here. **Known gap,
+  found while writing cross-operation tests (Workstream 5 item 7):**
+  `Evaluator::modulus_switch_next_real`, applied to
+  `Evaluator::relinearize_real`'s own output, produces an incorrect
+  plaintext for a ring with more than one auxiliary modulus - reproduced
+  with both the base-`2^8` gadget this crate's tests use and a much
+  smaller base-`2^4` one, and with or without a preceding homomorphic
+  `add`, so it isn't the large-base noise-amplification concern the base
+  choice was originally picked to avoid. Not yet root-caused. Switching a
+  *fresh* (non-relinearized) real ciphertext is unaffected and still
+  verified correct (`real_modulus_switch_reduces_ring_and_preserves_plaintext`,
+  `phantom-schemes/tests/cross_operations.rs::bgv_real_pipeline_encrypt_add_switch_and_serialize`),
+  as is relinearizing without a subsequent switch
+  (`real_relinearization_reduces_degree_and_preserves_the_product_exactly`,
+  `cross_operations.rs::bgv_real_pipeline_encrypt_add_multiply_relinearize_and_serialize`)
+  - avoid chaining the two until this is resolved. Both schemes
   now also have noise/error estimate functions (`bgv::noise`/`bfv::noise`,
   plus `BgvContext`/`BfvContext::noise_budget_bits` and
   `fresh_*_noise_budget_bits` convenience wrappers) - unlike CKKS's

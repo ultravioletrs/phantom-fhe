@@ -106,7 +106,7 @@ Still transparent (cleartext slots, float arithmetic) by default, and tracked as
 
 ### Serialization
 
-`phantom-schemes::serialization` encodes params/plaintexts/ciphertexts for all three schemes — real, working, and format-stable, independent of the encryption gaps above (encoding a transparent CKKS ciphertext still round-trips its `Complex64` slots correctly).
+`phantom-schemes::serialization` encodes params/plaintexts/ciphertexts for all three schemes — real, working, and format-stable, independent of the encryption gaps above (encoding a transparent CKKS ciphertext still round-trips its `Complex64` slots correctly). CKKS's real `Plaintext`/`Ciphertext` (a `poly`/`Poly` a real one carries instead of - or, for `Ciphertext`, in addition to an intentionally empty - `slots`, see items 3/4's own notes) need their own encode/decode pair rather than reusing the transparent one: `encode_ckks_plaintext`/`encode_ckks_ciphertext` only ever write `slots`, so reusing them on a real value would silently discard its actual content instead of erroring - a gap found by `phantom-schemes/tests/cross_operations.rs`'s own cross-operation pipeline test, fixed with new `encode_ckks_plaintext_real`/`decode_ckks_plaintext_real`/`encode_ckks_ciphertext_real`/`decode_ckks_ciphertext_real` under their own domain tags (the existing transparent wire format is unchanged).
 
 ## Circuit internals
 
@@ -182,6 +182,8 @@ After the header, each format writes its fields with `BufferWriter`'s determinis
 | `BGVCTXT1` | `phantom_schemes::bgv::Ciphertext` | `phantom-schemes` | `encode_bgv_ciphertext` / `decode_bgv_ciphertext` |
 | `BFVCTXT1` | `phantom_schemes::bfv::Ciphertext` | `phantom-schemes` | `encode_bfv_ciphertext` / `decode_bfv_ciphertext` |
 | `CKKSCT01` | `phantom_schemes::ckks::Ciphertext` | `phantom-schemes` | `encode_ckks_ciphertext` / `decode_ckks_ciphertext` |
+| `CKKPLR01` | `phantom_schemes::ckks::Plaintext` (real) | `phantom-schemes` | `encode_ckks_plaintext_real` / `decode_ckks_plaintext_real` |
+| `CKKCTR01` | `phantom_schemes::ckks::Ciphertext` (real) | `phantom-schemes` | `encode_ckks_ciphertext_real` / `decode_ckks_ciphertext_real` |
 | `CIRPOLY1` | `phantom_circuits::common::PolynomialEvalPlan` | `phantom-circuits` | `encode_polynomial_eval_plan` / `decode_polynomial_eval_plan` |
 | `CIRBSGS1` | `phantom_circuits::common::BabyStepGiantStepPlan` | `phantom-circuits` | `encode_bsgs_plan` / `decode_bsgs_plan` |
 | `CKKSBTP1` | `phantom_bootstrapping::ckks::BootstrapParams` | `phantom-bootstrapping` | `encode_ckks_bootstrap_params` / `decode_ckks_bootstrap_params` |

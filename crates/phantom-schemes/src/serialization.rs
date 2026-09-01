@@ -19,6 +19,8 @@ const CKKS_PT: DomainTag = DomainTag::from_array(*b"CKKSPL01");
 const BGV_CT: DomainTag = DomainTag::from_array(*b"BGVCTXT1");
 const BFV_CT: DomainTag = DomainTag::from_array(*b"BFVCTXT1");
 const CKKS_CT: DomainTag = DomainTag::from_array(*b"CKKSCT01");
+const CKKS_PT_REAL: DomainTag = DomainTag::from_array(*b"CKKPLR01");
+const CKKS_CT_REAL: DomainTag = DomainTag::from_array(*b"CKKCTR01");
 
 /// Encodes BGV parameters.
 pub fn encode_bgv_params(params: &bgv::BgvParams) -> Result<Vec<u8>> {
@@ -152,6 +154,45 @@ pub fn decode_ckks_plaintext(bytes: &[u8]) -> Result<ckks::Plaintext> {
     Ok(ckks::Plaintext::new(slots, scale, level, precision))
 }
 
+/// Encodes a **real** CKKS plaintext ([`ckks::Plaintext::poly`] from
+/// [`ckks::Encoder::encode_complex_real`] or [`ckks::Decryptor::decrypt_real`]) -
+/// unlike [`encode_ckks_plaintext`] (the transparent path, which only ever
+/// carries `slots`), a real `ckks::Plaintext`'s actual content lives in its
+/// `poly`, not `slots()` (empty for one produced by `decrypt_real` - see
+/// that type's own doc comment), so it needs its own wire format rather
+/// than silently losing the `poly` the way reusing `encode_ckks_plaintext`
+/// on a real plaintext would.
+pub fn encode_ckks_plaintext_real(plaintext: &ckks::Plaintext) -> Result<Vec<u8>> {
+    let poly = plaintext.poly().ok_or(SchemesError::InvalidParameters(
+        "plaintext has no real ring representation - encode with encode_complex_real",
+    ))?;
+    let mut writer = writer(CKKS_PT_REAL)?;
+    write_poly(&mut writer, poly)?;
+    write_f64(&mut writer, plaintext.scale().value())?;
+    writer.write_u64_le(plaintext.level() as u64)?;
+    write_f64(&mut writer, plaintext.precision().bits())?;
+    Ok(writer.into_inner())
+}
+
+/// Decodes a **real** CKKS plaintext - see [`encode_ckks_plaintext_real`].
+/// The result's `slots()` is empty, matching `ckks::Plaintext::new_real`'s
+/// own convention for a plaintext not produced by encoding; decode it with
+/// [`ckks::Encoder::decode_complex_real`].
+pub fn decode_ckks_plaintext_real(bytes: &[u8]) -> Result<ckks::Plaintext> {
+    let mut reader = reader(bytes, CKKS_PT_REAL)?;
+    let poly = read_poly(&mut reader)?;
+    let scale = ckks::Scale::new(read_f64(&mut reader)?)?;
+    let level = read_usize(&mut reader)?;
+    let precision = ckks::Precision::new(read_f64(&mut reader)?);
+    Ok(ckks::Plaintext::new_real(
+        Vec::new(),
+        scale,
+        level,
+        precision,
+        poly,
+    ))
+}
+
 /// Encodes a CKKS ciphertext.
 pub fn encode_ckks_ciphertext(ciphertext: &ckks::Ciphertext) -> Result<Vec<u8>> {
     let mut writer = writer(CKKS_CT)?;
@@ -173,6 +214,40 @@ pub fn decode_ckks_ciphertext(bytes: &[u8]) -> Result<ckks::Ciphertext> {
     let degree = read_usize(&mut reader)?;
     Ok(ckks::Ciphertext::new(
         slots, scale, level, precision, degree,
+    ))
+}
+
+/// Encodes a **real** CKKS ciphertext ([`ckks::Ciphertext::poly`] from
+/// [`ckks::Encryptor::encrypt_real`] or [`ckks::Evaluator`]'s own
+/// real-path operations) - see [`encode_ckks_plaintext_real`]'s own doc
+/// comment for why this needs a separate wire format from
+/// [`encode_ckks_ciphertext`] rather than reusing it (a real
+/// `ckks::Ciphertext::slots()` is deliberately empty, so reusing the
+/// transparent encoding would silently discard the actual encrypted
+/// content).
+pub fn encode_ckks_ciphertext_real(ciphertext: &ckks::Ciphertext) -> Result<Vec<u8>> {
+    let poly = ciphertext.poly().ok_or(SchemesError::InvalidParameters(
+        "ciphertext has no real ring representation - encrypt with Encryptor::encrypt_real",
+    ))?;
+    let mut writer = writer(CKKS_CT_REAL)?;
+    write_ciphertext(&mut writer, poly)?;
+    write_f64(&mut writer, ciphertext.scale().value())?;
+    writer.write_u64_le(ciphertext.level() as u64)?;
+    write_f64(&mut writer, ciphertext.precision().bits())?;
+    writer.write_u64_le(ciphertext.degree() as u64)?;
+    Ok(writer.into_inner())
+}
+
+/// Decodes a **real** CKKS ciphertext - see [`encode_ckks_ciphertext_real`].
+pub fn decode_ckks_ciphertext_real(bytes: &[u8]) -> Result<ckks::Ciphertext> {
+    let mut reader = reader(bytes, CKKS_CT_REAL)?;
+    let poly = read_ciphertext(&mut reader)?;
+    let scale = ckks::Scale::new(read_f64(&mut reader)?)?;
+    let level = read_usize(&mut reader)?;
+    let precision = ckks::Precision::new(read_f64(&mut reader)?);
+    let degree = read_usize(&mut reader)?;
+    Ok(ckks::Ciphertext::new_real(
+        poly, scale, level, precision, degree,
     ))
 }
 
