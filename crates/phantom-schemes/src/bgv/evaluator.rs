@@ -67,9 +67,34 @@ impl Evaluator {
         ))
     }
 
-    /// Applies the current modulus-switching scaffold.
+    /// Applies the current modulus-switching scaffold (unchanged
+    /// identity behavior - see [`Self::modulus_switch_next_real`] and
+    /// [`ModulusSwitcher`]'s own module doc comment).
     pub fn modulus_switch_next(&self, ciphertext: &Ciphertext) -> Result<Ciphertext> {
         self.modulus_switcher.switch_next(ciphertext)
+    }
+
+    /// Performs real RNS modulus switching, dropping the ring's last
+    /// modulus. The result must be decrypted against
+    /// [`Self::next_modulus_switch_params`] and
+    /// [`Self::switch_secret_key`]'s output.
+    pub fn modulus_switch_next_real(&self, ciphertext: &Ciphertext) -> Result<Ciphertext> {
+        self.modulus_switcher.switch_next_real(ciphertext)
+    }
+
+    /// Parameters for the ciphertext [`Self::modulus_switch_next_real`]
+    /// returns.
+    pub fn next_modulus_switch_params(&self) -> Result<BgvParams> {
+        self.modulus_switcher.next_params()
+    }
+
+    /// Drops a secret key's own last RNS component to match
+    /// [`Self::next_modulus_switch_params`]'s ring.
+    pub fn switch_secret_key(
+        &self,
+        sk: &phantom_lattice::rlwe::SecretKey,
+    ) -> Result<phantom_lattice::rlwe::SecretKey> {
+        self.modulus_switcher.switch_secret_key(sk)
     }
 
     /// Rotates packed coefficient slots.

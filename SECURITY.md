@@ -44,7 +44,11 @@ The following components are not yet at production cryptographic strength:
   (non-encrypted) path, since their toy ring parameters have no headroom
   for real noise and haven't been migrated yet. Real BGV relinearization
   isn't wired up either (would need the key-switching key's own noise
-  scaled by the plaintext modulus too, not just fresh encryption's).
+  scaled by the plaintext modulus too, not just fresh encryption's). BGV
+  also has a real RNS modulus-switching path now
+  (`ModulusSwitcher::switch_next_real`, alongside the original
+  clone-only `switch_next`), with the same not-yet-migrated caller
+  situation.
   `phantom-schemes::bfv` uses transparent (non-encrypted) ciphertext
   semantics; a real BFV path needs its own Δ-scaled-message noise model,
   distinct from BGV's `t`-scaled-noise one, and hasn't been built yet.

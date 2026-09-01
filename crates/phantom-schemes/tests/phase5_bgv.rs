@@ -54,6 +54,24 @@ fn real_params() -> BgvParams {
     BgvParams::new(ring, REAL_T).unwrap()
 }
 
+// Real modulus switching needs a genuinely multi-modulus RNS ring to drop a
+// modulus *from* - both primes individually as large as REAL_MODULUS above,
+// so the ciphertext still decodes correctly even after switching all the
+// way down to just one of them.
+const REAL_MODULUS_2: u64 = 1_000_000_000_000_091;
+
+fn real_multi_modulus_params() -> BgvParams {
+    let ring = Ring::new(
+        Degree::new(REAL_DEGREE).unwrap(),
+        vec![
+            Modulus::new(REAL_MODULUS).unwrap(),
+            Modulus::new(REAL_MODULUS_2).unwrap(),
+        ],
+    )
+    .unwrap();
+    BgvParams::new(ring, REAL_T).unwrap()
+}
+
 #[test]
 fn encode_decode_is_exact_mod_plaintext_modulus() {
     let ctx = BgvContext::new(params());
@@ -280,6 +298,45 @@ fn real_raw_multiplication_without_relinearization_is_exact() {
         assert_eq!(
             decoded,
             expected_product(&ctx, &a_pt, &b_pt),
+            "trial {trial}"
+        );
+    }
+}
+
+#[test]
+fn real_modulus_switch_reduces_ring_and_preserves_plaintext() {
+    let ctx = BgvContext::new(real_multi_modulus_params());
+    let mut rng = seeded_rng();
+    let keys = ctx
+        .keygen()
+        .unwrap()
+        .generate_keypair_real(&mut rng)
+        .unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let evaluator = ctx.evaluator().unwrap();
+
+    let next_params = evaluator.next_modulus_switch_params().unwrap();
+    let next_secret = evaluator.switch_secret_key(&keys.secret).unwrap();
+    let next_ctx = BgvContext::new(next_params);
+    let next_decryptor = next_ctx.decryptor(next_secret).unwrap();
+    let next_encoder = next_ctx.encoder();
+
+    for trial in 0..30u64 {
+        let values: Vec<u64> = (0..REAL_DEGREE as u64)
+            .map(|i| (i + trial) % REAL_T)
+            .collect();
+        let pt = encoder.encode_u64(&values).unwrap();
+        let ct = encryptor.encrypt(&pt, &mut rng).unwrap();
+        assert_eq!(ct.inner().value()[0].moduli_count(), 2);
+
+        let switched = evaluator.modulus_switch_next_real(&ct).unwrap();
+        assert_eq!(switched.inner().value()[0].moduli_count(), 1);
+
+        let decrypted = next_decryptor.decrypt(&switched).unwrap();
+        assert_eq!(
+            next_encoder.decode_u64(&decrypted).unwrap(),
+            values,
             "trial {trial}"
         );
     }
