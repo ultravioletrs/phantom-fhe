@@ -207,8 +207,13 @@ The following components are not yet at production cryptographic strength:
   multiple of a configurable `raise_modulus`) rather than an identity, and
   is verified to recover a message from a modulus-raised-looking input -
   but it still operates on transparent `f64` slots (`round()`-based, not a
-  homomorphically-evaluable polynomial approximation) and has no real
-  ciphertext or key material underneath it, so it is not yet a production
+  homomorphically-evaluable polynomial approximation). `BootstrapKeyGenerator`
+  can now also generate real Galois (rotation) key material
+  (`generate_real`, verified against the real RLWE Galois-automorphism
+  primitive) rather than only the transparent marker `generate` still
+  produces - but the bootstrapping pipeline itself doesn't consume this
+  key material yet (`CoeffsToSlots`/`SlotsToCoeffs` still run a transparent
+  DFT rather than homomorphic rotations), so it is not yet a production
   refresh pipeline. BGV/BFV bootstrapping modules are reserved but
   unimplemented.
 - `phantom-multiparty` protocols have not had an adversarial security

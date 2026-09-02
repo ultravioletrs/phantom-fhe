@@ -132,4 +132,25 @@ impl CkksKeyGenerator {
         let level_keygen = phantom_lattice::rlwe::KeyGenerator::new(level_params.rlwe_params()?);
         Ok(level_keygen.generate_hybrid_relinearization_key(&level_sk, p_moduli, rng)?)
     }
+
+    /// Generates a real Galois (rotation) key for `element`, usable with
+    /// [`phantom_lattice::rlwe::Evaluator::apply_galois_automorphism`]. A
+    /// real CKKS ciphertext is structurally a plain RLWE ciphertext (see
+    /// [`Self::generate_hybrid_relinearization_key`]'s own doc comment), so
+    /// this is a direct, unmodified pass-through to
+    /// [`phantom_lattice::rlwe::KeyGenerator::generate_hybrid_galois_key`].
+    pub fn generate_hybrid_galois_key<R>(
+        &self,
+        element: usize,
+        sk: &SecretKey,
+        p_moduli: &[phantom_ring::Modulus],
+        rng: &mut R,
+    ) -> Result<GaloisKey>
+    where
+        R: RngCore + CryptoRng,
+    {
+        Ok(self
+            .inner
+            .generate_hybrid_galois_key(element, sk, p_moduli, rng)?)
+    }
 }

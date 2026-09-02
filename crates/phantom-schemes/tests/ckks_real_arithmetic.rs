@@ -6,8 +6,13 @@
 //! `phase7_ckks.rs`'s coverage of the still-transparent scaffold, which
 //! this doesn't touch.
 
-use phantom_ring::{Degree, Modulus, Ring};
-use phantom_schemes::ckks::{CkksContext, CkksParams, Complex64};
+use phantom_lattice::noise::fresh_secret_key_noise_bound;
+use phantom_lattice::rlwe::{
+    Decryptor as RlweDecryptor, Encryptor as RlweEncryptor, Evaluator as RlweEvaluator,
+    KeyGenerator as RlweKeyGenerator, Plaintext as RlwePlaintext, SecretDistribution,
+};
+use phantom_ring::{Degree, Modulus, Poly, Ring};
+use phantom_schemes::ckks::{CkksContext, CkksKeyGenerator, CkksParams, Complex64};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
@@ -527,4 +532,85 @@ fn add_plain_real_tolerates_the_scale_drift_a_real_rescale_introduces() {
         .decode_complex_real(&decryptor.decrypt_real(&sum).unwrap())
         .unwrap();
     assert_close(&decoded, &expected, 1e-3);
+}
+
+// Asserts every RNS limb's centered residue (mapping `[0, modulus)` to
+// `(-modulus/2, modulus/2]`) is within `bound` - the RNS generalization of
+// phantom-lattice's own single-modulus `assert_noise_bounded` helper
+// (`phase3_rlwe.rs`), applied one modulus at a time since each row of
+// `Poly::coeffs()` is an independent residue.
+fn assert_noise_bounded_rns(actual: &Poly, expected: &Poly, bound: u64, moduli: &[Modulus]) {
+    for (row_idx, modulus) in moduli.iter().enumerate() {
+        let m = modulus.value();
+        for (&a, &e) in actual.coeffs()[row_idx]
+            .iter()
+            .zip(expected.coeffs()[row_idx].iter())
+        {
+            let diff = (a + m - e) % m;
+            let centered = diff.min(m - diff);
+            assert!(
+                centered <= bound,
+                "noise {centered} exceeds bound {bound} (limb {row_idx}, actual={a}, expected={e}, modulus={m})"
+            );
+        }
+    }
+}
+
+#[test]
+fn generate_hybrid_galois_key_produces_a_working_real_rotation_key() {
+    // Proves CkksKeyGenerator::generate_hybrid_galois_key (Workstream 6
+    // item 5's prerequisite - phantom_bootstrapping::ckks::BootstrapKey
+    // needs a source of real Galois keys) is a correct pass-through to
+    // phantom_lattice::rlwe::KeyGenerator::generate_hybrid_galois_key, for
+    // the exact ring a real CKKS ciphertext at these params uses. Since a
+    // real CKKS ciphertext is structurally a plain RLWE ciphertext (see
+    // CkksKeyGenerator::generate_hybrid_relinearization_key's own doc
+    // comment), this drives the RLWE layer directly rather than through
+    // ckks::Ciphertext/Plaintext, whose real constructors are pub(crate).
+    let params = real_arith_params();
+    let rlwe_params = params.rlwe_params().unwrap();
+    let mut rng = seeded_rng(31);
+    let sk = RlweKeyGenerator::new(rlwe_params.clone())
+        .generate_secret_key(&mut rng, SecretDistribution::Ternary);
+    let keygen = CkksKeyGenerator::new(params).unwrap();
+
+    // element=3 is coprime to 2*REAL_DEGREE=16 - the same choice
+    // phantom-lattice's own galois-automorphism test uses.
+    let element = 3;
+    let galois_key = keygen
+        .generate_hybrid_galois_key(element, &sk, &p_moduli(), &mut rng)
+        .unwrap();
+    assert!(galois_key.key_switch_key().is_some());
+
+    let plaintext_coeffs = vec![1, 2, 3, 4, 0, 0, 0, 0];
+    let plaintext_poly =
+        Poly::from_coeffs(vec![plaintext_coeffs.clone(), plaintext_coeffs]).unwrap();
+    let pt = RlwePlaintext::new(plaintext_poly.clone());
+
+    let encryptor = RlweEncryptor::with_secret_key(rlwe_params.clone(), sk.clone());
+    let decryptor = RlweDecryptor::new(rlwe_params.clone(), sk);
+    let evaluator = RlweEvaluator::new(rlwe_params.clone());
+
+    let ct = encryptor.encrypt(&pt, &mut rng).unwrap();
+    let rotated = evaluator
+        .apply_galois_automorphism(&ct, &galois_key)
+        .unwrap();
+    let decrypted = decryptor.decrypt(&rotated).unwrap();
+
+    let expected_poly = rlwe_params
+        .ring()
+        .apply_automorphism(&plaintext_poly, element)
+        .unwrap();
+
+    // Fresh encryption noise plus real key-switching's own modest
+    // contribution - same margin phantom-lattice's own
+    // real_galois_automorphism_matches_plaintext_sigma_and_preserves_decryptability
+    // test uses.
+    let bound = fresh_secret_key_noise_bound() + 4 * fresh_secret_key_noise_bound();
+    assert_noise_bounded_rns(
+        decrypted.value(),
+        &expected_poly,
+        bound,
+        rlwe_params.ring().moduli(),
+    );
 }

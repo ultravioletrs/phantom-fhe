@@ -3,7 +3,11 @@ use phantom_bootstrapping::ckks::{
     EvalMod, Packer, SlotsToCoeffs, Unpacker,
 };
 use phantom_bootstrapping::{bfv, bgv};
+use phantom_lattice::rlwe::{KeyGenerator as RlweKeyGenerator, SecretDistribution};
+use phantom_ring::Modulus;
 use phantom_schemes::ckks::{Ciphertext, CkksParams, Complex64, Precision, Scale};
+use rand_chacha::rand_core::SeedableRng;
+use rand_chacha::ChaCha20Rng;
 
 fn ckks_params() -> CkksParams {
     CkksParams::builder()
@@ -252,4 +256,54 @@ fn exact_scheme_bootstrap_modules_are_reserved_placeholders() {
     assert!(bfv::BootstrapParams::experimental().is_experimental());
     assert!(bgv::Evaluator.bootstrap_unimplemented().is_err());
     assert!(bfv::Evaluator.bootstrap_unimplemented().is_err());
+}
+
+// A ring with real noise headroom (unlike ckks_params()'s toy
+// [257, 769, 3329] moduli) - the auxiliary "P" moduli below need this much
+// room too, so this reuses the same sizing `phantom-schemes`'s own
+// `ckks_real_arithmetic.rs` fixture already verified (Miller-Rabin checked
+// in Python before use there).
+fn real_arith_ckks_params() -> CkksParams {
+    CkksParams::builder()
+        .degree(8)
+        .moduli(vec![1_000_000_000_000_037, 1_073_741_827])
+        .default_scale_bits(30)
+        .build()
+        .unwrap()
+}
+
+fn p_moduli() -> Vec<Modulus> {
+    vec![
+        Modulus::new(1_000_000_000_000_091).unwrap(),
+        Modulus::new(1_000_000_000_000_159).unwrap(),
+    ]
+}
+
+#[test]
+fn bootstrap_key_generator_generate_real_produces_real_galois_keys() {
+    let ckks = real_arith_ckks_params();
+    let params = BootstrapParams::builder(ckks.clone()).build().unwrap();
+    let mut rng = ChaCha20Rng::from_seed([5u8; 32]);
+    let sk = RlweKeyGenerator::new(ckks.rlwe_params().unwrap())
+        .generate_secret_key(&mut rng, SecretDistribution::Ternary);
+
+    // element=1 and element=3 are both odd and coprime to 2*degree=16.
+    let key = BootstrapKeyGenerator::new(params.clone())
+        .generate_real(&sk, &[1, 3], &p_moduli(), &mut rng)
+        .unwrap();
+
+    assert_eq!(key.rotation_elements(), &[1, 3]);
+    assert_eq!(key.galois_keys().len(), 2);
+    assert!(key
+        .galois_keys()
+        .iter()
+        .all(|galois_key| galois_key.key_switch_key().is_some()));
+    assert_eq!(key.galois_keys()[0].element(), 1);
+    assert_eq!(key.galois_keys()[1].element(), 3);
+
+    // The pre-existing transparent marker path is unaffected by this
+    // addition - still no key material.
+    let marker = BootstrapKeyGenerator::new(params).generate(&[1, 3]);
+    assert!(marker.galois_keys().is_empty());
+    assert_eq!(marker.rotation_elements(), &[1, 3]);
 }
