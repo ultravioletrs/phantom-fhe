@@ -141,6 +141,69 @@ fn eval_mod_exposes_centered_fractional_part_without_forcing_bootstrap_to_change
 }
 
 #[test]
+fn ckks_bootstrap_removes_an_unknown_multiple_of_the_raise_modulus() {
+    // The genuinely meaningful case `preserve_message` could never pass:
+    // an `input` engineered so that, once coeffs_to_slots (forward DFT)
+    // transforms it, eval-mod actually sees per-slot values that look
+    // like a real modulus-raised ciphertext's own - `message +
+    // raise_modulus * I` for a nonzero, per-slot-varying integer `I` -
+    // and bootstrap() still recovers the true message end to end, proving
+    // eval-mod is now doing real (scaled) modular reduction, not an
+    // identity.
+    //
+    // Since DFT is linear, `coeffs_to_slots(input) == message_slots + q*I`
+    // is satisfied exactly by taking `input := slots_to_coeffs(message +
+    // q*I)` - i.e. applying the *inverse* transform to the whole combined
+    // slot-domain target at once, then relying on the round-trip identity
+    // `coeffs_to_slots(slots_to_coeffs(x)) == x` (this file's own
+    // `coeffs_to_slots_and_slots_to_coeffs_round_trip` test already
+    // establishes this). Building `input` as `message + slots_to_coeffs(q*I)`
+    // instead - adding the raw message directly rather than also passing
+    // it through the inverse transform - silently assumes `message` is
+    // already a fixed point of the forward DFT, which it isn't.
+    let ckks = ckks_params();
+    let raise_modulus = 100.0;
+    let params = BootstrapParams::builder(ckks.clone())
+        .target_level(ckks.initial_level())
+        .target_precision_bits(18.0)
+        .raise_modulus(raise_modulus)
+        .build()
+        .unwrap();
+    let key = BootstrapKeyGenerator::new(params.clone()).generate(&[1, 2]);
+    let bootstrapper = Bootstrapper::new(params.clone(), key);
+    let s2c = SlotsToCoeffs::new(params.clone());
+
+    let messages = [
+        Complex64::new(12.5, -7.0),
+        Complex64::real(-30.0),
+        Complex64::new(5.0, 40.0),
+    ];
+    let wrap_integers = [(2i64, -1i64), (-3, 0), (0, 4)];
+    let wraparound: Vec<Complex64> = wrap_integers
+        .iter()
+        .map(|&(ire, iim)| Complex64::new(raise_modulus * ire as f64, raise_modulus * iim as f64))
+        .collect();
+    let combined: Vec<Complex64> = messages
+        .iter()
+        .zip(&wraparound)
+        .map(|(m, w)| Complex64::new(m.re + w.re, m.im + w.im))
+        .collect();
+    let input = s2c.apply(&ciphertext(&combined, 0, 4.0)).unwrap();
+
+    let output = bootstrapper.bootstrap(&input).unwrap();
+
+    // `output`'s raw field is coefficient-domain (bootstrap's own last step
+    // is slots_to_coeffs), so the recovered message must be compared
+    // against `slots_to_coeffs(messages)`, not `messages` directly - the
+    // same domain `input` itself was built in above.
+    let expected_output = s2c.apply(&ciphertext(&messages, 0, 4.0)).unwrap();
+    for (actual, expected) in output.slots().iter().zip(expected_output.slots()) {
+        assert_close(*actual, *expected);
+    }
+    assert_eq!(output.level(), params.target_level());
+}
+
+#[test]
 fn batch_bootstrap_and_sparse_pack_unpack_are_correct() {
     let ckks = ckks_params();
     let params = BootstrapParams::builder(ckks)

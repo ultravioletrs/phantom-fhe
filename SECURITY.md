@@ -202,9 +202,15 @@ The following components are not yet at production cryptographic strength:
   (`ckks_real_basic`), the same as BGV/BFV's own two. Conjugate-invariant
   real packing and an NTT/FFT fast path for encode/decode remain
   unimplemented.
-- `phantom-bootstrapping::ckks` is a message-preserving pipeline, not yet a
-  production refresh pipeline. BGV/BFV bootstrapping modules are reserved
-  but unimplemented.
+- `phantom-bootstrapping::ckks`'s EvalMod stage now performs genuine scaled
+  centered-modular reduction (`EvalMod::reduce_mod_q`, removing an unknown
+  multiple of a configurable `raise_modulus`) rather than an identity, and
+  is verified to recover a message from a modulus-raised-looking input -
+  but it still operates on transparent `f64` slots (`round()`-based, not a
+  homomorphically-evaluable polynomial approximation) and has no real
+  ciphertext or key material underneath it, so it is not yet a production
+  refresh pipeline. BGV/BFV bootstrapping modules are reserved but
+  unimplemented.
 - `phantom-multiparty` protocols have not had an adversarial security
   review. Collective key generation, relinearization-key generation, and
   Galois-key generation currently aggregate shares into placeholder key

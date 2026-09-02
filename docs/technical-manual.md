@@ -126,23 +126,23 @@ CKKS's ring arithmetic, by contrast, genuinely does correspond to elementwise sl
 
 ## Bootstrapping internals
 
-The pipeline shape (see [`concepts.md#bootstrapping`](concepts.md#bootstrapping)) is faithfully implemented; only the middle stage is a stand-in:
+The pipeline shape (see [`concepts.md#bootstrapping`](concepts.md#bootstrapping)) is faithfully implemented, and the middle stage now does genuine (if still transparent-slot) modular reduction rather than an identity:
 
 ```mermaid
 flowchart LR
     IN["Ciphertext"] --> C2S["CoeffsToSlots<br/>REAL: DftEvaluator forward"]
-    C2S --> EM["EvalMod<br/>SCAFFOLD: identity (preserve_message)"]
+    C2S --> EM["EvalMod<br/>REAL (transparent slots): reduce_mod_q"]
     EM --> S2C["SlotsToCoeffs<br/>REAL: DftEvaluator inverse"]
     S2C --> RM["refresh_metadata<br/>REAL bookkeeping: resets scale/level/precision"]
     RM --> OUT["Ciphertext"]
 
-    style EM fill:#f96,stroke:#900,stroke-width:2px
+    style EM fill:#9c6,stroke:#360,stroke-width:1px
     style RM fill:#9c6,stroke:#360,stroke-width:1px
     style C2S fill:#9c6,stroke:#360,stroke-width:1px
     style S2C fill:#9c6,stroke:#360,stroke-width:1px
 ```
 
-The CKKS bootstrapping pipeline (`Bootstrapper::bootstrap`) really does run coefficients→slots (`CoeffsToSlots`, via `DftEvaluator::transform(..., Forward)`) then eval-mod then slots→coefficients (`SlotsToCoeffs`, via `DftEvaluator::transform(..., Inverse)`) — the pipeline *shape* is faithful. But `EvalMod::preserve_message`, the function the bootstrapper actually calls for the middle stage, is an **identity function** (`Ok(input.clone())`) — not the real modular-reduction polynomial approximation described in [`concepts.md#bootstrapping`](concepts.md#bootstrapping). (`EvalMod::centered_fractional_part`, which *does* call the real `Mod1Evaluator`, exists on the type but is not what the bootstrapper's `bootstrap()` method calls.) After the pipeline, `refresh_metadata` resets scale to the CKKS context's default, level to `BootstrapParams::target_level`, and precision to `BootstrapParams::target_precision_bits` — i.e. the metadata genuinely gets "refreshed" to look like a fresh ciphertext, which is the observable effect a real bootstrap should have, even though no actual noise reduction occurred (because there's no noise to reduce in a transparent ciphertext).
+The CKKS bootstrapping pipeline (`Bootstrapper::bootstrap`) really does run coefficients→slots (`CoeffsToSlots`, via `DftEvaluator::transform(..., Forward)`) then eval-mod then slots→coefficients (`SlotsToCoeffs`, via `DftEvaluator::transform(..., Inverse)`) — the pipeline *shape* is faithful. The middle stage now calls `EvalMod::reduce_mod_q`, which removes an unknown multiple of `BootstrapParams::raise_modulus` (`q`) from every slot, real and imaginary parts independently: `q * centered_fractional_part(x / q)`, the scaled version of the same centered mod-one operation the standard sin/cos-based polynomial approximation targets. (`EvalMod::centered_fractional_part` itself stays *unscaled* — `x - round(x)`, correct only for inputs already bounded by one — and is still exposed standalone for direct callers with that shape of input, but `bootstrap()` calls `reduce_mod_q`, not it.) This is genuine modular reduction, not a stand-in — verified with an engineered test input whose `coeffs_to_slots` image lands on `message + raise_modulus*(nonzero integer)` per slot and confirming `bootstrap()` recovers the true message — but it is still a transparent-slot computation (`f64` `round()`, not a homomorphically-evaluable polynomial), and `raise_modulus` is a freely-chosen constant rather than derived from a real ciphertext's own lowest RNS modulus, since there's no real ciphertext underneath yet (item 5's own gap). After the pipeline, `refresh_metadata` resets scale to the CKKS context's default, level to `BootstrapParams::target_level`, and precision to `BootstrapParams::target_precision_bits` — i.e. the metadata genuinely gets "refreshed" to look like a fresh ciphertext, which is the observable effect a real bootstrap should have, even though no actual noise reduction occurred (because there's no noise to reduce in a transparent ciphertext).
 
 `BootstrapKeyGenerator::generate` produces a `BootstrapKey` that's just `{ params, rotation_elements }` — no actual key material, consistent with the transparent scheme layer beneath it not needing any.
 

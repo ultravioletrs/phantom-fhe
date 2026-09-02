@@ -20,6 +20,7 @@ pub fn encode_ckks_bootstrap_params(params: &BootstrapParams) -> Result<Vec<u8>>
     write_f64(&mut writer, params.target_precision_bits())?;
     writer.write_u64_le(params.sparse_slot_count() as u64)?;
     writer.write_u64_le(params.batch_size() as u64)?;
+    write_f64(&mut writer, params.raise_modulus())?;
     Ok(writer.into_inner())
 }
 
@@ -31,12 +32,14 @@ pub fn decode_ckks_bootstrap_params(bytes: &[u8]) -> Result<BootstrapParams> {
     let target_precision_bits = read_f64(&mut reader)?;
     let sparse_slot_count = read_usize(&mut reader)?;
     let batch_size = read_usize(&mut reader)?;
+    let raise_modulus = read_f64(&mut reader)?;
     BootstrapParams::new(
         ckks_params,
         target_level,
         target_precision_bits,
         sparse_slot_count,
         batch_size,
+        raise_modulus,
     )
 }
 
