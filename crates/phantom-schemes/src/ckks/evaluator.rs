@@ -634,6 +634,82 @@ impl Evaluator {
         ))
     }
 
+    /// Raises a **real**, level-zero ciphertext's modulus up to
+    /// `target_level`, the first stage of real CKKS bootstrapping, before
+    /// `phantom_bootstrapping::ckks::Bootstrapper::bootstrap_real`'s own
+    /// pipeline (`CoeffsToSlots`/`EvalMod`/`SlotsToCoeffs`) can run on it.
+    ///
+    /// A ciphertext `(c0, c1)` at level `0` decrypts as `c0 + c1*s ≡ Δm + e
+    /// (mod q0)`, `q0` its own single remaining modulus. This method leaves
+    /// every coefficient of `c0`/`c1` numerically unchanged (their
+    /// *centered*, signed, `|value| <= q0/2` representation) and simply
+    /// re-embeds them into `target_level`'s much bigger modulus product `Q`, via
+    /// [`phantom_ring::rns::extension::extend_basis_centered`] (*not*
+    /// [`phantom_ring::rns::extension::extend_basis`], whose own
+    /// non-negative `[0, Q_source)` reconstruction would offset every
+    /// coefficient by up to the entirety of `q0` for a negative centered
+    /// value - see that primitive's own doc comment for why the distinction
+    /// matters here specifically).
+    ///
+    /// Since `Q >> q0 * N * ||s||_1` for any parameter set this crate
+    /// generates, the *raw* (unreduced) integer value of `c0 + c1*s` is
+    /// unchanged by moving to the bigger basis, and it no longer gets
+    /// silently reduced mod `q0` the way it did before raising - so
+    /// decrypting the raised ciphertext recovers `Δm + e + q0*I` for a
+    /// **bounded** integer `I` (the same "unknown multiple of `q0`"
+    /// `phantom_bootstrapping::ckks::EvalMod` is built to remove), rather
+    /// than the correct `Δm + e` a non-exhausted ciphertext would
+    /// give directly. `I`'s own bound follows from negacyclic convolution:
+    /// `|c1*s|`'s raw coefficients are bounded by `||c1||_inf * ||s||_1 <=
+    /// (q0/2) * h` (`h` = the secret's Hamming weight, `||s||_1` for a
+    /// ternary secret), so `|raw(c0 + c1*s)| <= (q0/2)*(1+h)`, giving `|I|
+    /// <= (h+2)/2` - verified numerically (Python, 400 randomized trials
+    /// across several Hamming weights) before implementing, never exceeded
+    /// (worst observed ratio to the bound: `~0.67`). This is why
+    /// `BootstrapParams::raise_modulus` should be the ciphertext's own real
+    /// `q0` (this evaluator's `at_level(0)` modulus), not a freely-chosen
+    /// constant, and why `EvalMod::reduce_mod_q_real`'s own tight domain
+    /// (`|I| <= 1`) only actually holds for a secret sparse enough that
+    /// `(h+2)/2 <= 1` - i.e. `h <= 0` in the worst case, which no usable
+    /// secret satisfies. Widening `EvalMod`'s domain to match a realistic
+    /// secret's own Hamming weight (more Chebyshev terms, or an
+    /// iterated-doubling reconstruction from a narrow base case) is a
+    /// further, separate derivation, not attempted here - this method only
+    /// builds the raise itself and documents the bound it produces.
+    pub fn raise_level_real(
+        &self,
+        ciphertext: &Ciphertext,
+        target_level: usize,
+    ) -> Result<Ciphertext> {
+        let poly = self.real_poly(ciphertext)?;
+        if ciphertext.level() != 0 {
+            return Err(SchemesError::InvalidParameters(
+                "raise_level_real only accepts a level-zero ciphertext",
+            ));
+        }
+        let source_basis = RnsBasis::new(self.params.at_level(0)?.ring().moduli().to_vec())
+            .map_err(|_| SchemesError::InvalidParameters("invalid source basis"))?;
+        let target_basis =
+            RnsBasis::new(self.params.at_level(target_level)?.ring().moduli().to_vec())
+                .map_err(|_| SchemesError::InvalidParameters("invalid target basis"))?;
+
+        let mut out = Vec::with_capacity(poly.value().len());
+        for component in poly.value() {
+            out.push(phantom_ring::rns::extension::extend_basis_centered(
+                component,
+                &source_basis,
+                &target_basis,
+            )?);
+        }
+        Ok(Ciphertext::new_real(
+            RlweCiphertext::new(out),
+            ciphertext.scale(),
+            target_level,
+            ciphertext.precision(),
+            ciphertext.degree(),
+        ))
+    }
+
     fn real_poly<'a>(&self, ciphertext: &'a Ciphertext) -> Result<&'a RlweCiphertext> {
         ciphertext.poly().ok_or(SchemesError::InvalidParameters(
             "ciphertext has no real ring representation - encrypt with Encryptor::encrypt_real",

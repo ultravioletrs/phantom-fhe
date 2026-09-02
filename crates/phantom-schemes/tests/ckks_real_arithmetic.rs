@@ -417,6 +417,161 @@ fn drop_level_real_rejects_level_zero_and_a_transparent_ciphertext() {
     assert!(evaluator.drop_level_real(&transparent_ct).is_err());
 }
 
+// Modulus-raise fixture (Workstream 11 item 3): `RAISE_Q0` plays the role of
+// a real bootstrapping "q0" (a ciphertext's own lowest, level-zero
+// modulus), and the other three are the much bigger "target" chain a
+// modulus-raise lifts it into - `RAISE_TARGET_1` matches the headroom-sized
+// modulus `phantom-bootstrapping`'s own real `EvalMod` fixture uses, so
+// `Q_target >> RAISE_Q0 * degree * ||s||_1` comfortably holds for any
+// ternary secret at this small a ring degree. All four Miller-Rabin
+// verified distinct primes in Python before use.
+const RAISE_Q0: u64 = 1_073_741_827;
+const RAISE_TARGET_1: u64 = 4_611_686_018_427_400_249;
+const RAISE_TARGET_2: u64 = 1_073_741_717;
+const RAISE_TARGET_3: u64 = 1_073_741_719;
+
+fn raise_params() -> CkksParams {
+    CkksParams::builder()
+        .degree(REAL_DEGREE)
+        .moduli(vec![
+            RAISE_Q0,
+            RAISE_TARGET_1,
+            RAISE_TARGET_2,
+            RAISE_TARGET_3,
+        ])
+        .default_scale_bits(SCALE_BITS)
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn raise_level_real_recovers_the_value_plus_a_bounded_multiple_of_q0() {
+    // `Evaluator::raise_level_real`'s own doc comment derives the bound
+    // `|I| <= (h+2)/2` (`h` = the secret's own Hamming weight) on the
+    // wraparound integer a raise introduces - this test builds a real
+    // level-zero ciphertext, raises it, and confirms both that the mod-`q0`
+    // congruence survives (the raise didn't corrupt the encrypted value)
+    // and that the actual wraparound stays within that derived bound.
+    let ckks = raise_params();
+    let target_level = ckks.initial_level();
+    let ctx = CkksContext::new(ckks.clone());
+    let mut rng = seeded_rng(51);
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+
+    // A ternary secret's residue is nonzero mod every modulus exactly when
+    // the underlying integer coefficient is nonzero (0 stays 0 everywhere;
+    // +-1 embeds as a nonzero residue everywhere) - so counting against
+    // the first RNS component alone gives the exact Hamming weight.
+    let h = keys
+        .secret
+        .value()
+        .component(0)
+        .unwrap()
+        .iter()
+        .filter(|&&r| r != 0)
+        .count() as i128;
+
+    // Truncate the full-level secret down to level 0's own single-modulus
+    // ring - the same technique `Decryptor::decrypt_real` already uses
+    // internally, needed here explicitly since encryption at level 0 must
+    // happen against a level-0-sized ring.
+    let mut sk0_value = keys.secret.value().clone();
+    while sk0_value.moduli_count() > 1 {
+        sk0_value = phantom_ring::rns::rescale::drop_last_modulus(&sk0_value).unwrap();
+    }
+    let sk0 = phantom_lattice::rlwe::SecretKey::new(sk0_value);
+
+    let level0_params = ckks.at_level(0).unwrap();
+    let level0_ctx = CkksContext::new(level0_params.clone());
+    let encoder0 = level0_ctx.encoder();
+    let encryptor0 = level0_ctx.real_secret_key_encryptor(sk0.clone());
+
+    // Message zero, so the level-0 decrypted value is just the small
+    // encryption noise directly - isolating the wraparound the raise
+    // itself introduces from the (already well-understood) encryption
+    // noise/encoding-rounding contributions the rest of the real-path
+    // suite already covers.
+    let zero_message = vec![Complex64::real(0.0); encoder0.slot_count()];
+    let ct0 = encryptor0
+        .encrypt_real(
+            &encoder0.encode_complex_real(&zero_message).unwrap(),
+            &mut rng,
+        )
+        .unwrap();
+    assert_eq!(ct0.level(), 0);
+
+    let decryptor0 = level0_ctx.real_decryptor(sk0).unwrap();
+    let before = decryptor0.decrypt_real(&ct0).unwrap();
+    let source_basis = phantom_ring::RnsBasis::new(level0_params.ring().moduli().to_vec()).unwrap();
+    let before_centered = phantom_ring::rns::extension::reconstruct_centered_values(
+        before.poly().unwrap(),
+        &source_basis,
+    )
+    .unwrap();
+    for &v in &before_centered {
+        assert!(
+            v.unsigned_abs() < u128::from(RAISE_Q0 / 2),
+            "fresh encryption noise already exceeds q0/2: v={v}"
+        );
+    }
+
+    let evaluator = ctx.evaluator();
+    let raised = evaluator.raise_level_real(&ct0, target_level).unwrap();
+    assert_eq!(raised.level(), target_level);
+
+    let decryptor_full = ctx.real_decryptor(keys.secret).unwrap();
+    let after = decryptor_full.decrypt_real(&raised).unwrap();
+    let target_basis = phantom_ring::RnsBasis::new(
+        ckks.at_level(target_level)
+            .unwrap()
+            .ring()
+            .moduli()
+            .to_vec(),
+    )
+    .unwrap();
+    let after_centered = phantom_ring::rns::extension::reconstruct_centered_values(
+        after.poly().unwrap(),
+        &target_basis,
+    )
+    .unwrap();
+
+    let q0 = i128::from(RAISE_Q0);
+    let bound = (h + 2) / 2 + 1; // +1 slack for integer-division rounding
+    for (b, a) in before_centered.iter().zip(&after_centered) {
+        let diff = a - b;
+        assert_eq!(
+            diff.rem_euclid(q0),
+            0,
+            "raise broke the mod-q0 congruence: before={b} after={a}"
+        );
+        let wraparound = diff / q0;
+        assert!(
+            wraparound.abs() <= bound,
+            "wraparound {wraparound} exceeds derived bound {bound} (h={h})"
+        );
+    }
+}
+
+#[test]
+fn raise_level_real_rejects_a_ciphertext_above_level_zero() {
+    let ckks = raise_params();
+    let ctx = CkksContext::new(ckks.clone());
+    let mut rng = seeded_rng(52);
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret);
+    let evaluator = ctx.evaluator();
+
+    let values = sample_values(&encoder, 53);
+    let ct = encryptor
+        .encrypt_real(&encoder.encode_complex_real(&values).unwrap(), &mut rng)
+        .unwrap();
+    assert!(ct.level() > 0);
+    assert!(evaluator
+        .raise_level_real(&ct, ckks.initial_level())
+        .is_err());
+}
+
 // Regression coverage for two findings from Workstream 6 item 2's scoping
 // (see `docs/internal/implementation-plan.md`): a genuine Horner-style
 // circuit (`x^3` computed as `x^2 * x`, not `x*x*x` directly) needs both

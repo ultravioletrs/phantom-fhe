@@ -217,6 +217,42 @@ pub fn floor_divide_residues(basis: &RnsBasis, divisor: u64) -> Vec<u64> {
     moduli.iter().map(|&q| quotient.divmod_u64(q).1).collect()
 }
 
+/// Extends `poly` from `source` basis into `target` basis, embedding each
+/// coefficient's *centered* (signed) true value rather than [`extend_basis`]'s
+/// own non-negative `[0, Q_source)` reconstruction.
+///
+/// The two differ whenever a coefficient's centered representative is
+/// negative: [`extend_basis`] reconstructs `T` in `[0, Q_source)` (so a
+/// centered value of `-5` under a source modulus `q` is seen as `q - 5`,
+/// close to `Q_source`, not `-5`) and reduces *that* into each target
+/// modulus - correct for its own callers (RNS rescale/rounding, which work
+/// with that same non-negative convention throughout), but wrong for CKKS
+/// bootstrapping's own modulus-raise step, which needs the small, signed
+/// value re-embedded unchanged into a much bigger target basis. Reusing
+/// [`extend_basis`] there would silently offset every coefficient by
+/// (up to) the entire `Q_source`, not the small bounded wraparound
+/// modulus-raise is supposed to introduce (see
+/// `phantom_schemes::ckks::Evaluator::raise_level_real`'s own doc comment
+/// for the full derivation).
+///
+/// Shares [`reconstruct_centered_values`] for the reconstruction half (the
+/// same primitive CKKS's own real decoder already relies on) and the same
+/// `rem_euclid`-based signed-to-residue embedding
+/// `phantom_schemes::ckks::encoder`'s own `embed_signed_coeffs` uses.
+pub fn extend_basis_centered(poly: &Poly, source: &RnsBasis, target: &RnsBasis) -> Result<Poly> {
+    let centered = reconstruct_centered_values(poly, source)?;
+
+    let mut coeffs = vec![vec![0u64; centered.len()]; target.moduli().len()];
+    for (j, modulus) in target.moduli().iter().enumerate() {
+        let q = i128::from(modulus.value());
+        for (i, &value) in centered.iter().enumerate() {
+            coeffs[j][i] = value.rem_euclid(q) as u64;
+        }
+    }
+
+    Poly::from_coeffs(coeffs)
+}
+
 /// Reconstructs each coefficient's true value via CRT (`reconstruct_true_values`),
 /// centered into `(-Q/2, Q/2]` (`Q` = `source`'s own modulus product), as a
 /// signed `i128` - CKKS's real encoder/decoder need this to recover a

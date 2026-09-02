@@ -221,10 +221,16 @@ The following components are not yet at production cryptographic strength:
   message through the full real pipeline. This is the digit-extraction half
   of bootstrapping, not the whole circuit: real bootstrapping's own
   modulus-raise step (bringing a nearly-exhausted ciphertext's modulus back
-  up to a full top-level chain before this pipeline can run on it) remains
-  separate and unimplemented, so `bootstrap_real` still requires its input
-  already be at the raised level/modulus this pipeline expects. BGV/BFV
-  bootstrapping modules are reserved but unimplemented.
+  up to a full top-level chain before this pipeline can run on it) exists as
+  a standalone, tested primitive (`ckks::Evaluator::raise_level_real`) but
+  is deliberately not yet connected to `bootstrap_real` - the derivation
+  behind it found that the actual wraparound integer a raise introduces
+  scales with the secret's own Hamming weight in a way `EvalMod`'s current
+  polynomial domain doesn't cover for any realistic (non-trivial) secret, so
+  chaining them today would silently produce wrong output rather than a
+  genuine capability. `bootstrap_real` still requires its input already be
+  at the raised level/modulus this pipeline expects. BGV/BFV bootstrapping
+  modules are reserved but unimplemented.
 - `phantom-multiparty` protocols have not had an adversarial security
   review. Collective key generation, relinearization-key generation, and
   Galois-key generation currently aggregate shares into placeholder key
