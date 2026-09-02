@@ -171,4 +171,40 @@ impl BgvKeyGenerator {
             rng,
         )
     }
+
+    /// Generates a **real BGV** rotation key for `element` (from
+    /// [`BgvParams::rotation_element`]/[`BgvParams::row_swap_element`]):
+    /// `σ_element(s) -> s` key-switching with `t`-scaled noise, reusing
+    /// [`BgvRelinearizationKey`] and this crate's own `bgv::relinearization::key_switch`
+    /// unmodified - nothing in either is specific to `s_old == s^2`, and
+    /// the *reason* BGV needs its own construction (classical gadget
+    /// decomposition instead of the generic RNS hybrid technique, so
+    /// `t`-scaled key-switching noise survives exactly rather than picking
+    /// up a non-multiple-of-`t` rounding residual - see the
+    /// `bgv::relinearization` module's own doc comment) applies
+    /// identically to rotation: `σ_element` is a ring automorphism, a
+    /// *linear* map, so `σ_element(t*e) = t*σ_element(e)` - the automorphism
+    /// preserves "noise is a multiple of `t`" exactly, the same invariant
+    /// this whole module exists to protect during key-switching.
+    pub fn generate_rotation_key_real<R>(
+        &self,
+        sk: &SecretKey,
+        element: usize,
+        decomposition_params: GadgetDecompositionParams,
+        rng: &mut R,
+    ) -> Result<BgvRelinearizationKey>
+    where
+        R: RngCore + CryptoRng,
+    {
+        let ring = self.params.ring();
+        let sigma_s = ring.apply_automorphism(sk.value(), element)?;
+        BgvRelinearizationKey::generate(
+            &self.params.rlwe_params()?,
+            &sigma_s,
+            sk,
+            decomposition_params,
+            self.params.plaintext_modulus(),
+            rng,
+        )
+    }
 }

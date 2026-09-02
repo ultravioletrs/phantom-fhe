@@ -550,3 +550,102 @@ fn encode_batched_rejects_a_plaintext_modulus_that_is_not_ntt_friendly() {
 
     assert!(encoder.encode_batched(&[1, 2, 3]).is_err());
 }
+
+#[test]
+fn rotate_real_shifts_both_rows_of_a_batched_ciphertext_for_every_amount() {
+    let params = real_params();
+    let ctx = BgvContext::new(params.clone());
+    let mut rng = seeded_rng();
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair_real(&mut rng).unwrap();
+    let decomposition_params = GadgetDecompositionParams::new(8, 7).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.decryptor(keys.secret.clone()).unwrap();
+    let evaluator = ctx.evaluator().unwrap();
+
+    let half = REAL_DEGREE / 2;
+    let values: Vec<u64> = (0..REAL_DEGREE as u64).map(|i| i + 1).collect();
+    let pt = encoder.encode_batched(&values).unwrap();
+    let ct = encryptor.encrypt(&pt, &mut rng).unwrap();
+
+    for shift in 1..half {
+        let element = params.rotation_element(shift);
+        let key = keygen
+            .generate_rotation_key_real(&keys.secret, element, decomposition_params, &mut rng)
+            .unwrap();
+        let rotated = evaluator.rotate_real(&ct, element, &key).unwrap();
+        let decoded = encoder
+            .decode_batched(&decryptor.decrypt(&rotated).unwrap())
+            .unwrap();
+
+        let mut expected_row0 = values[..half].to_vec();
+        expected_row0.rotate_left(shift);
+        let mut expected_row1 = values[half..].to_vec();
+        expected_row1.rotate_left(shift);
+        let expected: Vec<u64> = expected_row0.into_iter().chain(expected_row1).collect();
+        // Exact, same reason real_relinearization_... is exact: BgvRelinearizationKey's
+        // classical gadget decomposition carries t-scaled noise through
+        // key-switching with no rounding step to corrupt it.
+        assert_eq!(decoded, expected, "shift={shift}");
+    }
+}
+
+#[test]
+fn rotate_real_swaps_rows_of_a_batched_ciphertext() {
+    let params = real_params();
+    let ctx = BgvContext::new(params.clone());
+    let mut rng = seeded_rng();
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair_real(&mut rng).unwrap();
+    let decomposition_params = GadgetDecompositionParams::new(8, 7).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.decryptor(keys.secret.clone()).unwrap();
+    let evaluator = ctx.evaluator().unwrap();
+
+    let half = REAL_DEGREE / 2;
+    let values: Vec<u64> = (0..REAL_DEGREE as u64).map(|i| i + 1).collect();
+    let pt = encoder.encode_batched(&values).unwrap();
+    let ct = encryptor.encrypt(&pt, &mut rng).unwrap();
+
+    let element = params.row_swap_element();
+    let key = keygen
+        .generate_rotation_key_real(&keys.secret, element, decomposition_params, &mut rng)
+        .unwrap();
+    let swapped = evaluator.rotate_real(&ct, element, &key).unwrap();
+    let decoded = encoder
+        .decode_batched(&decryptor.decrypt(&swapped).unwrap())
+        .unwrap();
+
+    let expected: Vec<u64> = values[half..]
+        .iter()
+        .chain(values[..half].iter())
+        .copied()
+        .collect();
+    assert_eq!(decoded, expected);
+}
+
+#[test]
+fn rotate_real_rejects_a_degree_two_ciphertext() {
+    let params = real_params();
+    let ctx = BgvContext::new(params.clone());
+    let mut rng = seeded_rng();
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair_real(&mut rng).unwrap();
+    let decomposition_params = GadgetDecompositionParams::new(8, 7).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let evaluator = ctx.evaluator().unwrap();
+
+    let pt = encoder.encode_batched(&[1, 2, 3, 4]).unwrap();
+    let ct = encryptor.encrypt(&pt, &mut rng).unwrap();
+    let product = evaluator.mul(&ct, &ct, None).unwrap();
+    assert_eq!(product.degree(), 2);
+
+    let element = params.rotation_element(1);
+    let key = keygen
+        .generate_rotation_key_real(&keys.secret, element, decomposition_params, &mut rng)
+        .unwrap();
+    assert!(evaluator.rotate_real(&product, element, &key).is_err());
+}

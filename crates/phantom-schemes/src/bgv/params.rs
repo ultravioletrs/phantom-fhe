@@ -55,6 +55,31 @@ impl BgvParams {
         self.ring.degree()
     }
 
+    /// Returns the ring automorphism element `5^shift mod 2*degree` for
+    /// rotating both rows of a [`super::BatchEncoder::encode_batched`]-encoded
+    /// real ciphertext left by `shift` slots (`shift` taken mod `degree/2`,
+    /// the row width) - see [`super::BatchEncoder`]'s own module doc
+    /// comment for the `5`-power slot layout this is built against.
+    /// `rotation_element(0) == 1`, the identity automorphism.
+    pub fn rotation_element(&self, shift: usize) -> usize {
+        let half = self.ring.degree() / 2;
+        let two_n = 2 * self.ring.degree();
+        let steps = if half == 0 { 0 } else { shift % half };
+        let mut element = 1usize;
+        for _ in 0..steps {
+            element = (element * 5) % two_n;
+        }
+        element
+    }
+
+    /// Returns the ring automorphism element for swapping the two rows of a
+    /// [`super::BatchEncoder::encode_batched`]-encoded real ciphertext
+    /// (`2*degree - 1`, i.e. `k = -1 mod 2*degree`) - the complement to
+    /// [`Self::rotation_element`].
+    pub fn row_swap_element(&self) -> usize {
+        2 * self.ring.degree() - 1
+    }
+
     /// Converts to scheme-agnostic RLWE parameters.
     pub fn rlwe_params(&self) -> phantom_lattice::Result<RlweParams> {
         RlweParams::new(self.ring.clone())
