@@ -209,7 +209,7 @@ impl LinearTransformEvaluator {
 /// least one nonzero entry; rejects `transform` outright if any entry
 /// crosses the row boundary (`row` and `col` in different halves), rather
 /// than silently dropping or misreading it.
-fn row_local_diagonals(
+pub(crate) fn row_local_diagonals(
     transform: &LinearTransform<u64>,
     half: usize,
 ) -> Result<Vec<(usize, Vec<u64>)>> {

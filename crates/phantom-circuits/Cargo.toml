@@ -8,10 +8,10 @@ rust-version.workspace = true
 
 [dependencies]
 phantom-lattice = { path = "../phantom-lattice" }
+phantom-ring = { path = "../phantom-ring" }
 phantom-schemes = { path = "../phantom-schemes" }
 phantom-utils = { path = "../phantom-utils" }
 thiserror.workspace = true
 
 [dev-dependencies]
-phantom-ring = { path = "../phantom-ring" }
 rand_chacha.workspace = true
