@@ -418,3 +418,231 @@ fn coeffs_to_slots_and_slots_to_coeffs_apply_real_round_trip() {
         );
     }
 }
+
+// A degree-9 Horner-method polynomial (see EvalMod::reduce_mod_q_real's
+// own doc comment) needs 9 rescale-sized moduli for the polynomial itself,
+// plus 2 more for reduce_mod_q_real's own pre-scale-by-1/q and
+// post-scale-by-q/(2*pi) steps, plus one large headroom modulus surviving
+// the first (largest) raw tensor product - 12 moduli total. All
+// Miller-Rabin verified distinct primes in Python before use, and
+// explicitly checked *not* to accidentally satisfy the NTT-friendliness
+// congruence `(p-1) % (2*degree) == 0` at this ring's degree (`8`) -
+// `phantom_ring::ntt::table::primitive_root_of_order`'s linear search
+// for a root of order `2*degree` in a multiplicative group this large
+// (order `p-1 ~ 2^30`) doesn't converge in any practical time if a
+// modulus does happen to satisfy it, discovered directly (a modulus
+// picked without checking this hung for pathological amounts of CPU
+// time before being killed) - a real, if minor and unrelated, latent
+// performance gap in that search (unbounded, no fallback for a slow
+// case), not attempted here.
+fn eval_mod_real_ckks_params() -> CkksParams {
+    CkksParams::builder()
+        .degree(8)
+        .moduli(vec![
+            4_611_686_018_427_400_249,
+            1_073_741_717,
+            1_073_741_719,
+            1_073_741_723,
+            1_073_741_741,
+            1_073_741_783,
+            1_073_741_789,
+            1_073_741_827,
+            1_073_741_831,
+            1_073_741_833,
+            1_073_741_839,
+            1_073_741_843,
+        ])
+        .default_scale_bits(30)
+        .build()
+        .unwrap()
+}
+
+/// One real relinearization key per level `0..=top_level`, matching
+/// `evaluate_encrypted`'s own requirement that `relin_keys.len() >=
+/// input.level()`.
+fn relin_keys_per_level(
+    keygen: &CkksKeyGenerator,
+    sk: &phantom_lattice::rlwe::SecretKey,
+    top_level: usize,
+    rng: &mut ChaCha20Rng,
+) -> Vec<phantom_lattice::rlwe::RelinearizationKey> {
+    (0..=top_level)
+        .map(|level| {
+            keygen
+                .generate_hybrid_relinearization_key_at_level(sk, level, &p_moduli(), rng)
+                .unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn reduce_mod_q_real_recovers_a_real_valued_message_from_a_wrapped_ciphertext() {
+    let ckks = eval_mod_real_ckks_params();
+    let raise_modulus = 100.0;
+    let params = BootstrapParams::builder(ckks.clone())
+        .raise_modulus(raise_modulus)
+        .build()
+        .unwrap();
+    let mut rng = ChaCha20Rng::from_seed([23u8; 32]);
+    let ctx = CkksContext::new(ckks.clone());
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.real_decryptor(keys.secret.clone()).unwrap();
+
+    let relin_keys = relin_keys_per_level(&keygen, &keys.secret, ckks.initial_level(), &mut rng);
+    let eval_mod = EvalMod::new(params);
+
+    // |m| < 0.03*q = 3.0, I in {-1,0,1} - the tighter domain
+    // reduce_mod_q_real's own doc comment requires (real-valued only, so
+    // im=0 throughout).
+    let messages = [2.5, -1.0, 0.75, -2.9];
+    let wrap_integers = [1i64, 0, -1, 1];
+    let combined: Vec<Complex64> = messages
+        .iter()
+        .zip(&wrap_integers)
+        .map(|(&m, &i)| Complex64::real(m + raise_modulus * i as f64))
+        .collect();
+
+    let ct = encryptor
+        .encrypt_real(&encoder.encode_complex_real(&combined).unwrap(), &mut rng)
+        .unwrap();
+    assert_eq!(ct.level(), ckks.initial_level());
+
+    let result = eval_mod.reduce_mod_q_real(&ct, &relin_keys).unwrap();
+    let decoded = encoder
+        .decode_complex_real(&decryptor.decrypt_real(&result).unwrap())
+        .unwrap();
+
+    // ~3% relative error, verified numerically before implementing (see
+    // reduce_mod_q_real's own doc comment) - not the transparent scaffold's
+    // exact round(), so this needs a correspondingly loose tolerance.
+    for (actual, &expected) in decoded.iter().zip(&messages) {
+        assert!(
+            (actual.re - expected).abs() < 0.15,
+            "actual={actual:?} expected={expected}"
+        );
+    }
+}
+
+// `eval_mod_real_ckks_params`'s own 12 moduli only budget the 11 rescales
+// `reduce_mod_q_real` itself needs (see that fixture's own doc comment) -
+// chaining `Bootstrapper::bootstrap_real`'s own extra
+// `CoeffsToSlots::apply_real` and `SlotsToCoeffs::apply_real` calls around
+// it costs one more rescale each (13 total), so this extends that fixture
+// with 3 more rescale-sized primes (same NTT-avoidance check, Miller-Rabin
+// verified distinct in Python before use) for one spare level of margin
+// beyond the 13 actually needed.
+fn bootstrap_real_ckks_params() -> CkksParams {
+    CkksParams::builder()
+        .degree(8)
+        .moduli(vec![
+            4_611_686_018_427_400_249,
+            1_073_741_717,
+            1_073_741_719,
+            1_073_741_723,
+            1_073_741_741,
+            1_073_741_783,
+            1_073_741_789,
+            1_073_741_827,
+            1_073_741_831,
+            1_073_741_833,
+            1_073_741_839,
+            1_073_741_843,
+            1_073_741_891,
+            1_073_741_909,
+            1_073_741_939,
+        ])
+        .default_scale_bits(30)
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn bootstrap_real_recovers_a_real_valued_message_through_the_full_real_pipeline() {
+    // The real-pipeline counterpart of
+    // `ckks_bootstrap_removes_an_unknown_multiple_of_the_raise_modulus`:
+    // an `input` engineered so a real, encrypted `CoeffsToSlots::apply_real`
+    // exposes `message + raise_modulus*I` in its own slots, and
+    // `Bootstrapper::bootstrap_real` still recovers the true message end to
+    // end through all three real stages.
+    let ckks = bootstrap_real_ckks_params();
+    let raise_modulus = 100.0;
+    let params = BootstrapParams::builder(ckks.clone())
+        .raise_modulus(raise_modulus)
+        .build()
+        .unwrap();
+    let mut rng = ChaCha20Rng::from_seed([31u8; 32]);
+    let ctx = CkksContext::new(ckks.clone());
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.real_decryptor(keys.secret.clone()).unwrap();
+
+    let s2c_transparent = SlotsToCoeffs::new(params.clone());
+    let n = ckks.slot_count();
+
+    // |m| < 0.03*q = 3.0, I in {-1,0,1} - reduce_mod_q_real's own tighter
+    // domain requirement (see its doc comment), same as the transparent
+    // pipeline test's own construction one level up.
+    let messages: Vec<Complex64> = (0..n)
+        .map(|i| Complex64::real(0.5 + 0.3 * i as f64))
+        .collect();
+    let wrap_integers: Vec<i64> = (0..n).map(|i| [1i64, 0, -1, 1][i % 4]).collect();
+    let combined: Vec<Complex64> = messages
+        .iter()
+        .zip(&wrap_integers)
+        .map(|(m, &i)| Complex64::real(m.re + raise_modulus * i as f64))
+        .collect();
+
+    // Pre-image under the forward DFT `CoeffsToSlots::apply_real` performs,
+    // so that transform's own output slots equal `combined` - the same
+    // domain construction `ckks_bootstrap_removes_an_unknown_multiple_of_the_raise_modulus`
+    // uses, via the transparent inverse transform.
+    let input_coeffs = s2c_transparent
+        .apply(&ciphertext(&combined, 0, 4.0))
+        .unwrap();
+    let ct = encryptor
+        .encrypt_real(
+            &encoder.encode_complex_real(input_coeffs.slots()).unwrap(),
+            &mut rng,
+        )
+        .unwrap();
+    assert_eq!(ct.level(), ckks.initial_level());
+
+    let c2s_keys = dft_galois_keys(&ckks, &keys.secret, n, ct.level(), &mut rng);
+    let forward = CoeffsToSlots::new(params.clone())
+        .apply_real(&ct, &c2s_keys)
+        .unwrap();
+
+    let relin_keys = relin_keys_per_level(&keygen, &keys.secret, forward.level(), &mut rng);
+
+    let key = BootstrapKeyGenerator::new(params.clone()).generate(&[]);
+    let bootstrapper = Bootstrapper::new(params.clone(), key);
+
+    // `s2c_keys`'s own level depends on eval_mod's internal rescale count,
+    // known ahead of time from `eval_mod_real_ckks_params`'s own sizing
+    // (11 rescales: 1 pre-scale + 9 for the degree-9 polynomial + 1
+    // post-scale).
+    let s2c_level = forward.level() - 11;
+    let s2c_keys = dft_galois_keys(&ckks, &keys.secret, n, s2c_level, &mut rng);
+
+    let output = bootstrapper
+        .bootstrap_real(&ct, &c2s_keys, &relin_keys, &s2c_keys)
+        .unwrap();
+
+    let decoded = encoder
+        .decode_complex_real(&decryptor.decrypt_real(&output).unwrap())
+        .unwrap();
+    let expected = s2c_transparent
+        .apply(&ciphertext(&messages, 0, 4.0))
+        .unwrap();
+    for (actual, expected) in decoded.iter().zip(expected.slots()) {
+        assert!(
+            (actual.re - expected.re).abs() < 0.2,
+            "actual={actual:?} expected={expected:?}"
+        );
+    }
+}

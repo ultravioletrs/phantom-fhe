@@ -207,19 +207,24 @@ The following components are not yet at production cryptographic strength:
   real packing and an NTT/FFT fast path for encode/decode remain
   unimplemented.
 - `phantom-bootstrapping::ckks`'s EvalMod stage now performs genuine scaled
-  centered-modular reduction (`EvalMod::reduce_mod_q`, removing an unknown
-  multiple of a configurable `raise_modulus`) rather than an identity, and
-  is verified to recover a message from a modulus-raised-looking input -
-  but it still operates on transparent `f64` slots (`round()`-based, not a
-  homomorphically-evaluable polynomial approximation). `BootstrapKeyGenerator`
-  can now also generate real Galois (rotation) key material
-  (`generate_real`, verified against the real RLWE Galois-automorphism
-  primitive) rather than only the transparent marker `generate` still
-  produces - but the bootstrapping pipeline itself doesn't consume this
-  key material yet (`CoeffsToSlots`/`SlotsToCoeffs` still run a transparent
-  DFT rather than homomorphic rotations), so it is not yet a production
-  refresh pipeline. BGV/BFV bootstrapping modules are reserved but
-  unimplemented.
+  centered-modular reduction, both as a transparent scaffold
+  (`EvalMod::reduce_mod_q`) and as a real, homomorphically-evaluable
+  polynomial approximation (`EvalMod::reduce_mod_q_real`, a degree-9
+  odd-polynomial fit to the standard sin-based technique), each removing an
+  unknown multiple of a configurable `raise_modulus` and verified to recover
+  a message from a modulus-raised-looking input. `CoeffsToSlots`/
+  `SlotsToCoeffs` also have real evaluators now (`apply_real`, against the
+  dense forward/inverse DFT matrix via homomorphic rotations, consuming the
+  real Galois key material `BootstrapKeyGenerator::generate_real` produces),
+  and a new `Bootstrapper::bootstrap_real` composes all three real stages
+  end to end on an actual encrypted ciphertext, verified to recover a
+  message through the full real pipeline. This is the digit-extraction half
+  of bootstrapping, not the whole circuit: real bootstrapping's own
+  modulus-raise step (bringing a nearly-exhausted ciphertext's modulus back
+  up to a full top-level chain before this pipeline can run on it) remains
+  separate and unimplemented, so `bootstrap_real` still requires its input
+  already be at the raised level/modulus this pipeline expects. BGV/BFV
+  bootstrapping modules are reserved but unimplemented.
 - `phantom-multiparty` protocols have not had an adversarial security
   review. Collective key generation, relinearization-key generation, and
   Galois-key generation currently aggregate shares into placeholder key

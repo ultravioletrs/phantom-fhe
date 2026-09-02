@@ -34,18 +34,32 @@ impl Scale {
     /// scale by the *actual* dropped RNS modulus, which (being odd, per
     /// [`phantom_ring::Modulus::new`]) can only ever approximate - never
     /// exactly equal - a power of two; the standard RNS-CKKS convention of
-    /// picking that modulus close to `2^scale_bits` (see
-    /// `ckks_real_arithmetic.rs`'s own `RESCALE_MODULUS`, `3` away from
-    /// `2^30`) means one rescale's drift is `log2(modulus / 2^scale_bits)`
-    /// bits - about `4e-9` bits for that pair, and additive (not
-    /// multiplicative) across a rescale chain, so even hundreds of chained
-    /// rescales stay far under this tolerance. A genuine scale mismatch
+    /// picking that modulus close to `2^scale_bits` means one rescale's
+    /// drift is `log2(modulus / 2^scale_bits)` bits, and additive (not
+    /// multiplicative) across a rescale chain - but "close to" isn't
+    /// "arbitrarily close": prime gaps near `2^scale_bits` average
+    /// `ln(2^scale_bits)` (about `21` for `scale_bits=30`), so a set of
+    /// several *distinct* primes all "close to" `2^scale_bits` naturally
+    /// spans a few hundred, not single digits - this constant was
+    /// originally sized from one specific, unusually close pair (`3` away
+    /// from `2^30`) and turned out too tight once a real multi-level
+    /// circuit chained enough rescales (a degree-`9` Horner-method
+    /// polynomial, `phantom-bootstrapping`'s own real `EvalMod`) with more
+    /// realistically-spaced primes - found directly via a failing
+    /// `add_plain_real` call, traced to the compounded drift crossing the
+    /// old `1e-6` bound around the `4`th-`5`th rescale. Retightened with
+    /// real headroom instead: for primes within a few hundred of
+    /// `2^scale_bits`, per-rescale drift is on the order of `1e-7` bits, so
+    /// even hundreds of chained rescales stay under `1e-4` - this constant
+    /// keeps a further `10x` margin beyond that. A genuine scale mismatch
     /// (wrong number of rescales, mismatched `scale_bits` between two
     /// contexts, adding without rescaling after a multiply) differs by at
-    /// least one full bit - a factor of two - typically many more, six
-    /// orders of magnitude clear of this bound. Verified against exactly
-    /// this rescale-then-add scenario in `ckks_real_arithmetic.rs`.
-    const COMPATIBLE_TOLERANCE_BITS: f64 = 1e-6;
+    /// least one full bit - a factor of two - still four orders of
+    /// magnitude clear of this bound. Verified against both the original
+    /// rescale-then-add scenario (`ckks_real_arithmetic.rs`) and the
+    /// longer chain that motivated widening it
+    /// (`phantom-bootstrapping/tests/phase12_ckks_bootstrapping.rs`).
+    const COMPATIBLE_TOLERANCE_BITS: f64 = 1e-3;
 
     /// Returns true if scales are close enough for scaffold arithmetic -
     /// compares `log2(scale)` against `Self::COMPATIBLE_TOLERANCE_BITS`

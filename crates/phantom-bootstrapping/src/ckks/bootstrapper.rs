@@ -1,5 +1,7 @@
-//! CKKS bootstrapper scaffold.
+//! CKKS bootstrapper scaffold, plus a real (encrypted) pipeline
+//! ([`Bootstrapper::bootstrap_real`]).
 
+use phantom_lattice::rlwe::{GaloisKey, RelinearizationKey};
 use phantom_schemes::ckks::{Ciphertext, Precision};
 
 use super::{BootstrapKey, BootstrapParams, CoeffsToSlots, EvalMod, SlotsToCoeffs};
@@ -68,6 +70,53 @@ impl Bootstrapper {
             .iter()
             .map(|ciphertext| self.bootstrap(ciphertext))
             .collect()
+    }
+
+    /// Runs the real (encrypted) coefficients-to-slots / eval-mod /
+    /// slots-to-coefficients pipeline on `input` - the same three stages
+    /// [`Self::bootstrap`] composes transparently, but via
+    /// [`CoeffsToSlots::apply_real`], [`EvalMod::reduce_mod_q_real`] and
+    /// [`SlotsToCoeffs::apply_real`], each requiring its own real key
+    /// material rather than operating on cleartext slots directly.
+    ///
+    /// Unlike [`Self::bootstrap`], this does **not** refresh `output`'s
+    /// level/scale to [`BootstrapParams::target_level`] -
+    /// [`Ciphertext::new`]'s transparent metadata relabeling has no real
+    /// counterpart (a real ciphertext's level/scale describe its actual RNS
+    /// representation, not a claim that can be overwritten without doing
+    /// the work); `output` simply carries whatever level and scale fall out
+    /// of the three real stages actually run.
+    ///
+    /// This is also *not* the full bootstrapping circuit: real
+    /// bootstrapping starts by raising a nearly-exhausted ciphertext's
+    /// modulus back up to a full top-level chain before this pipeline can
+    /// run on it (the same modulus-raise gap [`Self::bootstrap`]'s own doc
+    /// comment already documents as separate, not-yet-built - `input` here
+    /// must already be at whatever raised level/modulus the three stages
+    /// below expect, exactly as [`EvalMod::reduce_mod_q_real`]'s own tests
+    /// construct it).
+    ///
+    /// Each stage's own key material is generated at a different level (the
+    /// two `apply_real` calls each consume one level via their own internal
+    /// rescale, and `reduce_mod_q_real` consumes more on top of that) - see
+    /// [`CoeffsToSlots::apply_real`] and [`EvalMod::reduce_mod_q_real`]'s
+    /// own doc comments for why a key generated at one level can't be
+    /// reused at another.
+    pub fn bootstrap_real(
+        &self,
+        input: &Ciphertext,
+        c2s_galois_keys: &[GaloisKey],
+        eval_mod_relin_keys: &[RelinearizationKey],
+        s2c_galois_keys: &[GaloisKey],
+    ) -> Result<Ciphertext> {
+        if self.params.ckks_params().conjugate_invariant() {
+            return Ok(input.clone());
+        }
+        let slots = self.coeffs_to_slots.apply_real(input, c2s_galois_keys)?;
+        let slots = self
+            .eval_mod
+            .reduce_mod_q_real(&slots, eval_mod_relin_keys)?;
+        self.slots_to_coeffs.apply_real(&slots, s2c_galois_keys)
     }
 
     fn refresh_metadata(&self, ciphertext: &Ciphertext) -> Ciphertext {
