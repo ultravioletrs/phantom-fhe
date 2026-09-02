@@ -1,4 +1,5 @@
 use phantom_lattice::rgsw::GadgetDecompositionParams;
+use phantom_lattice::rlwe;
 use phantom_ring::{Degree, Modulus, Ring};
 use phantom_schemes::bgv::{BgvContext, BgvParams, Plaintext};
 use rand_chacha::rand_core::SeedableRng;
@@ -424,4 +425,128 @@ fn rotation_slot_sum_and_modulus_switch_preserve_plaintext() {
         .decrypt(&evaluator.modulus_switch_next(&ciphertext).unwrap())
         .unwrap();
     assert_eq!(&encoder.decode_u64(&switched).unwrap()[..4], &[1, 2, 3, 4]);
+}
+
+// t=17 already happens to be NTT-friendly at REAL_DEGREE=8 (17-1=16, and
+// 2*REAL_DEGREE=16 divides that exactly) - the existing real_params()
+// fixture (Workstream 6 item 2's own prerequisite) needs no new parameters.
+
+#[test]
+fn encode_batched_decode_batched_round_trips_exactly() {
+    let ctx = BgvContext::new(real_params());
+    let encoder = ctx.encoder();
+
+    for trial in 0..30u64 {
+        let values: Vec<u64> = (0..REAL_DEGREE as u64)
+            .map(|i| (3 * i + trial) % REAL_T)
+            .collect();
+        let plaintext = encoder.encode_batched(&values).unwrap();
+        let decoded = encoder.decode_batched(&plaintext).unwrap();
+        assert_eq!(decoded, values, "trial {trial}");
+    }
+}
+
+#[test]
+fn encode_batched_supports_genuine_elementwise_simd_multiplication() {
+    // The actual payoff of real batching, unlike encode_u64: real BGV
+    // ciphertext multiplication is negacyclic ring convolution across every
+    // coefficient jointly, but under CRT-based batching that convolution in
+    // coefficient space corresponds to an *elementwise* product in slot
+    // space - the standard SIMD guarantee, checked here against a real
+    // (encrypted) multiplication, not just the plaintext encoding math.
+    let ctx = BgvContext::new(real_params());
+    let mut rng = seeded_rng();
+    let keys = ctx
+        .keygen()
+        .unwrap()
+        .generate_keypair_real(&mut rng)
+        .unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.decryptor(keys.secret).unwrap();
+    let evaluator = ctx.evaluator().unwrap();
+
+    let a_values: Vec<u64> = (0..REAL_DEGREE as u64).map(|i| (i + 1) % REAL_T).collect();
+    let b_values: Vec<u64> = (0..REAL_DEGREE as u64)
+        .map(|i| (2 * i + 3) % REAL_T)
+        .collect();
+    let a_pt = encoder.encode_batched(&a_values).unwrap();
+    let b_pt = encoder.encode_batched(&b_values).unwrap();
+    let a_ct = encryptor.encrypt(&a_pt, &mut rng).unwrap();
+    let b_ct = encryptor.encrypt(&b_pt, &mut rng).unwrap();
+
+    // No relinearization key - Decryptor::decrypt generalizes to any
+    // ciphertext degree, matching real_raw_multiplication_without_
+    // relinearization_is_exact's own reasoning above.
+    let product = evaluator.mul(&a_ct, &b_ct, None).unwrap();
+    let decrypted = decryptor.decrypt(&product).unwrap();
+    let decoded = encoder.decode_batched(&decrypted).unwrap();
+
+    let expected: Vec<u64> = a_values
+        .iter()
+        .zip(&b_values)
+        .map(|(a, b)| (a * b) % REAL_T)
+        .collect();
+    assert_eq!(decoded, expected);
+}
+
+#[test]
+fn encode_batched_slot_layout_supports_row_rotation_and_row_swap() {
+    // Direct proof of the module doc comment's own claim: X -> X^(5^shift)
+    // rotates both rows together by shift, and X -> X^(-1) swaps them -
+    // driven straight at the ring automorphism level (no bgv::Evaluator
+    // rotation primitive for real ciphertexts exists yet - that's the next
+    // piece item 2 still needs, not attempted here), matching this
+    // property's own Python verification before implementation.
+    let params = real_params();
+    let ring = params.ring();
+    let half = REAL_DEGREE / 2;
+    let two_n = 2 * REAL_DEGREE;
+    let ctx = BgvContext::new(params.clone());
+    let encoder = ctx.encoder();
+
+    let values: Vec<u64> = (0..REAL_DEGREE as u64).map(|i| i + 1).collect();
+    let plaintext = encoder.encode_batched(&values).unwrap();
+
+    let decode_after_automorphism = |k: usize| -> Vec<u64> {
+        let rotated_poly = ring
+            .apply_automorphism(plaintext.inner().value(), k)
+            .unwrap();
+        let rotated = Plaintext::new(rlwe::Plaintext::new(rotated_poly));
+        encoder.decode_batched(&rotated).unwrap()
+    };
+
+    for shift in 1..half {
+        let mut k = 1usize;
+        for _ in 0..shift {
+            k = (k * 5) % two_n;
+        }
+        let mut expected_row0 = values[..half].to_vec();
+        expected_row0.rotate_left(shift);
+        let mut expected_row1 = values[half..].to_vec();
+        expected_row1.rotate_left(shift);
+        let expected: Vec<u64> = expected_row0.into_iter().chain(expected_row1).collect();
+        assert_eq!(decode_after_automorphism(k), expected, "shift={shift}");
+    }
+
+    let expected_swap: Vec<u64> = values[half..]
+        .iter()
+        .chain(values[..half].iter())
+        .copied()
+        .collect();
+    assert_eq!(decode_after_automorphism(two_n - 1), expected_swap);
+}
+
+#[test]
+fn encode_batched_rejects_a_plaintext_modulus_that_is_not_ntt_friendly() {
+    // t=19: prime, but 19-1=18 isn't divisible by 2*REAL_DEGREE=16.
+    let ring = Ring::new(
+        Degree::new(REAL_DEGREE).unwrap(),
+        vec![Modulus::new(REAL_MODULUS).unwrap()],
+    )
+    .unwrap();
+    let params = BgvParams::new(ring, 19).unwrap();
+    let encoder = BgvContext::new(params).encoder();
+
+    assert!(encoder.encode_batched(&[1, 2, 3]).is_err());
 }
