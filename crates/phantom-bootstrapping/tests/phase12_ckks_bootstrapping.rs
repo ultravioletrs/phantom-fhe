@@ -1,6 +1,6 @@
 use phantom_bootstrapping::ckks::{
-    default_bootstrap_params, BootstrapKeyGenerator, BootstrapParams, Bootstrapper, CoeffsToSlots,
-    EvalMod, Packer, SlotsToCoeffs, Unpacker,
+    default_bootstrap_params, BootstrapKeyGenerator, BootstrapParams, BootstrapParamsLiteral,
+    Bootstrapper, CoeffsToSlots, EvalMod, Packer, SlotsToCoeffs, Unpacker,
 };
 use phantom_bootstrapping::{bfv, bgv};
 use phantom_lattice::rlwe::{KeyGenerator as RlweKeyGenerator, SecretDistribution};
@@ -306,4 +306,31 @@ fn bootstrap_key_generator_generate_real_produces_real_galois_keys() {
     let marker = BootstrapKeyGenerator::new(params).generate(&[1, 3]);
     assert!(marker.galois_keys().is_empty());
     assert_eq!(marker.rotation_elements(), &[1, 3]);
+}
+
+#[test]
+fn bootstrap_params_literal_builds_matching_params_and_still_validates() {
+    let ckks = ckks_params();
+    let literal = BootstrapParamsLiteral {
+        target_level: ckks.initial_level(),
+        target_precision_bits: 18.0,
+        sparse_slot_count: ckks.slot_count(),
+        batch_size: 2,
+        raise_modulus: 100.0,
+    };
+
+    let built = literal.build(ckks.clone()).unwrap();
+    assert_eq!(built.target_level(), ckks.initial_level());
+    assert_eq!(built.target_precision_bits(), 18.0);
+    assert_eq!(built.sparse_slot_count(), ckks.slot_count());
+    assert_eq!(built.batch_size(), 2);
+    assert_eq!(built.raise_modulus(), 100.0);
+
+    // Same validation BootstrapParams::new always runs - a literal that
+    // doesn't fit ckks_params is still rejected, not silently accepted.
+    let too_high = BootstrapParamsLiteral {
+        target_level: ckks.initial_level() + 1,
+        ..literal
+    };
+    assert!(too_high.build(ckks).is_err());
 }
