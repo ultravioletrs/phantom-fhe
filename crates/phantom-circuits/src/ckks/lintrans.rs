@@ -1,6 +1,8 @@
-//! CKKS linear transformations over transparent approximate slots.
+//! CKKS linear transformations over transparent approximate slots, plus a
+//! real (encrypted) evaluator ([`LinearTransformEvaluator::apply_real`]).
 
-use phantom_schemes::ckks::{Ciphertext, CkksParams, Complex64};
+use phantom_lattice::rlwe::GaloisKey;
+use phantom_schemes::ckks::{Ciphertext, CkksParams, Complex64, Encoder, Evaluator, Plaintext};
 
 use crate::ckks::{c_add, c_mul, check_ciphertext, ckks_ciphertext_like, ensure_finite};
 use crate::common::{BabyStepGiantStepPlan, DiagonalMatrix, LinearTransform};
@@ -83,5 +85,85 @@ impl LinearTransformEvaluator {
             return Err(CircuitsError::DimensionMismatch);
         }
         Ok(())
+    }
+
+    /// Applies a diagonalized transform to a **real** (encrypted) CKKS
+    /// ciphertext, via the standard rotate-multiply-accumulate ("diagonal
+    /// method"): `(M @ z)[j] = sum_k d_k[j] * rot(z, k)[j]`, where `d_k` is
+    /// the transform's own `k`-th cyclic diagonal
+    /// ([`Self::diagonalize`]/[`DiagonalMatrix::from_linear_transform`]) -
+    /// so `Enc(M @ z) = sum_k pt(d_k) * rotate_real(Enc(z), k)`, using
+    /// [`phantom_schemes::ckks::Evaluator::rotate_real`] for the rotation,
+    /// `mul_plain_real` for the per-diagonal plaintext multiply, and
+    /// `add_real` to accumulate. Direct `O(n)`-rotation evaluation (one
+    /// rotation per nonzero diagonal), not the baby-step-giant-step
+    /// `O(sqrt n)` schedule [`DiagonalMatrix::bsgs_plan`] can already plan -
+    /// matching this crate's established "correctness first" convention
+    /// elsewhere (e.g. the encoder's own `O(N^2)` canonical embedding),
+    /// tracked as a future optimization, not attempted here.
+    ///
+    /// `galois_keys` must contain one real
+    /// [`phantom_lattice::rlwe::GaloisKey`] (from
+    /// [`phantom_schemes::ckks::CkksKeyGenerator::generate_hybrid_galois_key`]
+    /// at [`phantom_schemes::ckks::CkksParams::rotation_element`]`(offset)`)
+    /// per nonzero diagonal offset `diagonals` actually needs (looked up by
+    /// [`GaloisKey::element`]) - the zero offset (the transform's own main
+    /// diagonal) needs no key, since it needs no rotation. Deliberately
+    /// doesn't call this module's own `check_ciphertext` helper (a real
+    /// ciphertext's own `slots()` is always empty - see [`Ciphertext`]'s
+    /// own doc comment - so that
+    /// check would only ever vacuously pass, the same reason
+    /// `PolynomialEvaluator::evaluate_encrypted` skips it too).
+    pub fn apply_real(
+        &self,
+        ciphertext: &Ciphertext,
+        diagonals: &DiagonalMatrix<Complex64>,
+        galois_keys: &[GaloisKey],
+    ) -> Result<Ciphertext> {
+        if diagonals.slot_count() != self.slot_count() {
+            return Err(CircuitsError::DimensionMismatch);
+        }
+        let evaluator = Evaluator::new(self.params.clone());
+        let encode_diagonal_at = |level: usize, values: &[Complex64]| -> Result<Plaintext> {
+            let level_params = self.params.at_level(level).map_err(|_| {
+                CircuitsError::SchemeOperation("failed to build a level-specific CKKS encoder")
+            })?;
+            Encoder::new(level_params)
+                .encode_complex_real(values)
+                .map_err(|_| {
+                    CircuitsError::SchemeOperation("failed to encode a transform diagonal")
+                })
+        };
+
+        let mut acc: Option<Ciphertext> = None;
+        for diagonal in diagonals.diagonals() {
+            let rotated = if diagonal.offset() == 0 {
+                ciphertext.clone()
+            } else {
+                let element = self.params.rotation_element(diagonal.offset());
+                let key = galois_keys
+                    .iter()
+                    .find(|key| key.element() == element)
+                    .ok_or(CircuitsError::InvalidParameters(
+                        "missing a Galois key for a diagonal offset this transform needs",
+                    ))?;
+                evaluator
+                    .rotate_real(ciphertext, key)
+                    .map_err(|_| CircuitsError::SchemeOperation("rotate_real failed"))?
+            };
+            let pt = encode_diagonal_at(rotated.level(), diagonal.values())?;
+            let term = evaluator
+                .mul_plain_real(&rotated, &pt)
+                .map_err(|_| CircuitsError::SchemeOperation("mul_plain_real failed"))?;
+            acc = Some(match acc {
+                None => term,
+                Some(prev) => evaluator
+                    .add_real(&prev, &term)
+                    .map_err(|_| CircuitsError::SchemeOperation("add_real failed"))?,
+            });
+        }
+        acc.ok_or(CircuitsError::InvalidParameters(
+            "transform has no nonzero diagonals",
+        ))
     }
 }
