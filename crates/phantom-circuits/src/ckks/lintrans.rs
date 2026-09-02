@@ -114,6 +114,19 @@ impl LinearTransformEvaluator {
     /// own doc comment - so that
     /// check would only ever vacuously pass, the same reason
     /// `PolynomialEvaluator::evaluate_encrypted` skips it too).
+    ///
+    /// Rescales the accumulated result once before returning (dropping one
+    /// level, dividing scale back down by `default_scale`) - every
+    /// diagonal's `mul_plain_real` multiplies scale by `default_scale`,
+    /// and `add_real` never changes it, so without this a single call
+    /// would leave scale multiplied by a full `default_scale` factor, the
+    /// same as any other unRescaled real multiplication. Baking the
+    /// rescale in here (rather than leaving it to the caller, the way the
+    /// lower-level `mul_real`/`mul_plain_real` primitives this is built on
+    /// do) matches this method's own "one circuit = one call" shape - the
+    /// same convention `PolynomialEvaluator::evaluate_encrypted` already
+    /// uses. `ciphertext`'s own level must therefore be at least `1` (not
+    /// already at level `0`).
     pub fn apply_real(
         &self,
         ciphertext: &Ciphertext,
@@ -162,8 +175,28 @@ impl LinearTransformEvaluator {
                     .map_err(|_| CircuitsError::SchemeOperation("add_real failed"))?,
             });
         }
-        acc.ok_or(CircuitsError::InvalidParameters(
+        let acc = acc.ok_or(CircuitsError::InvalidParameters(
             "transform has no nonzero diagonals",
-        ))
+        ))?;
+        // Every diagonal's mul_plain_real multiplies scale by the
+        // diagonal's own encoded scale (default_scale), and add_real never
+        // changes it - so without this, one apply_real call bumps scale by
+        // a full default_scale factor, same as any other real
+        // multiplication would. Rescaling here (rather than leaving it to
+        // the caller, the way the lower-level mul_real/mul_plain_real
+        // primitives this is built on do) matches this method's own
+        // "one circuit = one call" shape - the same convention
+        // PolynomialEvaluator::evaluate_encrypted already uses, handling
+        // its own rescaling internally rather than exposing raw
+        // un-rescaled intermediate state. Without it, composing two
+        // apply_real calls (e.g. a forward transform followed by an
+        // inverse one) compounds scale multiplicatively with nothing
+        // dividing it back down, eventually exceeding the ciphertext
+        // modulus and wrapping around silently - caught exactly this way
+        // while wiring real CKKS bootstrapping's CoeffsToSlots/SlotsToCoeffs
+        // on top of this method.
+        evaluator
+            .rescale_next_real(&acc)
+            .map_err(|_| CircuitsError::SchemeOperation("rescale_next_real failed"))
     }
 }

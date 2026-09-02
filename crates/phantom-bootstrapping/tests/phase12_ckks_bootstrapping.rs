@@ -5,7 +5,9 @@ use phantom_bootstrapping::ckks::{
 use phantom_bootstrapping::{bfv, bgv};
 use phantom_lattice::rlwe::{KeyGenerator as RlweKeyGenerator, SecretDistribution};
 use phantom_ring::Modulus;
-use phantom_schemes::ckks::{Ciphertext, CkksParams, Complex64, Precision, Scale};
+use phantom_schemes::ckks::{
+    Ciphertext, CkksContext, CkksKeyGenerator, CkksParams, Complex64, Precision, Scale,
+};
 use rand_chacha::rand_core::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 
@@ -262,11 +264,15 @@ fn exact_scheme_bootstrap_modules_are_reserved_placeholders() {
 // [257, 769, 3329] moduli) - the auxiliary "P" moduli below need this much
 // room too, so this reuses the same sizing `phantom-schemes`'s own
 // `ckks_real_arithmetic.rs` fixture already verified (Miller-Rabin checked
-// in Python before use there).
+// in Python before use there). Two rescale-sized moduli (not just one),
+// since a real coeffs_to_slots/slots_to_coeffs round trip needs to survive
+// two chained `LinearTransformEvaluator::apply_real` calls, each consuming
+// one level via its own internal rescale (see that method's own doc
+// comment for why it rescales).
 fn real_arith_ckks_params() -> CkksParams {
     CkksParams::builder()
         .degree(8)
-        .moduli(vec![1_000_000_000_000_037, 1_073_741_827])
+        .moduli(vec![1_000_000_000_000_037, 1_073_741_827, 1_073_741_831])
         .default_scale_bits(30)
         .build()
         .unwrap()
@@ -333,4 +339,82 @@ fn bootstrap_params_literal_builds_matching_params_and_still_validates() {
         ..literal
     };
     assert!(too_high.build(ckks).is_err());
+}
+
+/// One real `GaloisKey` per rotation offset `1..n` a dense `n x n` DFT
+/// matrix's diagonal decomposition needs (every offset, since the DFT is
+/// dense, not sparse).
+/// One real Galois key per rotation offset `1..n`, valid at `level`
+/// specifically - `LinearTransformEvaluator::apply_real` operates entirely
+/// at its input ciphertext's own level, and (like relinearization keys) a
+/// Galois key generated for one level isn't usable at another, so a
+/// multi-call chain that rescales between calls (coefficients-to-slots
+/// followed by slots-to-coefficients, each an `apply_real` call - see
+/// `CoeffsToSlots::apply_real`'s own doc comment for why each rescales)
+/// needs its own key set per level it calls `apply_real` at.
+fn dft_galois_keys(
+    ckks: &CkksParams,
+    sk: &phantom_lattice::rlwe::SecretKey,
+    n: usize,
+    level: usize,
+    rng: &mut ChaCha20Rng,
+) -> Vec<phantom_lattice::rlwe::GaloisKey> {
+    let keygen = CkksKeyGenerator::new(ckks.clone()).unwrap();
+    (1..n)
+        .map(|shift| {
+            let element = ckks.rotation_element(shift);
+            keygen
+                .generate_hybrid_galois_key_at_level(element, sk, level, &p_moduli(), rng)
+                .unwrap()
+        })
+        .collect()
+}
+
+#[test]
+fn coeffs_to_slots_and_slots_to_coeffs_apply_real_round_trip() {
+    let ckks = real_arith_ckks_params();
+    let params = BootstrapParams::builder(ckks.clone()).build().unwrap();
+    let mut rng = ChaCha20Rng::from_seed([11u8; 32]);
+    let ctx = CkksContext::new(ckks.clone());
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.real_decryptor(keys.secret.clone()).unwrap();
+
+    let n = ckks.slot_count();
+    let values: Vec<Complex64> = (0..n)
+        .map(|i| Complex64::new(i as f64 - 1.5, 0.25 * i as f64))
+        .collect();
+    let ct = encryptor
+        .encrypt_real(&encoder.encode_complex_real(&values).unwrap(), &mut rng)
+        .unwrap();
+
+    // apply_real rescales, dropping one level - c2s operates at ct's own
+    // level, s2c at whatever level c2s's own rescale leaves it at, so each
+    // needs its own key set (see dft_galois_keys's own doc comment).
+    let forward_keys = dft_galois_keys(&ckks, &keys.secret, n, ct.level(), &mut rng);
+
+    let c2s = CoeffsToSlots::new(params.clone());
+    let s2c = SlotsToCoeffs::new(params);
+
+    let forward = c2s.apply_real(&ct, &forward_keys).unwrap();
+    let inverse_keys = dft_galois_keys(&ckks, &keys.secret, n, forward.level(), &mut rng);
+    let round_tripped = s2c.apply_real(&forward, &inverse_keys).unwrap();
+
+    let decoded = encoder
+        .decode_complex_real(&decryptor.decrypt_real(&round_tripped).unwrap())
+        .unwrap();
+    // Real noise, not the transparent scaffold's exact arithmetic - two
+    // chained apply_real calls each carry real ciphertext noise (n
+    // rotations' own key-switch noise, n plaintext multiplies, a rescale),
+    // so this needs the same order-of-magnitude tolerance the rest of
+    // `phantom-schemes`'s own real CKKS multi-step tests use, not
+    // `assert_close`'s `1e-9` (calibrated for the transparent scaffold's
+    // exact float arithmetic).
+    for (actual, expected) in decoded.iter().zip(&values) {
+        assert!(
+            (actual.re - expected.re).abs() < 1e-3 && (actual.im - expected.im).abs() < 1e-3,
+            "{actual:?} != {expected:?}"
+        );
+    }
 }

@@ -153,4 +153,41 @@ impl CkksKeyGenerator {
             .inner
             .generate_hybrid_galois_key(element, sk, p_moduli, rng)?)
     }
+
+    /// Generates a real Galois key valid at `level` specifically, rather
+    /// than at `self`'s own (top) level - the exact same problem
+    /// [`Self::generate_hybrid_relinearization_key_at_level`]'s own doc
+    /// comment describes and fixes for relinearization keys applies
+    /// identically here (`phantom_lattice::rlwe::key_switch` underlies
+    /// both `apply_galois_automorphism` and `relinearize`, and rejects a
+    /// key generated at the wrong level the same way either time) - found
+    /// while wiring up a real, multi-step `phantom_circuits::ckks::LinearTransformEvaluator::apply_real`
+    /// chain (coefficients-to-slots followed by slots-to-coefficients),
+    /// which rescales (and so drops a level) between the two calls, the
+    /// same way a Horner-method circuit's own relinearization needs a
+    /// fresh key per level. Builds a fresh key generator and Galois key
+    /// entirely within `self.params.at_level(level)`'s own smaller ring,
+    /// truncating `sk` to match first, the same way
+    /// [`Self::generate_hybrid_relinearization_key_at_level`] does.
+    pub fn generate_hybrid_galois_key_at_level<R>(
+        &self,
+        element: usize,
+        sk: &SecretKey,
+        level: usize,
+        p_moduli: &[phantom_ring::Modulus],
+        rng: &mut R,
+    ) -> Result<GaloisKey>
+    where
+        R: RngCore + CryptoRng,
+    {
+        let level_params = self.params.at_level(level)?;
+        let target_moduli = level_params.ring().moduli().len();
+        let mut sk_value = sk.value().clone();
+        while sk_value.moduli_count() > target_moduli {
+            sk_value = phantom_ring::rns::rescale::drop_last_modulus(&sk_value)?;
+        }
+        let level_sk = SecretKey::new(sk_value);
+        let level_keygen = phantom_lattice::rlwe::KeyGenerator::new(level_params.rlwe_params()?);
+        Ok(level_keygen.generate_hybrid_galois_key(element, &level_sk, p_moduli, rng)?)
+    }
 }
