@@ -182,6 +182,17 @@ fn real_homomorphic_add_sub_neg_and_add_plain_are_approximate() {
         .decode_complex_real(&decryptor.decrypt_real(&added_plain).unwrap())
         .unwrap();
     assert_close(&decoded_added_plain, &expected_sum, 1e-6);
+
+    let mul_plain = evaluator.mul_plain_real(&a_ct, &b_pt).unwrap();
+    let expected_mul: Vec<Complex64> = a_values
+        .iter()
+        .zip(&b_values)
+        .map(|(a, b)| *a * *b)
+        .collect();
+    let decoded_mul_plain = encoder
+        .decode_complex_real(&decryptor.decrypt_real(&mul_plain).unwrap())
+        .unwrap();
+    assert_close(&decoded_mul_plain, &expected_mul, 1e-4);
 }
 
 #[test]

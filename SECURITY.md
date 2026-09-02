@@ -188,12 +188,19 @@ The following components are not yet at production cryptographic strength:
   protect the way BGV's own rescale does, so a plain floor division
   suffices. Real CKKS multiplication needs no BFV-style extended-basis
   tensor-and-rescale procedure: its mod-`Q` tensor product is already
-  exactly what the *next*, separate rescale step needs. This real path
-  isn't wired into `phantom-circuits`/`phantom-bootstrapping`/`phantom-multiparty`
-  yet, the same not-yet-migrated situation as BGV/BFV's own real paths
-  above; `phantom-examples` additionally has a dedicated real-path
-  workflow (`ckks_real_basic`), the same as BGV/BFV's own two. Conjugate-
-  invariant real packing and an NTT/FFT fast path for encode/decode remain
+  exactly what the *next*, separate rescale step needs. `phantom-circuits`
+  now has one real evaluator built on this path -
+  `ckks::PolynomialEvaluator::evaluate_encrypted`, a Horner-method
+  polynomial evaluator against an actual encrypted ciphertext (also needed
+  a new `mul_plain_real` and a level-aware
+  `CkksKeyGenerator::generate_hybrid_relinearization_key_at_level`,
+  neither of which existed before) - `phantom-bootstrapping`/
+  `phantom-multiparty` and every other `phantom-circuits` CKKS evaluator
+  still only construct the transparent (non-encrypted) path, the same
+  not-yet-migrated situation as BGV/BFV's own real paths above;
+  `phantom-examples` additionally has a dedicated real-path workflow
+  (`ckks_real_basic`), the same as BGV/BFV's own two. Conjugate-invariant
+  real packing and an NTT/FFT fast path for encode/decode remain
   unimplemented.
 - `phantom-bootstrapping::ckks` is a message-preserving pipeline, not yet a
   production refresh pipeline. BGV/BFV bootstrapping modules are reserved

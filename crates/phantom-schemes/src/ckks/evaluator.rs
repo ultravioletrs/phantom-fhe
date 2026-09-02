@@ -1,6 +1,6 @@
 //! CKKS evaluator.
 //!
-//! [`Evaluator::add_real`]/[`sub_real`](Evaluator::sub_real)/[`neg_real`](Evaluator::neg_real)/[`add_plain_real`](Evaluator::add_plain_real)/[`mul_real`](Evaluator::mul_real)/[`relinearize_real`](Evaluator::relinearize_real)/[`rescale_next_real`](Evaluator::rescale_next_real)/[`drop_level_real`](Evaluator::drop_level_real)
+//! [`Evaluator::add_real`]/[`sub_real`](Evaluator::sub_real)/[`neg_real`](Evaluator::neg_real)/[`add_plain_real`](Evaluator::add_plain_real)/[`mul_real`](Evaluator::mul_real)/[`mul_plain_real`](Evaluator::mul_plain_real)/[`relinearize_real`](Evaluator::relinearize_real)/[`rescale_next_real`](Evaluator::rescale_next_real)/[`drop_level_real`](Evaluator::drop_level_real)
 //! are CKKS's real-path arithmetic, alongside the long-standing transparent
 //! [`Evaluator::add`]/[`sub`](Evaluator::sub)/etc. (kept unchanged so every
 //! existing caller keeps compiling and behaving identically - see this
@@ -410,6 +410,51 @@ impl Evaluator {
         Ok(Ciphertext::new_real(
             sum,
             ciphertext.scale(),
+            ciphertext.level(),
+            ciphertext
+                .precision()
+                .min(plaintext.precision())
+                .degrade(degrade),
+            ciphertext.degree(),
+        ))
+    }
+
+    /// Multiplies a **real** ciphertext by a **real** plaintext - no
+    /// relinearization needed (the plaintext contributes no `s`-power), and
+    /// no scale-compatibility requirement either, for the same reason
+    /// [`Self::mul_real`] doesn't need one (see the module doc comment):
+    /// the result's scale is simply the product of the two either way.
+    /// Implemented the same way BGV/BFV's own real `mul_plain` are - wrap
+    /// the plaintext's raw poly as a degree-`0` (single-component)
+    /// ciphertext and reuse [`phantom_lattice::rlwe::Evaluator::mul`]'s
+    /// generic degree handling, rather than a bespoke "scale every
+    /// component" loop.
+    pub fn mul_plain_real(
+        &self,
+        ciphertext: &Ciphertext,
+        plaintext: &Plaintext,
+    ) -> Result<Ciphertext> {
+        let poly = self.real_poly(ciphertext)?;
+        let m = plaintext.poly().ok_or(SchemesError::InvalidParameters(
+            "plaintext has no real ring representation - encode with encode_complex_real",
+        ))?;
+        if ciphertext.level() != plaintext.level() {
+            return Err(SchemesError::DimensionMismatch);
+        }
+        let pt_as_ct = RlweCiphertext::new(vec![m.clone()]);
+        let product = self.inner_at(ciphertext.level())?.mul(poly, &pt_as_ct)?;
+        let degrade = mul_degrade_bits(
+            self.degree(),
+            ciphertext.scale().value(),
+            ciphertext.precision().bits(),
+            ASSUMED_REAL_MESSAGE_BOUND,
+            plaintext.scale().value(),
+            plaintext.precision().bits(),
+            ASSUMED_REAL_MESSAGE_BOUND,
+        );
+        Ok(Ciphertext::new_real(
+            product,
+            Scale::new(ciphertext.scale().value() * plaintext.scale().value())?,
             ciphertext.level(),
             ciphertext
                 .precision()
