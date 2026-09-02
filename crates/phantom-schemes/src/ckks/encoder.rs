@@ -10,34 +10,60 @@
 //! # Canonical embedding
 //!
 //! For `R = Z[X]/(X^N+1)`, the canonical embedding evaluates a polynomial
-//! at the `N` odd powers of `zeta = e^{i*pi/N}` (a primitive `2N`-th root
-//! of unity): `y_j = m(zeta^(2j+1))` for `j = 0..N`. For a polynomial with
-//! *real* coefficients, `y_j` and `y_{N-1-j}` are complex conjugates (since
-//! `zeta^(2(N-1-j)+1) = zeta^(2N-1-2j) = conj(zeta^(2j+1))`), so only `N/2`
-//! of the `N` embedding coordinates are independent - CKKS packs `N/2`
-//! complex slots by filling the other half with their conjugates before
-//! inverting the embedding.
+//! at `N` of the `2N`-th roots of unity `zeta^e` (`zeta = e^{i*pi/N}`),
+//! one per odd residue `e` in a chosen set of `N` distinct odd residues
+//! mod `2N`. Slot `j` (`j = 0..N/2`) is assigned exponent `g^j mod 2N` for
+//! `g = 5` - not the simpler sequential `2j+1` an earlier version of this
+//! encoder used. The reason: for `N` a power of two, `N >= 8`, `(Z/2N)*`
+//! factors as `<g> x {+-1}` (`g = 5` generates the order-`N/2` factor,
+//! disjoint from `{+-1}`; verified numerically, Python, for `N` in
+//! `{8,16,32,64,128}` before relying on it - both the group-structure
+//! claim itself and, concretely, that no odd `k` other than `1` and `g`
+//! itself keeps every slot's exponent inside `<g>` under the *old*
+//! sequential indexing, confirming that scheme couldn't support this).
+//! Under `g`-power indexing, multiplying every exponent by `g^s` maps
+//! slot `j`'s exponent to slot `(j+s) mod (N/2)`'s, so the ring
+//! automorphism `X -> X^(g^s mod 2N)`
+//! (`phantom_ring::Ring::apply_automorphism`) rotates slot `j` to slot
+//! `(j+s) mod (N/2)` for *every* slot simultaneously, without pulling in
+//! any conjugate - exactly the property real Galois-key-based ciphertext
+//! rotation needs (`Evaluator::rotate_real`) and the old sequential
+//! indexing provably lacked. `X -> X^(2N-1 mod 2N)` (`k = -1`) still
+//! conjugates every slot either way, unaffected by this choice.
 //!
-//! **Encode**: given `N/2` slots `z`, form the length-`N`
-//! conjugate-symmetric vector `y = [z_0, ..., z_{N/2-1}, conj(z_{N/2-1}),
-//! ..., conj(z_0)]`, scale it by `Delta` (the plaintext's scale), and
-//! recover the (real, up to floating-point error) coefficients via the
-//! closed-form inverse `m_k = (1/N) * sum_j conj(zeta^((2j+1)k)) * y_j` -
-//! the canonical embedding matrix `U` (`U[j][k] = zeta^((2j+1)k)`)
-//! satisfies `U * conj(U)^T = N * I`, so `U^{-1} = (1/N) * conj(U)^T`
-//! exactly (verified numerically, Python, before implementing: both the
-//! `U^{-1}` identity itself and the full encode-with-rounding/decode round
-//! trip, recovering slots to within the expected `~0.5/Delta` rounding
-//! error). Each `m_k` is rounded to the nearest integer and embedded into
-//! the ring's own RNS residues (negative values via `q - |value|`, the
-//! same convention `bgv`/`bfv`'s own encoders use).
+//! Exponent `-g^j mod 2N` (the conjugate of slot `j`'s own `g^j`) is not
+//! itself in `<g>` (since `-1 notin <g>`), so `<g>` and `-<g>` are
+//! disjoint and together cover all `N` odd residues mod `2N` (same
+//! numerical check above) - giving the `N` embedding coordinates encoding
+//! needs, `N/2` "primary" (one per slot) and `N/2` their conjugates.
+//!
+//! **Encode**: given `N/2` slots `z`, form the length-`N` vector `y =
+//! [z_0, ..., z_{N/2-1}, conj(z_0), ..., conj(z_{N/2-1})]` (position
+//! `N/2+j` pairs with exponent `-g^j mod 2N`, the conjugate of position
+//! `j`'s own `g^j` - a simpler, non-reversed pairing than sequential
+//! indexing's; nothing outside encode/decode observes `y`'s own order, so
+//! there's no compatibility reason to keep the old reversed one), scale
+//! it by `Delta` (the plaintext's scale), and recover the (real, up to
+//! floating-point error) coefficients via the closed-form inverse `m_k =
+//! (1/N) * sum_a conj(zeta^(E[a]*k)) * y_a`, where `E[a]` is position
+//! `a`'s own exponent (`g^a` for `a < N/2`, `-g^{a-N/2} mod 2N` above
+//! that). The canonical embedding matrix `U` (`U[a][k] = zeta^(E[a]*k)`)
+//! still satisfies `U * conj(U)^T = N * I` for this `E` - the
+//! orthogonality argument only needs every pair `E[a]-E[b]` (`a != b`)
+//! even and nonzero, true for *any* all-odd, pairwise-distinct exponent
+//! set, not specifically the old sequential one - so `U^{-1} = (1/N) *
+//! conj(U)^T` exactly, the same identity this encoder has always relied
+//! on (verified numerically again for this `E` specifically, alongside
+//! the encode/decode round trip and the rotation property itself, before
+//! implementing). Each `m_k` is rounded to the nearest integer and
+//! embedded into the ring's own RNS residues (negative values via `q -
+//! |value|`, the same convention `bgv`/`bfv`'s own encoders use).
 //!
 //! **Decode**: reconstruct each coefficient's true signed value from its
 //! RNS residues (`phantom_ring::rns::extension::reconstruct_centered_values`,
 //! CRT-based, so it works across however many moduli the polynomial's own
 //! ring level has), evaluate at the same embedding points (`y_j = sum_k
-//! zeta^((2j+1)k) * m_k`), and divide by `Delta` - the first `N/2` entries
-//! are the recovered slots.
+//! zeta^(g^j*k) * m_k` for `j = 0..N/2`), and divide by `Delta`.
 //!
 //! Conjugate-invariant CKKS (`N` real slots via a different ring
 //! structure) isn't supported by the real path yet - `encode_complex_real`
@@ -156,17 +182,23 @@ impl Encoder {
         let mut padded = values.to_vec();
         padded.resize(slot_count, Complex64::default());
         let mut y = padded.clone();
-        y.extend(padded.iter().rev().map(|v| v.conj()));
+        y.extend(padded.iter().map(|v| v.conj()));
 
         let powers = root_powers(n);
         let two_n = 2 * n;
         let delta = scale.value();
+        let primary = embedding_exponents(n);
 
         let mut coeffs = Vec::with_capacity(n);
         for k in 0..n {
             let mut acc = Complex64::default();
             for (j, &y_j) in y.iter().enumerate() {
-                let exp = ((2 * j + 1) * k) % two_n;
+                let e = if j < slot_count {
+                    primary[j]
+                } else {
+                    (two_n - primary[j - slot_count]) % two_n
+                };
+                let exp = (e * k) % two_n;
                 let conj_root = powers[(two_n - exp) % two_n];
                 acc = acc + conj_root * y_j;
             }
@@ -201,18 +233,35 @@ impl Encoder {
         let two_n = 2 * n;
         let delta = plaintext.scale().value();
         let slot_count = n / 2;
+        let primary = embedding_exponents(n);
 
         let mut slots = Vec::with_capacity(slot_count);
-        for j in 0..slot_count {
+        for &e_j in &primary {
             let mut acc = Complex64::default();
             for (k, &m_k) in values.iter().enumerate() {
-                let exp = ((2 * j + 1) * k) % two_n;
+                let exp = (e_j * k) % two_n;
                 acc = acc + powers[exp] * Complex64::real(m_k as f64);
             }
             slots.push(acc * Complex64::real(1.0 / delta));
         }
         Ok(slots)
     }
+}
+
+/// Slot `j`'s own canonical-embedding exponent, `g^j mod 2N` for `g = 5` -
+/// see the module doc comment for why `g`-power indexing, not sequential
+/// `2j+1`, is what makes Galois-automorphism-based rotation
+/// (`Evaluator::rotate_real`) work.
+fn embedding_exponents(n: usize) -> Vec<usize> {
+    let slot_count = n / 2;
+    let two_n = 2 * n;
+    let mut exponents = Vec::with_capacity(slot_count);
+    let mut e = 1usize;
+    for _ in 0..slot_count {
+        exponents.push(e);
+        e = (e * 5) % two_n;
+    }
+    exponents
 }
 
 /// Precomputed powers of the `2N`-th primitive root of unity `zeta =

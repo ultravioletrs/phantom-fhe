@@ -56,6 +56,40 @@ impl CkksParams {
         self.ring.moduli().len().saturating_sub(1)
     }
 
+    /// Returns the ring automorphism element `5^shift mod 2*degree` for
+    /// rotating a real CKKS ciphertext's slots left by `shift` positions
+    /// (`shift` taken mod [`Self::slot_count`], matching
+    /// [`super::Evaluator::rotate_slots`]'s own transparent-scaffold
+    /// `shift % len`) - see [`super::Encoder`]'s own module doc comment for
+    /// why `5`-power indexing, not sequential, is what makes this a clean
+    /// per-slot rotation rather than an arbitrary permutation mixing in
+    /// conjugates. Only meaningful for the non-conjugate-invariant real
+    /// path (real conjugate-invariant packing isn't supported yet - see
+    /// [`super::Encoder::encode_complex_real`]'s own rejection of it).
+    /// `element(0) == 1`, the identity automorphism.
+    pub fn rotation_element(&self, shift: usize) -> usize {
+        let slot_count = self.slot_count();
+        let two_n = 2 * self.ring.degree();
+        let steps = if slot_count == 0 {
+            0
+        } else {
+            shift % slot_count
+        };
+        let mut element = 1usize;
+        for _ in 0..steps {
+            element = (element * 5) % two_n;
+        }
+        element
+    }
+
+    /// Returns the ring automorphism element for conjugating a real CKKS
+    /// ciphertext's slots (`2*degree - 1`, i.e. `k = -1 mod 2*degree`) -
+    /// the complement to [`Self::rotation_element`], see
+    /// [`super::Encoder`]'s own module doc comment.
+    pub fn conjugation_element(&self) -> usize {
+        2 * self.ring.degree() - 1
+    }
+
     /// Returns params with the ring truncated to its first `level + 1`
     /// moduli - the same convention [`Self::initial_level`] uses. Needed to
     /// decrypt or operate on a real ciphertext after

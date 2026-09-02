@@ -1,6 +1,6 @@
 //! CKKS evaluator.
 //!
-//! [`Evaluator::add_real`]/[`sub_real`](Evaluator::sub_real)/[`neg_real`](Evaluator::neg_real)/[`add_plain_real`](Evaluator::add_plain_real)/[`mul_real`](Evaluator::mul_real)/[`mul_plain_real`](Evaluator::mul_plain_real)/[`relinearize_real`](Evaluator::relinearize_real)/[`rescale_next_real`](Evaluator::rescale_next_real)/[`drop_level_real`](Evaluator::drop_level_real)
+//! [`Evaluator::add_real`]/[`sub_real`](Evaluator::sub_real)/[`neg_real`](Evaluator::neg_real)/[`add_plain_real`](Evaluator::add_plain_real)/[`mul_real`](Evaluator::mul_real)/[`mul_plain_real`](Evaluator::mul_plain_real)/[`relinearize_real`](Evaluator::relinearize_real)/[`rotate_real`](Evaluator::rotate_real)/[`conjugate_real`](Evaluator::conjugate_real)/[`rescale_next_real`](Evaluator::rescale_next_real)/[`drop_level_real`](Evaluator::drop_level_real)
 //! are CKKS's real-path arithmetic, alongside the long-standing transparent
 //! [`Evaluator::add`]/[`sub`](Evaluator::sub)/etc. (kept unchanged so every
 //! existing caller keeps compiling and behaving identically - see this
@@ -506,6 +506,51 @@ impl Evaluator {
             ciphertext.precision(),
             1,
         ))
+    }
+
+    /// Rotates a degree-1 **real** ciphertext's slots left by `shift`
+    /// positions, using a key generated for
+    /// [`super::CkksParams::rotation_element`]`(shift)` (e.g. from
+    /// [`super::CkksKeyGenerator::generate_hybrid_galois_key`] directly, or
+    /// via a downstream crate's own key generator built on top of it).
+    /// See [`super::Encoder`]'s own module doc comment for why
+    /// this is a clean per-slot rotation (not a permutation mixing in
+    /// conjugates) precisely because `rotation_element` uses `5`-power
+    /// indexing, and
+    /// [`phantom_lattice::rlwe::Evaluator::apply_galois_automorphism`]'s
+    /// own doc comment for the underlying key-switching mechanics. Errors
+    /// if `ciphertext` isn't degree-1 (checked by `apply_galois_automorphism`
+    /// itself) - matching [`Self::relinearize_real`]'s own precondition
+    /// that its *input* be the right shape, this needs its *output* shape
+    /// already reduced.
+    pub fn rotate_real(
+        &self,
+        ciphertext: &Ciphertext,
+        key: &phantom_lattice::rlwe::GaloisKey,
+    ) -> Result<Ciphertext> {
+        let poly = self.real_poly(ciphertext)?;
+        let rotated = self
+            .inner_at(ciphertext.level())?
+            .apply_galois_automorphism(poly, key)?;
+        Ok(Ciphertext::new_real(
+            rotated,
+            ciphertext.scale(),
+            ciphertext.level(),
+            ciphertext.precision(),
+            ciphertext.degree(),
+        ))
+    }
+
+    /// Conjugates a degree-1 **real** ciphertext's slots, using a key
+    /// generated for [`super::CkksParams::conjugation_element`] - see
+    /// [`Self::rotate_real`]'s own doc comment for the shared mechanics and
+    /// preconditions.
+    pub fn conjugate_real(
+        &self,
+        ciphertext: &Ciphertext,
+        key: &phantom_lattice::rlwe::GaloisKey,
+    ) -> Result<Ciphertext> {
+        self.rotate_real(ciphertext, key)
     }
 
     /// Rescales a **real** ciphertext to the next level, dividing its

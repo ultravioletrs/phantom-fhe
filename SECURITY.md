@@ -177,11 +177,15 @@ The following components are not yet at production cryptographic strength:
   representation. `Encryptor::encrypt_real`/`Decryptor::decrypt_real` do
   genuine RLWE encryption/decryption (structurally BFV's own real path,
   since CKKS's message is already `Delta`-scaled by the encoder rather than
-  needing per-operation scaling), and `Evaluator::{add,sub,neg,add_plain,mul,relinearize,rescale_next}_real`
+  needing per-operation scaling), and `Evaluator::{add,sub,neg,add_plain,mul,relinearize,rotate,conjugate,rescale_next}_real`
   do genuine ring arithmetic - `add`/`sub`/`neg`/`add_plain`/`mul` (raw
   tensor, no relinearization) are direct pass-throughs to
   `phantom_lattice::rlwe::Evaluator`, `relinearize_real` reuses the same
-  real hybrid key-switching machinery BFV's relinearization does, and
+  real hybrid key-switching machinery BFV's relinearization does,
+  `rotate_real`/`conjugate_real` apply a real Galois automorphism (only
+  correct because the encoder assigns slot `j` to embedding exponent `5^j
+  mod 2N`, not simpler sequential indexing, which a brute-force check
+  found cannot support single-Galois-element rotation at all), and
   `rescale_next_real` drops the ciphertext's last RNS component via the
   existing `phantom_ring::rns::rescale::mod_down` primitive and divides the
   tracked `Scale` to match - CKKS has no plaintext-modulus invariant to

@@ -614,3 +614,89 @@ fn generate_hybrid_galois_key_produces_a_working_real_rotation_key() {
         rlwe_params.ring().moduli(),
     );
 }
+
+#[test]
+fn rotate_real_shifts_slots_left_for_every_amount() {
+    let params = real_arith_params();
+    let ctx = CkksContext::new(params.clone());
+    let mut rng = seeded_rng(37);
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.real_decryptor(keys.secret.clone()).unwrap();
+    let evaluator = ctx.evaluator();
+    let keygen = ctx.keygen().unwrap();
+
+    let values = sample_values(&encoder, 38);
+    let ct = encryptor
+        .encrypt_real(&encoder.encode_complex_real(&values).unwrap(), &mut rng)
+        .unwrap();
+
+    for shift in 1..params.slot_count() {
+        let element = params.rotation_element(shift);
+        let key = keygen
+            .generate_hybrid_galois_key(element, &keys.secret, &p_moduli(), &mut rng)
+            .unwrap();
+        let rotated = evaluator.rotate_real(&ct, &key).unwrap();
+        let decoded = encoder
+            .decode_complex_real(&decryptor.decrypt_real(&rotated).unwrap())
+            .unwrap();
+        let mut expected = values.clone();
+        expected.rotate_left(shift);
+        assert_close(&decoded, &expected, 1e-4);
+    }
+}
+
+#[test]
+fn conjugate_real_conjugates_every_slot() {
+    let params = real_arith_params();
+    let ctx = CkksContext::new(params.clone());
+    let mut rng = seeded_rng(39);
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.real_decryptor(keys.secret.clone()).unwrap();
+    let evaluator = ctx.evaluator();
+    let keygen = ctx.keygen().unwrap();
+
+    let values = sample_values(&encoder, 40);
+    let ct = encryptor
+        .encrypt_real(&encoder.encode_complex_real(&values).unwrap(), &mut rng)
+        .unwrap();
+
+    let element = params.conjugation_element();
+    let key = keygen
+        .generate_hybrid_galois_key(element, &keys.secret, &p_moduli(), &mut rng)
+        .unwrap();
+    let conjugated = evaluator.conjugate_real(&ct, &key).unwrap();
+    let decoded = encoder
+        .decode_complex_real(&decryptor.decrypt_real(&conjugated).unwrap())
+        .unwrap();
+    let expected: Vec<Complex64> = values.iter().map(|v| v.conj()).collect();
+    assert_close(&decoded, &expected, 1e-4);
+}
+
+#[test]
+fn rotate_real_rejects_a_degree_two_ciphertext() {
+    let params = real_arith_params();
+    let ctx = CkksContext::new(params.clone());
+    let mut rng = seeded_rng(41);
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let evaluator = ctx.evaluator();
+    let keygen = ctx.keygen().unwrap();
+
+    let values = sample_values(&encoder, 42);
+    let ct = encryptor
+        .encrypt_real(&encoder.encode_complex_real(&values).unwrap(), &mut rng)
+        .unwrap();
+    let product = evaluator.mul_real(&ct, &ct).unwrap();
+    assert_eq!(product.degree(), 2);
+
+    let element = params.rotation_element(1);
+    let key = keygen
+        .generate_hybrid_galois_key(element, &keys.secret, &p_moduli(), &mut rng)
+        .unwrap();
+    assert!(evaluator.rotate_real(&product, &key).is_err());
+}
