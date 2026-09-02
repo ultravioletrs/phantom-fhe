@@ -78,4 +78,25 @@ impl BfvKeyGenerator {
         self.inner
             .generate_raw_hybrid_relinearization_key(sk, p_moduli, rng)
     }
+
+    /// Generates a real Galois (rotation) key for `element` (from
+    /// [`super::BfvParams::rotation_element`]/[`super::BfvParams::row_swap_element`]),
+    /// for [`super::Evaluator::rotate_real`]. Unlike BGV (see
+    /// [`bgv::BgvKeyGenerator::generate_raw_hybrid_galois_key`]'s own doc
+    /// comment), BFV has no `t`-scaled-noise requirement to preserve - the
+    /// same reasoning [`Self::generate_hybrid_relinearization_key`]'s own
+    /// doc comment gives - so this is a direct, unmodified pass-through.
+    pub fn generate_hybrid_galois_key<R>(
+        &self,
+        element: usize,
+        sk: &phantom_lattice::rlwe::SecretKey,
+        p_moduli: &[phantom_ring::Modulus],
+        rng: &mut R,
+    ) -> Result<phantom_lattice::rlwe::GaloisKey>
+    where
+        R: RngCore + CryptoRng,
+    {
+        self.inner
+            .generate_raw_hybrid_galois_key(element, sk, p_moduli, rng)
+    }
 }

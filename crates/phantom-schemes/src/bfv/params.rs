@@ -32,6 +32,21 @@ impl BfvParams {
         self.inner.slot_count()
     }
 
+    /// Returns the ring automorphism element for rotating both rows of a
+    /// [`super::BatchEncoder::encode_batched`]-encoded real ciphertext left
+    /// by `shift` slots - see [`bgv::BgvParams::rotation_element`]'s own
+    /// doc comment (BFV shares BGV's plaintext ring/slot structure
+    /// entirely, so this is a direct pass-through).
+    pub fn rotation_element(&self, shift: usize) -> usize {
+        self.inner.rotation_element(shift)
+    }
+
+    /// Returns the ring automorphism element for swapping the two rows -
+    /// see [`bgv::BgvParams::row_swap_element`]'s own doc comment.
+    pub fn row_swap_element(&self) -> usize {
+        self.inner.row_swap_element()
+    }
+
     /// Converts to scheme-agnostic RLWE parameters.
     pub fn rlwe_params(&self) -> phantom_lattice::Result<phantom_lattice::rlwe::RlweParams> {
         self.inner.rlwe_params()

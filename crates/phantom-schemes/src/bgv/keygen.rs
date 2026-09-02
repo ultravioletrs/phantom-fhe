@@ -146,6 +146,32 @@ impl BgvKeyGenerator {
             .generate_hybrid_relinearization_key(sk, p_moduli, rng)?)
     }
 
+    /// Generates a real Galois (rotation) key for `element` with **raw**
+    /// (not `t`-scaled) key-switching noise - a thin pass-through to
+    /// [`phantom_lattice::rlwe::KeyGenerator::generate_hybrid_galois_key`].
+    /// **Not safe to use for rotating real BGV ciphertexts** - the same
+    /// reasoning [`Self::generate_raw_hybrid_relinearization_key`]'s own
+    /// doc comment gives for relinearization applies identically here (use
+    /// [`Self::generate_rotation_key_real`] instead for BGV). Exists on
+    /// this type for the same reason that one does: BFV has no
+    /// `t`-scaled-noise requirement, so this raw key is exactly what
+    /// [`crate::bfv::BfvKeyGenerator::generate_hybrid_galois_key`]'s real
+    /// rotation needs unmodified.
+    pub fn generate_raw_hybrid_galois_key<R>(
+        &self,
+        element: usize,
+        sk: &SecretKey,
+        p_moduli: &[phantom_ring::Modulus],
+        rng: &mut R,
+    ) -> Result<GaloisKey>
+    where
+        R: RngCore + CryptoRng,
+    {
+        Ok(self
+            .inner
+            .generate_hybrid_galois_key(element, sk, p_moduli, rng)?)
+    }
+
     /// Generates a **real BGV** relinearization key (`s^2 -> s`), using
     /// classical gadget-decomposition key-switching with `t`-scaled noise -
     /// see [`BgvRelinearizationKey`]'s own module doc comment for why this,

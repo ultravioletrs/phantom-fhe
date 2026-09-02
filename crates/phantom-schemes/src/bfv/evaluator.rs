@@ -169,6 +169,27 @@ impl Evaluator {
         Ok(Ciphertext::new(bgv::Ciphertext::new(relinearized)))
     }
 
+    /// Rotates a **real** degree-1 BFV ciphertext's SIMD slots via the ring
+    /// automorphism `element` (from [`super::BfvParams::rotation_element`]/
+    /// [`super::BfvParams::row_swap_element`]), using a key from
+    /// [`super::BfvKeyGenerator::generate_hybrid_galois_key`]. Real BFV
+    /// ciphertexts are structurally plain RLWE ciphertexts (no
+    /// `Delta`-specific shape), so this is a direct, unmodified
+    /// pass-through to
+    /// [`phantom_lattice::rlwe::Evaluator::apply_galois_automorphism`] -
+    /// the same reasoning [`Self::relinearize_real`]'s own doc comment
+    /// gives, unlike BGV, which can't reuse this key-switching machinery
+    /// unmodified for its own real ciphertexts.
+    pub fn rotate_real(
+        &self,
+        ciphertext: &Ciphertext,
+        key: &phantom_lattice::rlwe::GaloisKey,
+    ) -> Result<Ciphertext> {
+        let rlwe_evaluator = phantom_lattice::rlwe::Evaluator::new(self.params.rlwe_params()?);
+        let rotated = rlwe_evaluator.apply_galois_automorphism(ciphertext.inner().inner(), key)?;
+        Ok(Ciphertext::new(bgv::Ciphertext::new(rotated)))
+    }
+
     /// Multiplies a ciphertext by a plaintext.
     pub fn mul_plain(&self, ciphertext: &Ciphertext, plaintext: &Plaintext) -> Result<Ciphertext> {
         Ok(Ciphertext::new(

@@ -397,3 +397,133 @@ fn rotation_and_slot_sum_are_exact() {
         .unwrap();
     assert_eq!(&encoder.decode_u64(&summed).unwrap()[..4], &[10, 9, 7, 4]);
 }
+
+#[test]
+fn encode_batched_decode_batched_real_round_trips_through_real_encryption() {
+    let ctx = BfvContext::new(real_params());
+    let mut rng = seeded_rng();
+    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.decryptor(keys.secret).unwrap();
+
+    for trial in 0..30u64 {
+        let values: Vec<u64> = (0..REAL_DEGREE as u64)
+            .map(|i| (3 * i + trial) % REAL_T)
+            .collect();
+        let pt = encoder.encode_batched(&values).unwrap();
+        let ct = encryptor.encrypt(&pt, &mut rng).unwrap();
+        let decrypted = decryptor.decrypt(&ct).unwrap();
+        let decoded = encoder.decode_batched_real(&decrypted).unwrap();
+        assert_eq!(decoded, values, "trial {trial}");
+    }
+}
+
+#[test]
+fn encode_batched_supports_genuine_elementwise_simd_multiplication() {
+    let ctx = BfvContext::new(real_params());
+    let mut rng = seeded_rng();
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair(&mut rng).unwrap();
+    let p_moduli = p_moduli();
+    let relin_key = keygen
+        .generate_hybrid_relinearization_key(&keys.secret, &p_moduli, &mut rng)
+        .unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.decryptor(keys.secret).unwrap();
+    let evaluator = ctx.evaluator().unwrap();
+
+    let a_values: Vec<u64> = (0..REAL_DEGREE as u64).map(|i| (i + 1) % REAL_T).collect();
+    let b_values: Vec<u64> = (0..REAL_DEGREE as u64)
+        .map(|i| (2 * i + 3) % REAL_T)
+        .collect();
+    let a_pt = encoder.encode_batched(&a_values).unwrap();
+    let b_pt = encoder.encode_batched(&b_values).unwrap();
+    let a_ct = encryptor.encrypt(&a_pt, &mut rng).unwrap();
+    let b_ct = encryptor.encrypt(&b_pt, &mut rng).unwrap();
+
+    let product = evaluator.mul_real(&a_ct, &b_ct, &p_moduli).unwrap();
+    let relinearized = evaluator.relinearize_real(&product, &relin_key).unwrap();
+    let decrypted = decryptor.decrypt(&relinearized).unwrap();
+    let decoded = encoder.decode_batched_real(&decrypted).unwrap();
+
+    let expected: Vec<u64> = a_values
+        .iter()
+        .zip(&b_values)
+        .map(|(a, b)| (a * b) % REAL_T)
+        .collect();
+    assert_eq!(decoded, expected);
+}
+
+#[test]
+fn rotate_real_shifts_both_rows_for_every_amount() {
+    let params = real_params();
+    let ctx = BfvContext::new(params.clone());
+    let mut rng = seeded_rng();
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair(&mut rng).unwrap();
+    let p_moduli = p_moduli();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.decryptor(keys.secret.clone()).unwrap();
+    let evaluator = ctx.evaluator().unwrap();
+
+    let half = REAL_DEGREE / 2;
+    let values: Vec<u64> = (0..REAL_DEGREE as u64).map(|i| i + 1).collect();
+    let pt = encoder.encode_batched(&values).unwrap();
+    let ct = encryptor.encrypt(&pt, &mut rng).unwrap();
+
+    for shift in 1..half {
+        let element = params.rotation_element(shift);
+        let key = keygen
+            .generate_hybrid_galois_key(element, &keys.secret, &p_moduli, &mut rng)
+            .unwrap();
+        let rotated = evaluator.rotate_real(&ct, &key).unwrap();
+        let decoded = encoder
+            .decode_batched_real(&decryptor.decrypt(&rotated).unwrap())
+            .unwrap();
+
+        let mut expected_row0 = values[..half].to_vec();
+        expected_row0.rotate_left(shift);
+        let mut expected_row1 = values[half..].to_vec();
+        expected_row1.rotate_left(shift);
+        let expected: Vec<u64> = expected_row0.into_iter().chain(expected_row1).collect();
+        assert_eq!(decoded, expected, "shift={shift}");
+    }
+}
+
+#[test]
+fn rotate_real_swaps_rows() {
+    let params = real_params();
+    let ctx = BfvContext::new(params.clone());
+    let mut rng = seeded_rng();
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair(&mut rng).unwrap();
+    let p_moduli = p_moduli();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.decryptor(keys.secret.clone()).unwrap();
+    let evaluator = ctx.evaluator().unwrap();
+
+    let half = REAL_DEGREE / 2;
+    let values: Vec<u64> = (0..REAL_DEGREE as u64).map(|i| i + 1).collect();
+    let pt = encoder.encode_batched(&values).unwrap();
+    let ct = encryptor.encrypt(&pt, &mut rng).unwrap();
+
+    let element = params.row_swap_element();
+    let key = keygen
+        .generate_hybrid_galois_key(element, &keys.secret, &p_moduli, &mut rng)
+        .unwrap();
+    let swapped = evaluator.rotate_real(&ct, &key).unwrap();
+    let decoded = encoder
+        .decode_batched_real(&decryptor.decrypt(&swapped).unwrap())
+        .unwrap();
+
+    let expected: Vec<u64> = values[half..]
+        .iter()
+        .chain(values[..half].iter())
+        .copied()
+        .collect();
+    assert_eq!(decoded, expected);
+}
