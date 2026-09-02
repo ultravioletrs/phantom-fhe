@@ -665,17 +665,45 @@ impl Evaluator {
     /// ternary secret), so `|raw(c0 + c1*s)| <= (q0/2)*(1+h)`, giving `|I|
     /// <= (h+2)/2` - verified numerically (Python, 400 randomized trials
     /// across several Hamming weights) before implementing, never exceeded
-    /// (worst observed ratio to the bound: `~0.67`). This is why
-    /// `BootstrapParams::raise_modulus` should be the ciphertext's own real
-    /// `q0` (this evaluator's `at_level(0)` modulus), not a freely-chosen
-    /// constant, and why `EvalMod::reduce_mod_q_real`'s own tight domain
-    /// (`|I| <= 1`) only actually holds for a secret sparse enough that
-    /// `(h+2)/2 <= 1` - i.e. `h <= 0` in the worst case, which no usable
-    /// secret satisfies. Widening `EvalMod`'s domain to match a realistic
-    /// secret's own Hamming weight (more Chebyshev terms, or an
-    /// iterated-doubling reconstruction from a narrow base case) is a
-    /// further, separate derivation, not attempted here - this method only
-    /// builds the raise itself and documents the bound it produces.
+    /// (worst observed ratio to the bound: `~0.67`) and confirmed directly
+    /// against a real raised-then-decrypted ciphertext (this method's own
+    /// tests, working entirely in raw/centered units via
+    /// `phantom_ring::rns::extension::reconstruct_centered_values`, bypassing
+    /// CKKS's own scale tracking entirely).
+    ///
+    /// This bound is on each **raw ring coefficient's** own wraparound -
+    /// three further gaps stand between it and `EvalMod` actually removing
+    /// what a genuine raise introduces, found while attempting that
+    /// integration directly (not just scoping it):
+    /// - `EvalMod`'s own arithmetic operates in *decoded* (scale-divided)
+    ///   units, while this method leaves the ciphertext's tracked `scale`
+    ///   untouched - so the wraparound as `EvalMod` sees it is `(q0/Delta)*I`,
+    ///   not `q0*I` directly; `BootstrapParams::raise_modulus` should be
+    ///   `q0/Delta`, not the raw modulus `q0` alone.
+    /// - `EvalMod` operates on **slot-domain** values (after
+    ///   `super::super::CoeffsToSlots::apply_real`'s forward DFT), not the
+    ///   raw per-coefficient domain this bound is stated in - a DFT can
+    ///   amplify a per-coefficient bound by up to a factor of the ring
+    ///   degree `N` (triangle inequality over `N` unit-magnitude-root
+    ///   terms), confirmed numerically to get close to that worst case with
+    ///   ordinary (non-adversarial) random per-coefficient wraparound, not
+    ///   just in principle - `EvalMod::reduce_mod_q_real_wide`'s own
+    ///   `doublings` needs to cover `N * (h+2)/2`, not `(h+2)/2` directly.
+    /// - Even accounting for both of the above, a real ring-coefficient
+    ///   wraparound's forward DFT is generically **complex** (a real
+    ///   sequence's DFT has no reason to be real-valued absent specific
+    ///   symmetry a raise's own wraparound doesn't have), while
+    ///   `EvalMod::reduce_mod_q_real`/`reduce_mod_q_real_wide` are real-only
+    ///   (see their own doc comments) - confirmed directly (decoding a real
+    ///   ciphertext right after a genuine raise and `apply_real`, every
+    ///   slot's imaginary part was nonzero and comparable in magnitude to
+    ///   its real part). A raised ciphertext therefore needs its slot-domain
+    ///   wraparound reduced as a genuinely complex value before
+    ///   `Bootstrapper::bootstrap_real_wide` can recover a message from it
+    ///   end to end - not attempted here; this method and
+    ///   `reduce_mod_q_real_wide` only build the two individually-verified
+    ///   pieces (a real modulus-raise, and a real-only wide-domain
+    ///   reduction against an engineered real slot-domain input).
     pub fn raise_level_real(
         &self,
         ciphertext: &Ciphertext,

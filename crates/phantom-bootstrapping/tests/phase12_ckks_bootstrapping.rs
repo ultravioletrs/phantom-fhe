@@ -419,18 +419,20 @@ fn coeffs_to_slots_and_slots_to_coeffs_apply_real_round_trip() {
     }
 }
 
-// A degree-9 Horner-method polynomial (see EvalMod::reduce_mod_q_real's
-// own doc comment) needs 9 rescale-sized moduli for the polynomial itself,
-// plus 2 more for reduce_mod_q_real's own pre-scale-by-1/q and
-// post-scale-by-q/(2*pi) steps, plus one large headroom modulus surviving
-// the first (largest) raw tensor product - 12 moduli total. All
-// Miller-Rabin verified distinct primes in Python before use, and
-// explicitly checked *not* to accidentally satisfy the NTT-friendliness
-// congruence `(p-1) % (2*degree) == 0` at this ring's degree (`8`) -
-// `phantom_ring::ntt::table::primitive_root_of_order`'s linear search
-// for a root of order `2*degree` in a multiplicative group this large
-// (order `p-1 ~ 2^30`) doesn't converge in any practical time if a
-// modulus does happen to satisfy it, discovered directly (a modulus
+// A degree-17 Horner-method polynomial (see EvalMod::reduce_mod_q_real's
+// own doc comment - widened from the original degree-9 fit specifically so
+// it also serves as reduce_mod_q_real_wide's own narrow-domain base case,
+// see that method's own doc comment) needs 17 rescale-sized moduli for the
+// polynomial itself, plus 2 more for reduce_mod_q_real's own
+// pre-scale-by-1/q and post-scale-by-q/(2*pi) steps, plus one large
+// headroom modulus surviving the first (largest) raw tensor product - 20
+// moduli total. All Miller-Rabin verified distinct primes in Python before
+// use, and explicitly checked *not* to accidentally satisfy the
+// NTT-friendliness congruence `(p-1) % (2*degree) == 0` at this ring's
+// degree (`8`) - `phantom_ring::ntt::table::primitive_root_of_order`'s
+// linear search for a root of order `2*degree` in a multiplicative group
+// this large (order `p-1 ~ 2^30`) doesn't converge in any practical time if
+// a modulus does happen to satisfy it, discovered directly (a modulus
 // picked without checking this hung for pathological amounts of CPU
 // time before being killed) - a real, if minor and unrelated, latent
 // performance gap in that search (unbounded, no fallback for a slow
@@ -451,6 +453,14 @@ fn eval_mod_real_ckks_params() -> CkksParams {
             1_073_741_833,
             1_073_741_839,
             1_073_741_843,
+            1_073_741_971,
+            1_073_741_987,
+            1_073_741_993,
+            1_073_742_037,
+            1_073_742_053,
+            1_073_742_073,
+            1_073_742_077,
+            1_073_742_091,
         ])
         .default_scale_bits(30)
         .build()
@@ -515,9 +525,11 @@ fn reduce_mod_q_real_recovers_a_real_valued_message_from_a_wrapped_ciphertext() 
         .decode_complex_real(&decryptor.decrypt_real(&result).unwrap())
         .unwrap();
 
-    // ~3% relative error, verified numerically before implementing (see
-    // reduce_mod_q_real's own doc comment) - not the transparent scaffold's
-    // exact round(), so this needs a correspondingly loose tolerance.
+    // ~0.6% relative error (degree-17 base fit, see
+    // SIN_APPROX_BASE_COEFFICIENTS's own doc comment), verified numerically
+    // before implementing - not the transparent scaffold's exact round(),
+    // so this still needs a looser-than-exact tolerance, comfortably
+    // covering that bound with real-ciphertext-noise margin to spare.
     for (actual, &expected) in decoded.iter().zip(&messages) {
         assert!(
             (actual.re - expected).abs() < 0.15,
@@ -526,14 +538,145 @@ fn reduce_mod_q_real_recovers_a_real_valued_message_from_a_wrapped_ciphertext() 
     }
 }
 
-// `eval_mod_real_ckks_params`'s own 12 moduli only budget the 11 rescales
+// `reduce_mod_q_real_wide` at `doublings=2` costs `1 + 17 + 2*2 + 1 = 23`
+// rescales (pre-scale, one degree-17 Horner evaluation - `sin`/`cos` start
+// from the same ciphertext rather than chaining, so they only cost this
+// once between them, see `reduce_mod_q_real_wide`'s own doc comment - two
+// doubling steps, post-scale). This fixture provisions well beyond that
+// (40 rescale-sized primes plus one headroom modulus, independent of the
+// other fixtures in this file purely to keep each fixture's own sizing
+// rationale legible on its own) specifically to exercise a genuinely long
+// rescale chain, which exposed a real property the smaller fixtures above
+// didn't: primes must be searched *outward from `2^scale_bits` in both
+// directions* (`scale_bits = 30`, primes within `+-750`), not from an
+// arbitrary starting point - `Scale::compatible`'s tolerance bounds
+// *cumulative* drift, and a batch of primes all offset from `2^scale_bits`
+// in the *same* direction (tried first: searching upward only from
+// `2^scale_bits + 58176`) accumulates drift roughly linearly across a
+// long enough chain, exceeding the tolerance - confirmed directly (that
+// first attempt failed inside the `sin` Horner loop's own `add_plain_real`
+// scale check, well before the modulus budget itself ran out). Primes on
+// both sides of `2^scale_bits` cancel rather than compound. All Miller-Rabin
+// verified distinct in Python before use.
+fn eval_mod_wide_ckks_params() -> CkksParams {
+    CkksParams::builder()
+        .degree(8)
+        .moduli(vec![
+            4_611_686_018_427_400_249,
+            1_073_741_077,
+            1_073_741_101,
+            1_073_741_173,
+            1_073_741_189,
+            1_073_741_197,
+            1_073_741_213,
+            1_073_741_237,
+            1_073_741_287,
+            1_073_741_309,
+            1_073_741_311,
+            1_073_741_371,
+            1_073_741_381,
+            1_073_741_387,
+            1_073_741_399,
+            1_073_741_419,
+            1_073_741_467,
+            1_073_741_477,
+            1_073_741_503,
+            1_073_741_527,
+            1_073_741_561,
+            1_073_741_567,
+            1_073_741_621,
+            1_073_741_651,
+            1_073_741_663,
+            1_073_741_671,
+            1_073_741_689,
+            1_073_741_891,
+            1_073_741_909,
+            1_073_741_939,
+            1_073_742_223,
+            1_073_742_233,
+            1_073_742_259,
+            1_073_742_277,
+            1_073_742_343,
+            1_073_742_361,
+            1_073_742_391,
+            1_073_742_403,
+            1_073_742_463,
+            1_073_742_493,
+            1_073_742_517,
+        ])
+        .default_scale_bits(30)
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn reduce_mod_q_real_wide_recovers_a_message_beyond_the_narrow_domain() {
+    // The whole point of `reduce_mod_q_real_wide`: `I` values up to `4` in
+    // magnitude - well outside `reduce_mod_q_real`'s own `|I| <= 1` domain
+    // (see `ckks::Evaluator::raise_level_real`'s own doc comment for why a
+    // real modulus-raise needs exactly this kind of wider coverage) - still
+    // recover the true message, via 2 angle-doubling steps
+    // (`doublings=2`, covering `|I| <= 4.12 = 1.03*2^2`).
+    let ckks = eval_mod_wide_ckks_params();
+    let raise_modulus = 100.0;
+    let doublings = 2;
+    let params = BootstrapParams::builder(ckks.clone())
+        .raise_modulus(raise_modulus)
+        .build()
+        .unwrap();
+    let mut rng = ChaCha20Rng::from_seed([61u8; 32]);
+    let ctx = CkksContext::new(ckks.clone());
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.real_decryptor(keys.secret.clone()).unwrap();
+
+    let relin_keys = relin_keys_per_level(&keygen, &keys.secret, ckks.initial_level(), &mut rng);
+    let eval_mod = EvalMod::new(params);
+
+    // |m| < 0.03*q = 3.0 still, but I now ranges up to +-4 - beyond
+    // reduce_mod_q_real's own +-1, exactly what doublings=2 was chosen to
+    // cover.
+    let messages = [2.5, -1.0, 0.75, -2.9];
+    let wrap_integers = [4i64, -4, 3, -2];
+    let combined: Vec<Complex64> = messages
+        .iter()
+        .zip(&wrap_integers)
+        .map(|(&m, &i)| Complex64::real(m + raise_modulus * i as f64))
+        .collect();
+
+    let ct = encryptor
+        .encrypt_real(&encoder.encode_complex_real(&combined).unwrap(), &mut rng)
+        .unwrap();
+    assert_eq!(ct.level(), ckks.initial_level());
+
+    let result = eval_mod
+        .reduce_mod_q_real_wide(&ct, &relin_keys, doublings)
+        .unwrap();
+    let decoded = encoder
+        .decode_complex_real(&decryptor.decrypt_real(&result).unwrap())
+        .unwrap();
+
+    // ~0.6% relative error uniformly across doublings (verified
+    // numerically before implementing - see reduce_mod_q_real_wide's own
+    // doc comment), the same order of magnitude as reduce_mod_q_real's own
+    // r=0 case - so this uses the same tolerance.
+    for (actual, &expected) in decoded.iter().zip(&messages) {
+        assert!(
+            (actual.re - expected).abs() < 0.15,
+            "actual={actual:?} expected={expected}"
+        );
+    }
+}
+
+// `eval_mod_real_ckks_params`'s own 20 moduli only budget the 19 rescales
 // `reduce_mod_q_real` itself needs (see that fixture's own doc comment) -
 // chaining `Bootstrapper::bootstrap_real`'s own extra
 // `CoeffsToSlots::apply_real` and `SlotsToCoeffs::apply_real` calls around
-// it costs one more rescale each (13 total), so this extends that fixture
-// with 3 more rescale-sized primes (same NTT-avoidance check, Miller-Rabin
-// verified distinct in Python before use) for one spare level of margin
-// beyond the 13 actually needed.
+// it costs one more rescale each (21 total), so this extends that fixture
+// with 7 more rescale-sized primes (same NTT-avoidance check, Miller-Rabin
+// verified distinct in Python before use) for the 21 actually needed.
 fn bootstrap_real_ckks_params() -> CkksParams {
     CkksParams::builder()
         .degree(8)
@@ -550,9 +693,16 @@ fn bootstrap_real_ckks_params() -> CkksParams {
             1_073_741_833,
             1_073_741_839,
             1_073_741_843,
-            1_073_741_891,
-            1_073_741_909,
-            1_073_741_939,
+            1_073_741_971,
+            1_073_741_987,
+            1_073_741_993,
+            1_073_742_037,
+            1_073_742_053,
+            1_073_742_073,
+            1_073_742_077,
+            1_073_742_091,
+            1_073_742_169,
+            1_073_742_203,
         ])
         .default_scale_bits(30)
         .build()
@@ -624,9 +774,9 @@ fn bootstrap_real_recovers_a_real_valued_message_through_the_full_real_pipeline(
 
     // `s2c_keys`'s own level depends on eval_mod's internal rescale count,
     // known ahead of time from `eval_mod_real_ckks_params`'s own sizing
-    // (11 rescales: 1 pre-scale + 9 for the degree-9 polynomial + 1
+    // (19 rescales: 1 pre-scale + 17 for the degree-17 polynomial + 1
     // post-scale).
-    let s2c_level = forward.level() - 11;
+    let s2c_level = forward.level() - 19;
     let s2c_keys = dft_galois_keys(&ckks, &keys.secret, n, s2c_level, &mut rng);
 
     let output = bootstrapper

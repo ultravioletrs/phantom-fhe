@@ -109,13 +109,43 @@ impl Bootstrapper {
         eval_mod_relin_keys: &[RelinearizationKey],
         s2c_galois_keys: &[GaloisKey],
     ) -> Result<Ciphertext> {
+        self.bootstrap_real_wide(
+            input,
+            c2s_galois_keys,
+            eval_mod_relin_keys,
+            0,
+            s2c_galois_keys,
+        )
+    }
+
+    /// Generalizes [`Self::bootstrap_real`] to [`EvalMod::reduce_mod_q_real_wide`]'s
+    /// own wider wraparound domain (`eval_mod_doublings`, `r` in that
+    /// method's own doc comment) - the piece that makes it possible to
+    /// bootstrap a ciphertext a real
+    /// `phantom_schemes::ckks::Evaluator::raise_level_real` call actually
+    /// produced, whose own wraparound bound (`|I| <= (h+2)/2` for a secret
+    /// of Hamming weight `h` - see that method's own doc comment) exceeds
+    /// `reduce_mod_q_real`'s `r=0`-only domain for any non-trivial secret.
+    /// `eval_mod_doublings` must be chosen by the caller to cover their own
+    /// ciphertext's actual wraparound bound (`2^eval_mod_doublings * 1.03 >=
+    /// K + 0.03`).
+    pub fn bootstrap_real_wide(
+        &self,
+        input: &Ciphertext,
+        c2s_galois_keys: &[GaloisKey],
+        eval_mod_relin_keys: &[RelinearizationKey],
+        eval_mod_doublings: u32,
+        s2c_galois_keys: &[GaloisKey],
+    ) -> Result<Ciphertext> {
         if self.params.ckks_params().conjugate_invariant() {
             return Ok(input.clone());
         }
         let slots = self.coeffs_to_slots.apply_real(input, c2s_galois_keys)?;
-        let slots = self
-            .eval_mod
-            .reduce_mod_q_real(&slots, eval_mod_relin_keys)?;
+        let slots = self.eval_mod.reduce_mod_q_real_wide(
+            &slots,
+            eval_mod_relin_keys,
+            eval_mod_doublings,
+        )?;
         self.slots_to_coeffs.apply_real(&slots, s2c_galois_keys)
     }
 
