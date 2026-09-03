@@ -43,7 +43,7 @@ use phantom_schemes::bgv::{scale_by_base_power_and_lift, BgvParams, BgvRelineari
 use rand_core::{CryptoRng, RngCore};
 
 use super::wire::{decode_poly_rows, encode_poly_rows};
-use crate::common::{ParticipantId, SessionState, Share, ShareAggregator, ShareKind};
+use crate::common::{ParticipantId, ReplayGuard, SessionState, Share, ShareAggregator, ShareKind};
 use crate::{MultipartyError, Result};
 
 /// Collective relinearization-key generation helper for BGV. See this
@@ -102,12 +102,20 @@ impl RelinearizationKeyGen {
     /// Creates this participant's own round-1 share: every row's own
     /// `(h0_i^(p), h1_i^(p))`, encrypting `scale_i(s_p)` under the
     /// collective public key.
+    ///
+    /// `replay_guard` must be this participant's own [`ReplayGuard`],
+    /// reused across every real `mpbgv` protocol call this participant
+    /// makes (including [`Self::create_share_round2`], for its own,
+    /// independent round) - see
+    /// [`super::CollectiveKeyGen::create_share`]'s own doc comment for why.
     pub fn create_share_round1<R: RngCore + CryptoRng>(
         &self,
         participant: ParticipantId,
         local_secret_share: &SecretKey,
+        replay_guard: &mut ReplayGuard,
         rng: &mut R,
     ) -> Result<Share> {
+        replay_guard.record_use(&self.session, participant)?;
         let ring = self.params.ring();
         let t = self.params.plaintext_modulus();
         let moduli = ring.moduli();
@@ -181,13 +189,21 @@ impl RelinearizationKeyGen {
     /// Creates this participant's own round-2 share: every row's own
     /// `(h0'_i^(p), h1'_i^(p))`, folding `local_secret_share` into round 1's
     /// public aggregate.
+    ///
+    /// `replay_guard` must be this participant's own [`ReplayGuard`] - the
+    /// same instance passed to [`Self::create_share_round1`], since round
+    /// 2's own session (`round2_session()`, a different round number) is
+    /// tracked independently on it. See
+    /// [`super::CollectiveKeyGen::create_share`]'s own doc comment for why.
     pub fn create_share_round2<R: RngCore + CryptoRng>(
         &self,
         participant: ParticipantId,
         local_secret_share: &SecretKey,
         round1_aggregate: &[(Poly, Poly)],
+        replay_guard: &mut ReplayGuard,
         rng: &mut R,
     ) -> Result<Share> {
+        replay_guard.record_use(&self.round2_session(), participant)?;
         let ring = self.params.ring();
         let t = self.params.plaintext_modulus();
         let cpk_b = &self.collective_public_key.value()[0];

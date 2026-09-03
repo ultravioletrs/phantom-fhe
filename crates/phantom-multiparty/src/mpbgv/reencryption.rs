@@ -6,7 +6,7 @@ use phantom_schemes::bgv::{BgvParams, Ciphertext};
 use rand_core::{CryptoRng, RngCore};
 
 use super::wire::{decode_poly_pair, encode_poly_pair};
-use crate::common::{ParticipantId, SessionState, Share, ShareAggregator, ShareKind};
+use crate::common::{ParticipantId, ReplayGuard, SessionState, Share, ShareAggregator, ShareKind};
 use crate::{MultipartyError, Result};
 
 /// Re-encryption helper for BGV: real collaborative key-switching (PCKS) -
@@ -110,6 +110,17 @@ impl ReEncryptor {
     /// Bossuat & Hubaux, EPRINT 2020/304, Section IV-E/Appendix A), which
     /// this type adapts unchanged: the relevant "ciphertext noise" here is
     /// the input `ciphertext`'s own noise, not anything specific to PCKS.
+    ///
+    /// `replay_guard` must be this participant's own [`ReplayGuard`],
+    /// reused across every real `mpbgv` protocol call this participant
+    /// makes - refuses (before any crypto work) to produce a second PCKS
+    /// share for the same `(session, round, participant)`, which would
+    /// leak `local_secret_share` via accumulated linear algebra regardless
+    /// of the smudging noise above. See [`ReplayGuard`]'s own doc comment.
+    // Seven genuinely independent, already individually documented inputs
+    // (each covered above) - not artificially bundled into an ad hoc struct
+    // just to dodge this lint.
+    #[allow(clippy::too_many_arguments)]
     pub fn create_share<R: RngCore + CryptoRng>(
         &self,
         participant: ParticipantId,
@@ -117,8 +128,10 @@ impl ReEncryptor {
         ciphertext: &Ciphertext,
         ciphertext_noise_bound: u64,
         recipient_public_key: &PublicKey,
+        replay_guard: &mut ReplayGuard,
         rng: &mut R,
     ) -> Result<Share> {
+        replay_guard.record_use(&self.session, participant)?;
         let ring = self.params.ring();
         let t = self.params.plaintext_modulus();
         let c1 = ciphertext

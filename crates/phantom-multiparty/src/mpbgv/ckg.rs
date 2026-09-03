@@ -7,7 +7,8 @@ use rand_core::{CryptoRng, RngCore};
 
 use super::wire::{decode_poly, encode_poly};
 use crate::common::{
-    derive_common_ring_element, ParticipantId, SessionState, Share, ShareAggregator, ShareKind,
+    derive_common_ring_element, ParticipantId, ReplayGuard, SessionState, Share, ShareAggregator,
+    ShareKind,
 };
 use crate::{MultipartyError, Result};
 use phantom_schemes::bgv::BgvParams;
@@ -75,12 +76,21 @@ impl CollectiveKeyGen {
     /// `b_i` is - see this type's own doc comment for why it must be an
     /// ordinary small secret, not a Shamir share of one) and `a` is derived
     /// deterministically from the session.
+    ///
+    /// `replay_guard` must be this participant's own [`ReplayGuard`],
+    /// reused across every real `mpbgv` protocol call this participant
+    /// makes - refuses (before any crypto work) to produce a second share
+    /// for the same `(session, round, participant)`, since `a` is
+    /// deterministic and a second exposure would leak `s_i` via
+    /// accumulated linear algebra. See [`ReplayGuard`]'s own doc comment.
     pub fn create_share<R: RngCore + CryptoRng>(
         &self,
         participant: ParticipantId,
         local_secret_share: &SecretKey,
+        replay_guard: &mut ReplayGuard,
         rng: &mut R,
     ) -> Result<Share> {
+        replay_guard.record_use(&self.session, participant)?;
         let ring = self.params.ring();
         let a = derive_common_ring_element(ring, &self.session, CKG_COMMON_A_PURPOSE);
         let e_i = sample_discrete_gaussian(ring, rng, STANDARD_ERROR_STD_DEV);

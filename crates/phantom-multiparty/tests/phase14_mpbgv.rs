@@ -2,8 +2,8 @@ use curve25519_dalek::scalar::Scalar;
 use phantom_lattice::rgsw::GadgetDecompositionParams;
 use phantom_lattice::rlwe::SecretKey;
 use phantom_multiparty::common::{
-    ParticipantId, ParticipantSet, ProtocolKind, SessionId, SessionState, ShareAggregator,
-    ShareKind,
+    ParticipantId, ParticipantSet, ProtocolKind, ReplayGuard, SessionId, SessionState,
+    ShareAggregator, ShareKind,
 };
 use phantom_multiparty::mpbgv::{
     CollectiveKeyGen, GaloisKeyGen, InteractiveBootstrap, PartialDecryptor, ReEncryptor,
@@ -95,15 +95,17 @@ fn collective_public_key_encrypts_decryptable_ciphertexts() {
             .collect();
         SecretKey::new(embed_centered_coeffs(&coeffs, ring.moduli()).unwrap())
     };
+    let mut replay_guard_1 = ReplayGuard::new();
+    let mut replay_guard_2 = ReplayGuard::new();
     aggregator
         .add_share(
-            ckg.create_share(id(1), &placeholder_secret(0), &mut rng)
+            ckg.create_share(id(1), &placeholder_secret(0), &mut replay_guard_1, &mut rng)
                 .unwrap(),
         )
         .unwrap();
     aggregator
         .add_share(
-            ckg.create_share(id(2), &placeholder_secret(1), &mut rng)
+            ckg.create_share(id(2), &placeholder_secret(1), &mut replay_guard_2, &mut rng)
                 .unwrap(),
         )
         .unwrap();
@@ -126,6 +128,49 @@ fn collective_public_key_encrypts_decryptable_ciphertexts() {
     let decrypted = decryptor.decrypt(&ciphertext).unwrap();
 
     assert_eq!(&encoder.decode_u64(&decrypted).unwrap()[..4], &[3, 4, 5, 6]);
+}
+
+#[test]
+fn replay_guard_rejects_a_second_share_for_the_same_session_round_and_participant() {
+    // The actual new behavior Workstream 7 item 8 adds: a participant's own
+    // `ReplayGuard` must refuse a second `create_share` for the identical
+    // (session id, round, protocol, participant) - reusing the same
+    // deterministic public randomness twice would leak `local_secret_share`
+    // via accumulated linear algebra, independent of smudging noise (see
+    // `ReplayGuard`'s own doc comment). Uses `CollectiveKeyGen` as the
+    // simplest of the four real protocols this guards - the mechanism
+    // (`ReplayGuard::record_use`) is identical across all of them.
+    let degree = real_ckg_params().ring().degree();
+    let secret = SecretKey::new(
+        embed_centered_coeffs(&vec![0i128; degree], real_ckg_params().ring().moduli()).unwrap(),
+    );
+    let mut rng = rng();
+    let mut replay_guard = ReplayGuard::new();
+
+    let ckg = CollectiveKeyGen::new(real_ckg_params(), session(ProtocolKind::CollectiveKeyGen));
+
+    // First share for this session/round/participant succeeds.
+    ckg.create_share(id(1), &secret, &mut replay_guard, &mut rng)
+        .unwrap();
+
+    // A second share for the identical session/round/participant, on the
+    // same guard, is rejected before any crypto work happens.
+    assert_eq!(
+        ckg.create_share(id(1), &secret, &mut replay_guard, &mut rng),
+        Err(MultipartyError::ReplayedShare)
+    );
+
+    // A different participant, same session/round, is unaffected.
+    ckg.create_share(id(2), &secret, &mut replay_guard, &mut rng)
+        .unwrap();
+
+    // A different session (a different protocol kind, hence a different
+    // guard key), same participant, is also unaffected - `ReplayGuard`
+    // tracks the whole tuple, not just the participant.
+    let other_ckg = CollectiveKeyGen::new(real_ckg_params(), session(ProtocolKind::GaloisKeyGen));
+    other_ckg
+        .create_share(id(1), &secret, &mut replay_guard, &mut rng)
+        .unwrap();
 }
 
 #[test]
@@ -203,12 +248,16 @@ fn collective_public_key_generation_via_dkg_produces_a_genuinely_decryptable_key
     // comment for why that distinction matters).
     let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
     let mut aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
-    for (&participant, secret) in participants.iter().zip(&secrets) {
+    let mut replay_guards: Vec<ReplayGuard> =
+        participants.iter().map(|_| ReplayGuard::new()).collect();
+    for ((&participant, secret), replay_guard) in
+        participants.iter().zip(&secrets).zip(&mut replay_guards)
+    {
         let local_secret_share =
             SecretKey::new(embed_centered_coeffs(secret, ring.moduli()).unwrap());
         aggregator
             .add_share(
-                ckg.create_share(participant, &local_secret_share, &mut rng)
+                ckg.create_share(participant, &local_secret_share, replay_guard, &mut rng)
                     .unwrap(),
             )
             .unwrap();
@@ -275,12 +324,24 @@ fn collective_relinearization_key_generation_via_real_dkg_relinearizes_a_genuine
         .map(|secret| SecretKey::new(embed_centered_coeffs(secret, ring.moduli()).unwrap()))
         .collect();
 
+    // One `ReplayGuard` per participant, reused across every real `mpbgv`
+    // protocol call that participant makes below (CKG, then both RKG
+    // rounds) - matching how a real deployment's own per-participant
+    // process would hold a single guard across its whole protocol
+    // lifetime, not a fresh one per call.
+    let mut replay_guards: Vec<ReplayGuard> =
+        participants.iter().map(|_| ReplayGuard::new()).collect();
+
     let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
     let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
-    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
         ckg_aggregator
             .add_share(
-                ckg.create_share(participant, local_secret_share, &mut rng)
+                ckg.create_share(participant, local_secret_share, replay_guard, &mut rng)
                     .unwrap(),
             )
             .unwrap();
@@ -296,10 +357,14 @@ fn collective_relinearization_key_generation_via_real_dkg_relinearizes_a_genuine
     );
 
     let mut round1_aggregator = ShareAggregator::new(rkg_session, ShareKind::RelinearizationKeyGen);
-    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
         round1_aggregator
             .add_share(
-                rkg.create_share_round1(participant, local_secret_share, &mut rng)
+                rkg.create_share_round1(participant, local_secret_share, replay_guard, &mut rng)
                     .unwrap(),
             )
             .unwrap();
@@ -308,13 +373,18 @@ fn collective_relinearization_key_generation_via_real_dkg_relinearizes_a_genuine
 
     let mut round2_aggregator =
         ShareAggregator::new(rkg.round2_session(), ShareKind::RelinearizationKeyGen);
-    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
         round2_aggregator
             .add_share(
                 rkg.create_share_round2(
                     participant,
                     local_secret_share,
                     &round1_aggregate,
+                    replay_guard,
                     &mut rng,
                 )
                 .unwrap(),
@@ -393,12 +463,19 @@ fn collective_galois_key_generation_via_real_dkg_rotates_a_genuine_ciphertext() 
         .map(|secret| SecretKey::new(embed_centered_coeffs(secret, ring.moduli()).unwrap()))
         .collect();
 
+    let mut replay_guards: Vec<ReplayGuard> =
+        participants.iter().map(|_| ReplayGuard::new()).collect();
+
     let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
     let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
-    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
         ckg_aggregator
             .add_share(
-                ckg.create_share(participant, local_secret_share, &mut rng)
+                ckg.create_share(participant, local_secret_share, replay_guard, &mut rng)
                     .unwrap(),
             )
             .unwrap();
@@ -415,10 +492,14 @@ fn collective_galois_key_generation_via_real_dkg_rotates_a_genuine_ciphertext() 
         decomposition_params,
     );
     let mut gkg_aggregator = ShareAggregator::new(gkg_session, ShareKind::GaloisKeyGen);
-    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
         gkg_aggregator
             .add_share(
-                gkg.create_share(participant, local_secret_share, &mut rng)
+                gkg.create_share(participant, local_secret_share, replay_guard, &mut rng)
                     .unwrap(),
             )
             .unwrap();
@@ -564,12 +645,19 @@ fn reencryption_via_pcks_delivers_the_result_to_a_genuinely_separate_recipient()
         .map(|secret| SecretKey::new(embed_centered_coeffs(secret, ring.moduli()).unwrap()))
         .collect();
 
+    let mut replay_guards: Vec<ReplayGuard> =
+        participants.iter().map(|_| ReplayGuard::new()).collect();
+
     let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
     let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
-    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
         ckg_aggregator
             .add_share(
-                ckg.create_share(participant, local_secret_share, &mut rng)
+                ckg.create_share(participant, local_secret_share, replay_guard, &mut rng)
                     .unwrap(),
             )
             .unwrap();
@@ -602,7 +690,11 @@ fn reencryption_via_pcks_delivers_the_result_to_a_genuinely_separate_recipient()
         phantom_lattice::security::RECOMMENDED_STATISTICAL_SECURITY_BITS,
     );
     let mut reenc_aggregator = ShareAggregator::new(reenc_session, ShareKind::ReEncryption);
-    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
         reenc_aggregator
             .add_share(
                 reencryption
@@ -612,6 +704,7 @@ fn reencryption_via_pcks_delivers_the_result_to_a_genuinely_separate_recipient()
                         &ciphertext,
                         ciphertext_noise_bound,
                         &recipient_keys.public,
+                        replay_guard,
                         &mut rng,
                     )
                     .unwrap(),

@@ -25,7 +25,8 @@ use rand_core::{CryptoRng, RngCore};
 
 use super::wire::{decode_poly_rows, encode_poly_rows};
 use crate::common::{
-    derive_common_ring_element, ParticipantId, SessionState, Share, ShareAggregator, ShareKind,
+    derive_common_ring_element, ParticipantId, ReplayGuard, SessionState, Share, ShareAggregator,
+    ShareKind,
 };
 use crate::{MultipartyError, Result};
 
@@ -89,12 +90,19 @@ impl GaloisKeyGen {
     /// `local_secret_share` (this participant's own already-known small
     /// secret - the same one [`super::CollectiveKeyGen::create_share`]
     /// already uses, never transmitted - only the rows below are).
+    ///
+    /// `replay_guard` must be this participant's own [`ReplayGuard`],
+    /// reused across every real `mpbgv` protocol call this participant
+    /// makes - see [`super::CollectiveKeyGen::create_share`]'s own doc
+    /// comment for why.
     pub fn create_share<R: RngCore + CryptoRng>(
         &self,
         participant: ParticipantId,
         local_secret_share: &SecretKey,
+        replay_guard: &mut ReplayGuard,
         rng: &mut R,
     ) -> Result<Share> {
+        replay_guard.record_use(&self.session, participant)?;
         let ring = self.params.ring();
         let t = self.params.plaintext_modulus();
         let moduli = ring.moduli();

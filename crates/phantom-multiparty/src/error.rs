@@ -41,4 +41,12 @@ pub enum MultipartyError {
     /// transport, or the share was checked against the wrong commitment set.
     #[error("share failed VSS commitment verification")]
     InvalidVssShare,
+
+    /// A participant's own `ReplayGuard` already recorded a share for this
+    /// exact session id, round, protocol, and participant - producing a
+    /// second one would leak key material via accumulated linear algebra,
+    /// regardless of that call's own smudging noise. See
+    /// `common::replay_guard::ReplayGuard`'s own doc comment.
+    #[error("share already produced for this session/round/participant")]
+    ReplayedShare,
 }

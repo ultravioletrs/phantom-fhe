@@ -272,14 +272,20 @@ The following components are not yet at production cryptographic strength:
   IV-E/Appendix A) rather than a fixed placeholder constant - see
   Workstream 7 item 5a for the full derivation and the concrete noise-budget
   check against this crate's own test fixture.
-  **Known, currently-unaddressed limitation, found during that work**: the
-  same literature warns that *retrying* a share-generation protocol (a
-  participant producing a second share for the same session/public
+  The same literature also warns that *retrying* a share-generation protocol
+  (a participant producing a second share for the same session/public
   randomness) leaks key material via accumulated linear algebra, regardless
-  of any single call's smudging noise. `mpbgv`'s protocols (CKG/GKG/RKG/PCKS)
-  do not currently guard against a participant's `create_share` being
-  invoked twice for the same session - tracked as Workstream 7 item 8, not
-  yet started.
+  of any single call's smudging noise - `mpbgv`'s four real protocols
+  (CKG/GKG/RKG's both rounds/PCKS) now guard against this directly
+  (`phantom_multiparty::common::ReplayGuard`, Workstream 7 item 8): each
+  `create_share`/`create_share_round1`/`create_share_round2` call requires a
+  `&mut ReplayGuard` and refuses (before any crypto work) a second call for
+  the same `(session id, round, protocol, participant)`. This is a
+  per-participant, per-process protection, not a defense against a
+  malicious participant (who can simply not use one) or a distributed
+  deployment across process restarts without the caller persisting the
+  guard's own state themselves - `ReplayGuard` does no I/O of its own; see
+  its own doc comment for the exact scope.
   `phantom_multiparty::vss` is a real, tested Pedersen
   verifiable-secret-sharing distributed-key-generation primitive
   (Ristretto255-based; no party or aggregating infrastructure ever
