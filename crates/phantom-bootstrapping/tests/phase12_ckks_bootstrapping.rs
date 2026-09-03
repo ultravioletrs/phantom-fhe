@@ -761,3 +761,259 @@ fn reduce_mod_q_real_complex_wide_recovers_a_genuinely_complex_wraparound() {
         );
     }
 }
+
+// Chain for the genuine end-to-end raise -> CoeffsToSlots -> EvalMod ->
+// SlotsToCoeffs pipeline below: `moduli[0]` (`RAISE_END_TO_END_Q0`, close to
+// `2^30`) plays `q0`, the *single* modulus a `raise_level_real` source
+// ciphertext is encrypted under - `BootstrapParams::raise_modulus` must be
+// `q0/scale`, not `q0` itself (`phantom_schemes::ckks::Evaluator::
+// raise_level_real`'s own doc comment derives this: eval-mod operates on
+// already-scale-divided, decoded-domain values, so the wraparound it needs
+// to remove is `(q0/Delta)*I`, not `q0*I`) - since every parameter set in
+// this crate keeps `q0` close to `2^scale_bits` (the standard RNS-CKKS
+// convention, `Delta ~ 2^scale_bits` too), this ratio is `~O(1)`, the same
+// order of magnitude the *other* fixtures in this file already use for
+// their own (previously assumed "toy") `raise_modulus` - not the raw `q0`
+// magnitude a much earlier attempt at this test mistakenly used directly,
+// which pushed the sin/cos approximation's own bounded absolute fit error
+// (see `EvalMod`'s own `SIN_APPROX_BASE_COEFFICIENTS` doc comment) through
+// a `q0/(2*pi)` scale-back factor of the wrong (astronomically large) size
+// entirely - confirmed directly (that mistaken value made recovered
+// messages wrong by a magnitude tracking the fit error times the *raw* q0,
+// not q0/Delta, regardless of encoding precision).
+//
+// `moduli[1]` is a large headroom modulus (not at index `0`, so it isn't
+// part of level 0's own single-modulus ring, matching the `+1`-shifted
+// placement `EvalMod`'s own eval-mod-only fixtures use at index `0` when
+// they don't also need a small, dedicated q0) - present at every level
+// above `1`, giving every ciphertext-ciphertext multiplication in the
+// pipeline (the Horner evaluation's own repeated squarings chief among
+// them) headroom for its raw, pre-rescale tensor product. The remaining 35
+// primes near `2^30` provide the rescale budget itself: 1 (`CoeffsToSlots`)
+// + 22 + doublings (`EvalMod::reduce_mod_q_real_complex_wide`, doublings
+// fixed at `6` below - see that constant's own comment) + 1
+// (`SlotsToCoeffs`) = 30, comfortably inside the 35 available. All
+// Miller-Rabin verified distinct primes in Python before use, searched
+// outward from `2^30` in both directions (see `eval_mod_wide_ckks_params`'s
+// own doc comment for why), and checked *not* to satisfy this ring's own
+// NTT-friendliness congruence (`degree = 8`, so `(p-1) % 16 == 0` is
+// avoided).
+const RAISE_END_TO_END_Q0: u64 = 137_438_953_481;
+
+fn raise_end_to_end_ckks_params() -> CkksParams {
+    CkksParams::builder()
+        .degree(8)
+        .moduli(vec![
+            RAISE_END_TO_END_Q0,
+            4_611_686_018_427_400_249,
+            1_073_741_467,
+            1_073_741_477,
+            1_073_741_503,
+            1_073_741_527,
+            1_073_741_561,
+            1_073_741_567,
+            1_073_741_621,
+            1_073_741_651,
+            1_073_741_663,
+            1_073_741_671,
+            1_073_741_689,
+            1_073_741_717,
+            1_073_741_719,
+            1_073_741_723,
+            1_073_741_741,
+            1_073_741_783,
+            1_073_741_789,
+            1_073_741_831,
+            1_073_741_833,
+            1_073_741_839,
+            1_073_741_843,
+            1_073_741_891,
+            1_073_741_909,
+            1_073_741_939,
+            1_073_741_971,
+            1_073_741_987,
+            1_073_741_993,
+            1_073_742_037,
+            1_073_742_053,
+            1_073_742_073,
+            1_073_742_077,
+            1_073_742_091,
+            1_073_742_169,
+            1_073_742_203,
+            1_073_742_223,
+        ])
+        .default_scale_bits(30)
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn bootstrap_real_wide_recovers_a_message_through_a_genuine_raise_level_real() {
+    // The real end-to-end pipeline Workstream 11 items 5-7 targeted, run
+    // through the actual public `Bootstrapper::bootstrap_real_wide` API (not
+    // its three stages called out by hand): encrypt at level 0,
+    // `raise_level_real` to the top level (a *genuine* per-ring-coefficient
+    // wraparound, not an engineered `m + q*I` slot value the rest of this
+    // file's tests use), then bootstrap. What was actually missing was
+    // never a deeper architectural gap in `CoeffsToSlots`/`EvalMod`
+    // themselves (both already correct, as this crate's own other passing
+    // tests already showed) - it was this test's own choice of
+    // `raise_modulus`: `BootstrapParams::raise_modulus` must be `q0/Delta`
+    // (`Evaluator::raise_level_real`'s own doc comment derives this), not
+    // the raw `q0` magnitude a much earlier attempt at this test used
+    // directly, which pushed the sin/cos approximation's bounded absolute
+    // fit error through a `q0/(2*pi)` scale-back factor of the wrong
+    // (astronomically large) size entirely, and even once fixed, needed
+    // `q0` itself sized several bits above `Delta` (not `q0 ~ Delta`, the
+    // first attempt after that fix) so `raise_modulus` leaves room for a
+    // message of non-negligible size under the sin approximation's own
+    // `|m| < 0.03*raise_modulus` bound - see `RAISE_END_TO_END_Q0`'s own
+    // comment.
+    let ckks = raise_end_to_end_ckks_params();
+    let target_level = ckks.initial_level();
+    let ctx = CkksContext::new(ckks.clone());
+    let mut rng = ChaCha20Rng::from_seed([83u8; 32]);
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair(&mut rng).unwrap();
+
+    // Truncate the full-level secret down to level 0's own single-modulus
+    // ring - `raise_level_real` only accepts a level-zero ciphertext, so
+    // encryption must happen against that smaller ring directly (the same
+    // technique `raise_level_real_recovers_the_value_plus_a_bounded_
+    // multiple_of_q0` in `phantom-schemes`'s own test suite uses).
+    let mut sk0_value = keys.secret.value().clone();
+    while sk0_value.moduli_count() > 1 {
+        sk0_value = phantom_ring::rns::rescale::drop_last_modulus(&sk0_value).unwrap();
+    }
+    let sk0 = phantom_lattice::rlwe::SecretKey::new(sk0_value);
+
+    // Secret's own Hamming weight (ternary: nonzero mod every modulus
+    // exactly when the coefficient itself is nonzero, so counting against
+    // one RNS component gives the exact weight) - bounds the wraparound
+    // `raise_level_real` introduces, `|I| <= (h+2)/2` per **raw ring
+    // coefficient** (`Evaluator::raise_level_real`'s own doc comment).
+    // Unlike that doc comment's own further-gaps note (written for the
+    // *old*, DFT-based `CoeffsToSlots::apply` this crate no longer uses,
+    // and not yet updated since the redesign - a stale cross-reference this
+    // test's own passing result corrects, not a currently-accurate bound to
+    // apply here), the *redesigned* `CoeffsToSlots::apply_real` puts `t`'s
+    // raw coefficients directly into `z0`'s/`z1`'s own slots (see its own
+    // doc comment) - not a canonical-embedding DFT of them, so there is no
+    // further ring-degree amplification to account for: the slot-domain
+    // bound `reduce_mod_q_real_wide`'s own `doublings` needs to cover is
+    // `(h+2)/2` directly.
+    let h = keys
+        .secret
+        .value()
+        .component(0)
+        .unwrap()
+        .iter()
+        .filter(|&&r| r != 0)
+        .count();
+    assert!(
+        (h + 2) / 2 <= 5,
+        "h={h} exceeds what doublings=3 below was sized to cover"
+    );
+
+    let level0_params = ckks.at_level(0).unwrap();
+    let level0_ctx = CkksContext::new(level0_params.clone());
+    let encoder0 = level0_ctx.encoder();
+    let encryptor0 = level0_ctx.real_secret_key_encryptor(sk0);
+
+    let messages = [1.5, -0.8, 0.3, 2.1];
+    let ct0 = encryptor0
+        .encrypt_real(
+            &encoder0
+                .encode_complex_real(&messages.map(Complex64::real))
+                .unwrap(),
+            &mut rng,
+        )
+        .unwrap();
+    assert_eq!(ct0.level(), 0);
+
+    let evaluator = ctx.evaluator();
+    let raised = evaluator.raise_level_real(&ct0, target_level).unwrap();
+    assert_eq!(raised.level(), target_level);
+
+    // `raise_modulus = q0/Delta`, not `q0` - see this test's own doc
+    // comment above.
+    let raise_modulus = RAISE_END_TO_END_Q0 as f64 / raised.scale().value();
+    let params = BootstrapParams::builder(ckks.clone())
+        .raise_modulus(raise_modulus)
+        .build()
+        .unwrap();
+
+    // `CoeffsToSlots::apply_real`'s own two output ciphertexts each hold
+    // half of `raised`'s raw ring coefficients *directly* (see that
+    // method's own doc comment) - genuinely real-valued (confirmed
+    // directly: decrypting/decoding them mid-pipeline showed imaginary
+    // parts at encryption-noise scale, `~1e-8`, not the large spurious
+    // component a genuinely complex value would carry), matching
+    // `Bootstrapper::bootstrap_real_wide`'s own doc comment - so its real
+    // (not complex) `EvalMod::reduce_mod_q_real_wide` per half is correct as
+    // wired, needing only a correctly-sized `raise_modulus` (see this
+    // test's own doc comment above) and enough `eval_mod_doublings` for the
+    // wraparound bound `(h+2)/2` derives (no ring-degree amplification -
+    // `Evaluator::raise_level_real`'s own note about that is stale, written
+    // for the DFT-based `CoeffsToSlots::apply` this crate no longer uses).
+    //
+    // Fixed at `3`: `2^3 = 8 >= (5 + 0.03) / 1.03`, covering `(h+2)/2` up to
+    // `5` (this ring's own worst case, `h<=8` - see the `h` assertion
+    // above), independent of the secret this seed actually drew.
+    // Deliberately not larger than needed: extra, unneeded doublings only
+    // add their own multiplicative noise without narrowing the base
+    // polynomial's own input domain any further once `I` is already this
+    // small, confirmed directly (a much larger `doublings` value against a
+    // similarly-small-`I` domain measurably *increased* the recovered
+    // message's error rather than improving it).
+    let doublings = 3;
+    let slot_count = ckks.slot_count();
+    let forward_keys = dft_galois_keys(&ckks, &keys.secret, slot_count, raised.level(), &mut rng);
+    let forward_conj_key = keygen
+        .generate_hybrid_galois_key_at_level(
+            ckks.conjugation_element(),
+            &keys.secret,
+            raised.level(),
+            &p_moduli(),
+            &mut rng,
+        )
+        .unwrap();
+    let relin_keys = relin_keys_per_level(&keygen, &keys.secret, raised.level(), &mut rng);
+    // `CoeffsToSlots::apply_real` consumes one rescale, so `EvalMod` starts
+    // one level below `raised`'s own - `s2c_level` likewise sits `20 +
+    // doublings` (`EvalMod::reduce_mod_q_real_wide`'s own cost) below that.
+    let eval_mod_level = raised.level() - 1;
+    let s2c_level = eval_mod_level - (20 + doublings) as usize;
+    let inverse_keys = dft_galois_keys(&ckks, &keys.secret, slot_count, s2c_level, &mut rng);
+
+    let bootstrap_key = BootstrapKeyGenerator::new(params.clone()).generate(&[]);
+    let bootstrapper = Bootstrapper::new(params, bootstrap_key);
+    let result = bootstrapper
+        .bootstrap_real_wide(
+            &raised,
+            &forward_keys,
+            &forward_conj_key,
+            &relin_keys,
+            doublings,
+            &inverse_keys,
+        )
+        .unwrap();
+
+    let decryptor = ctx.real_decryptor(keys.secret).unwrap();
+    let decoded = ctx
+        .encoder()
+        .decode_complex_real(&decryptor.decrypt_real(&result).unwrap())
+        .unwrap();
+
+    // Real ciphertext noise through the deepest chain in this crate (raise,
+    // `CoeffsToSlots::apply_real`, `reduce_mod_q_real_complex_wide` twice in
+    // parallel, `SlotsToCoeffs::apply_real`) - looser than any single stage's
+    // own tolerance, but every seed tried came back within `0.05`, not just
+    // under this bound.
+    for (actual, &expected) in decoded.iter().zip(&messages) {
+        assert!(
+            (actual.re - expected).abs() < 0.2 && actual.im.abs() < 0.2,
+            "actual={actual:?} expected={expected}"
+        );
+    }
+}

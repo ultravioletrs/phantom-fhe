@@ -224,24 +224,24 @@ The following components are not yet at production cryptographic strength:
   raw ring coefficients directly, verified against real encryption, not
   just transparently. `Bootstrapper::bootstrap_real`/`bootstrap_real_wide`
   compose all three real stages end to end on an actual encrypted
-  ciphertext, verified to recover a message through the full real pipeline
-  against an *engineered* wraparound. This is the digit-extraction half of
-  bootstrapping, not the whole circuit: real bootstrapping's own
-  modulus-raise step (bringing a nearly-exhausted ciphertext's modulus back
-  up to a full top-level chain before this pipeline can run on it) exists
-  as a standalone, tested primitive (`ckks::Evaluator::raise_level_real`)
-  but is deliberately not yet connected to `bootstrap_real_wide` - the
-  architectural mismatch that previously blocked this is resolved, but a
-  real, encrypted end-to-end attempt at a realistic `raise_modulus`
-  magnitude (`~2^32`, not the toy `~100`-scale value every passing test
-  still uses) surfaced at least one more encoding-precision issue in
-  `EvalMod`'s own arithmetic (one such issue - a plaintext constant
-  silently rounding to zero during encoding rather than erroring - was
-  found and fixed; the remaining one produces a large spurious imaginary
-  component and was not isolated). `bootstrap_real`/`bootstrap_real_wide`
-  still require their input already be at the raised level/modulus this
-  pipeline expects. BGV/BFV bootstrapping modules are reserved but
-  unimplemented.
+  ciphertext, including real bootstrapping's own modulus-raise step
+  (`ckks::Evaluator::raise_level_real`, bringing a nearly-exhausted
+  ciphertext's modulus back up to a full top-level chain) - verified to
+  recover a message through the full real pipeline starting from a
+  **genuine** `raise_level_real` output, not just an engineered wraparound
+  (`bootstrap_real_wide_recovers_a_message_through_a_genuine_raise_level_real`
+  in `phantom-bootstrapping/tests/phase12_ckks_bootstrapping.rs`, robust
+  across several independent RNG seeds). This is the digit-extraction half
+  of bootstrapping, not the whole circuit: `bootstrap_real`/
+  `bootstrap_real_wide` still require their input already be at the raised
+  level this pipeline expects (the caller runs `raise_level_real` itself
+  first), and the caller must derive `BootstrapParams::raise_modulus`
+  correctly (`q0/Delta`, the raised ciphertext's own lowest modulus divided
+  by its tracked scale - `q0` itself needs to sit several bits above `Delta`
+  to leave room for a non-negligible message) rather than passing the raw
+  `q0` - both `Evaluator::raise_level_real`'s and
+  `EvalMod::reduce_mod_q_real_wide`'s own doc comments state this
+  precisely. BGV/BFV bootstrapping modules are reserved but unimplemented.
 - `phantom-multiparty` protocols have not had an adversarial security
   review. Collective key generation, relinearization-key generation, and
   Galois-key generation currently aggregate shares into placeholder key

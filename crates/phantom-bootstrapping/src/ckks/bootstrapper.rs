@@ -149,6 +149,19 @@ impl Bootstrapper {
     /// half needs, applied independently (both start from the same level,
     /// so - the same "parallel branches" reasoning used throughout this
     /// pipeline - this costs its own rescales once, not twice).
+    ///
+    /// Verified end to end against a *genuine*
+    /// `phantom_schemes::ckks::Evaluator::raise_level_real` output (not an
+    /// engineered slot-domain `m + q*I` value, which every other real-path
+    /// test in this crate uses) by
+    /// `phantom-bootstrapping/tests/phase12_ckks_bootstrapping.rs`'s own
+    /// `bootstrap_real_wide_recovers_a_message_through_a_genuine_raise_level_real` -
+    /// the caller's own responsibility for that to work out is passing the
+    /// *correct* `BootstrapParams::raise_modulus` (`q0/Delta`, not the raw
+    /// `q0` - see `Evaluator::raise_level_real`'s own doc comment) and
+    /// `eval_mod_doublings` sized off the *un*-amplified `(h+2)/2` bound
+    /// (see this method's own doc comment above and `CoeffsToSlots::apply_real`'s
+    /// for why no further ring-degree amplification applies).
     pub fn bootstrap_real_wide(
         &self,
         input: &Ciphertext,

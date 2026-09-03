@@ -298,27 +298,33 @@ impl EvalMod {
     /// drifted scale exactly sidesteps the exponential-drift concern
     /// entirely, rather than needing an ever-wider tolerance as `r` grows.
     ///
-    /// **Known remaining gap, confirmed directly while building the
-    /// integration this method exists for**: this is real-only, the same
-    /// restriction [`Self::reduce_mod_q_real`]'s own doc comment already
-    /// documents ("only correctly handles real-valued messages") - but a
-    /// genuine `phantom_schemes::ckks::Evaluator::raise_level_real` call's
-    /// own wraparound is a *real* integer per **ring coefficient**, and the
-    /// forward DFT [`super::CoeffsToSlots::apply_real`] performs to reach
-    /// slot domain (what this method actually operates on) is not
-    /// magnitude-preserving *or* real-preserving for a generic real input -
-    /// confirmed directly (decoding a real ciphertext's own output right
-    /// after a genuine raise and `apply_real`, the imaginary part of every
-    /// slot was nonzero and comparable in magnitude to the real part, not
-    /// the negligible noise a correctly-real input would leave). Both this
-    /// method and [`Self::reduce_mod_q_real`] therefore need a raised
-    /// ciphertext's own slot-domain wraparound reduced as a genuinely
-    /// complex value (real and imaginary parts independently, e.g. via
-    /// `conjugate_real` extraction first, the same direction
-    /// [`Self::reduce_mod_q_real`]'s own doc comment already points at)
-    /// before a real, genuinely-exhausted ciphertext can be bootstrapped
-    /// through `Bootstrapper::bootstrap_real_wide` end to end - not
-    /// attempted here.
+    /// **Formerly documented as a remaining gap here** ("this is real-only,
+    /// but a genuine raise's slot-domain wraparound is generically complex"),
+    /// true of the *old*, generic-DFT-based `CoeffsToSlots::apply_real`
+    /// this crate no longer has, not the current one. The redesigned
+    /// `CoeffsToSlots::apply_real` (see its own doc comment) puts a raised
+    /// ciphertext's raw ring coefficients directly into `z0`'s/`z1`'s own
+    /// slots rather than taking their canonical embedding, so the
+    /// slot-domain wraparound this method actually sees is exactly the same
+    /// *real* per-coefficient integer `Evaluator::raise_level_real`
+    /// introduces - confirmed directly (decoding `z0`/`z1` after a genuine
+    /// raise showed imaginary parts at encryption-noise scale, `~1e-8`, not
+    /// the large spurious component the old DFT-based transform left). This
+    /// real-only method is therefore what a genuinely raised, genuinely
+    /// exhausted ciphertext needs, applied to each of `z0`/`z1`
+    /// independently - `Bootstrapper::bootstrap_real_wide` wires exactly
+    /// this, verified end to end (real `raise_level_real` through real
+    /// `bootstrap_real_wide`) by
+    /// `phase12_ckks_bootstrapping.rs`'s own
+    /// `bootstrap_real_wide_recovers_a_message_through_a_genuine_raise_level_real`.
+    /// The one thing that *does* still need to come from the caller
+    /// correctly: [`BootstrapParams::raise_modulus`] must be `q0/Delta` (the
+    /// raised ciphertext's own lowest modulus divided by its tracked scale),
+    /// not the raw `q0` - see `Evaluator::raise_level_real`'s own doc
+    /// comment and that test's own doc comment for why, and for how large
+    /// `q0` needs to be relative to `Delta` to leave room for a
+    /// non-negligible message under this method's own `|m| <
+    /// 0.03*raise_modulus` bound.
     pub fn reduce_mod_q_real_wide(
         &self,
         input: &Ciphertext,
