@@ -209,32 +209,36 @@ The following components are not yet at production cryptographic strength:
 - `phantom-bootstrapping::ckks`'s EvalMod stage now performs genuine scaled
   centered-modular reduction, both as a transparent scaffold
   (`EvalMod::reduce_mod_q`) and as a real, homomorphically-evaluable
-  polynomial approximation over an adjustable domain
-  (`EvalMod::reduce_mod_q_real`/`reduce_mod_q_real_wide`, a degree-17
-  odd-polynomial fit to the standard sin-based technique, widened to cover
-  a larger wraparound range via angle-doubling), each removing an unknown
-  multiple of a configurable `raise_modulus` and verified to recover a
-  message from a modulus-raised-looking input. `CoeffsToSlots`/
+  polynomial approximation over an adjustable, genuinely complex-valued
+  domain (`EvalMod::reduce_mod_q_real`/`reduce_mod_q_real_wide`/
+  `reduce_mod_q_real_complex_wide`, a degree-17 odd-polynomial fit to the
+  standard sin-based technique, widened via angle-doubling and split into
+  independent real/imaginary reduction via conjugation), each removing an
+  unknown multiple of a configurable `raise_modulus` and verified to
+  recover a message from a modulus-raised-looking input. `CoeffsToSlots`/
   `SlotsToCoeffs` also have real evaluators now (`apply_real`, against the
   dense forward/inverse DFT matrix via homomorphic rotations, consuming the
   real Galois key material `BootstrapKeyGenerator::generate_real` produces),
-  and `Bootstrapper::bootstrap_real`/`bootstrap_real_wide` compose all three
-  real stages end to end on an actual encrypted ciphertext, verified to
-  recover a message through the full real pipeline against an *engineered*
-  wraparound. This is the digit-extraction half of bootstrapping, not the
-  whole circuit: real bootstrapping's own modulus-raise step (bringing a
-  nearly-exhausted ciphertext's modulus back up to a full top-level chain
-  before this pipeline can run on it) exists as a standalone, tested
-  primitive (`ckks::Evaluator::raise_level_real`) but is deliberately not
-  yet connected to `bootstrap_real_wide` - a real raise's own wraparound
-  turns out to be a genuinely complex (not real) value once it reaches slot
-  domain, which `EvalMod`'s real-only reduction cannot correctly handle
-  regardless of domain width, confirmed directly rather than assumed; an
-  actual end-to-end attempt ran without error but did not recover the true
-  message, and was removed rather than shipped once it couldn't be verified
-  correct. `bootstrap_real`/`bootstrap_real_wide` still require their input
-  already be at the raised level/modulus this pipeline expects. BGV/BFV
-  bootstrapping modules are reserved but unimplemented.
+  and `Bootstrapper::bootstrap_real`/`bootstrap_real_wide`/
+  `bootstrap_real_complex_wide` compose all three real stages end to end on
+  an actual encrypted ciphertext, verified to recover a message through the
+  full real pipeline against an *engineered* wraparound (including a
+  genuinely complex one). This is the digit-extraction half of
+  bootstrapping, not the whole circuit: real bootstrapping's own
+  modulus-raise step (bringing a nearly-exhausted ciphertext's modulus back
+  up to a full top-level chain before this pipeline can run on it) exists
+  as a standalone, tested primitive (`ckks::Evaluator::raise_level_real`)
+  but is deliberately not yet connected to any `bootstrap_real*` variant -
+  tracing an actual end-to-end attempt found that `CoeffsToSlots::apply_real`
+  operates on a ciphertext's already-decoded canonical-embedding slots via a
+  generic DFT, not on its raw ring coefficients the way a genuine
+  modulus-raise does, so the two don't currently compose regardless of
+  domain width or real-vs-complex handling - confirmed directly (traced to
+  slot-domain values that weren't even integer multiples of the raise
+  modulus, ruling out a remaining domain-sizing explanation), not assumed.
+  `bootstrap_real`/`bootstrap_real_wide`/`bootstrap_real_complex_wide` still
+  require their input already be at the raised level/modulus this pipeline
+  expects. BGV/BFV bootstrapping modules are reserved but unimplemented.
 - `phantom-multiparty` protocols have not had an adversarial security
   review. Collective key generation, relinearization-key generation, and
   Galois-key generation currently aggregate shares into placeholder key

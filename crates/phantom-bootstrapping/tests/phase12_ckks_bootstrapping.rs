@@ -670,6 +670,84 @@ fn reduce_mod_q_real_wide_recovers_a_message_beyond_the_narrow_domain() {
     }
 }
 
+#[test]
+fn reduce_mod_q_real_complex_wide_recovers_a_genuinely_complex_wraparound() {
+    // The whole point of `reduce_mod_q_real_complex_wide`: real *and*
+    // imaginary wraparound integers, independently chosen (not the
+    // real-only `reduce_mod_q_real_wide`'s own restriction) - a real
+    // modulus-raise's own slot-domain wraparound is genuinely complex (see
+    // `ckks::Evaluator::raise_level_real`'s own doc comment), so this is
+    // what the real end-to-end pipeline actually needs.
+    let ckks = eval_mod_wide_ckks_params();
+    let raise_modulus = 100.0;
+    let doublings = 2;
+    let params = BootstrapParams::builder(ckks.clone())
+        .raise_modulus(raise_modulus)
+        .build()
+        .unwrap();
+    let mut rng = ChaCha20Rng::from_seed([71u8; 32]);
+    let ctx = CkksContext::new(ckks.clone());
+    let keygen = ctx.keygen().unwrap();
+    let keys = keygen.generate_keypair(&mut rng).unwrap();
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_secret_key_encryptor(keys.secret.clone());
+    let decryptor = ctx.real_decryptor(keys.secret.clone()).unwrap();
+
+    let relin_keys = relin_keys_per_level(&keygen, &keys.secret, ckks.initial_level(), &mut rng);
+    let conjugation_key = keygen
+        .generate_hybrid_galois_key_at_level(
+            ckks.conjugation_element(),
+            &keys.secret,
+            ckks.initial_level(),
+            &p_moduli(),
+            &mut rng,
+        )
+        .unwrap();
+    let eval_mod = EvalMod::new(params);
+
+    // |m| < 0.03*q = 3.0 for both real and imaginary parts; I_re/I_im each
+    // range up to +-4, independently - the genuinely complex case
+    // `reduce_mod_q_real_wide` alone can't handle (it would mix real and
+    // imaginary parts through odd-power cross terms).
+    let messages = [
+        Complex64::new(2.5, -1.5),
+        Complex64::new(-1.0, 0.8),
+        Complex64::new(0.75, 2.1),
+        Complex64::new(-2.9, -0.6),
+    ];
+    let wrap_integers_re = [4i64, -4, 3, -2];
+    let wrap_integers_im = [2i64, 3, -4, 1];
+    let combined: Vec<Complex64> = messages
+        .iter()
+        .zip(wrap_integers_re.iter().zip(&wrap_integers_im))
+        .map(|(m, (&ire, &iim))| {
+            Complex64::new(
+                m.re + raise_modulus * ire as f64,
+                m.im + raise_modulus * iim as f64,
+            )
+        })
+        .collect();
+
+    let ct = encryptor
+        .encrypt_real(&encoder.encode_complex_real(&combined).unwrap(), &mut rng)
+        .unwrap();
+    assert_eq!(ct.level(), ckks.initial_level());
+
+    let result = eval_mod
+        .reduce_mod_q_real_complex_wide(&ct, &relin_keys, doublings, &conjugation_key)
+        .unwrap();
+    let decoded = encoder
+        .decode_complex_real(&decryptor.decrypt_real(&result).unwrap())
+        .unwrap();
+
+    for (actual, expected) in decoded.iter().zip(&messages) {
+        assert!(
+            (actual.re - expected.re).abs() < 0.2 && (actual.im - expected.im).abs() < 0.2,
+            "actual={actual:?} expected={expected:?}"
+        );
+    }
+}
+
 // `eval_mod_real_ckks_params`'s own 20 moduli only budget the 19 rescales
 // `reduce_mod_q_real` itself needs (see that fixture's own doc comment) -
 // chaining `Bootstrapper::bootstrap_real`'s own extra

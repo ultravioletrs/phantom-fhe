@@ -149,6 +149,42 @@ impl Bootstrapper {
         self.slots_to_coeffs.apply_real(&slots, s2c_galois_keys)
     }
 
+    /// Generalizes [`Self::bootstrap_real_wide`] to a genuinely complex
+    /// slot-domain wraparound via [`EvalMod::reduce_mod_q_real_complex_wide`],
+    /// the piece that closes the gap that method's own doc comment (and
+    /// `phantom_schemes::ckks::Evaluator::raise_level_real`'s) flags: a real
+    /// modulus-raise's own wraparound, once it reaches slot domain via
+    /// [`CoeffsToSlots::apply_real`]'s forward DFT, is generically complex,
+    /// not real, so `bootstrap_real`/`bootstrap_real_wide`'s real-only
+    /// `EvalMod` stage can't correctly remove it regardless of domain width.
+    /// `eval_mod_conjugation_key` must be a real
+    /// [`phantom_lattice::rlwe::GaloisKey`] for
+    /// `phantom_schemes::ckks::CkksParams::conjugation_element`, generated
+    /// at the level [`CoeffsToSlots::apply_real`]'s own output lands at (one
+    /// below `input`'s) - the same per-level key requirement every other
+    /// real Galois/relinearization key in this pipeline already has.
+    pub fn bootstrap_real_complex_wide(
+        &self,
+        input: &Ciphertext,
+        c2s_galois_keys: &[GaloisKey],
+        eval_mod_relin_keys: &[RelinearizationKey],
+        eval_mod_doublings: u32,
+        eval_mod_conjugation_key: &GaloisKey,
+        s2c_galois_keys: &[GaloisKey],
+    ) -> Result<Ciphertext> {
+        if self.params.ckks_params().conjugate_invariant() {
+            return Ok(input.clone());
+        }
+        let slots = self.coeffs_to_slots.apply_real(input, c2s_galois_keys)?;
+        let slots = self.eval_mod.reduce_mod_q_real_complex_wide(
+            &slots,
+            eval_mod_relin_keys,
+            eval_mod_doublings,
+            eval_mod_conjugation_key,
+        )?;
+        self.slots_to_coeffs.apply_real(&slots, s2c_galois_keys)
+    }
+
     fn refresh_metadata(&self, ciphertext: &Ciphertext) -> Ciphertext {
         Ciphertext::new(
             ciphertext.slots().to_vec(),

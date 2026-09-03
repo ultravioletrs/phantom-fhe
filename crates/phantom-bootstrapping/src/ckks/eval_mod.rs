@@ -30,7 +30,7 @@
 //! "wraparound" integers are themselves independent.
 
 use phantom_circuits::ckks::{Mod1Evaluator, PolynomialEvaluator};
-use phantom_lattice::rlwe::RelinearizationKey;
+use phantom_lattice::rlwe::{GaloisKey, RelinearizationKey};
 use phantom_schemes::ckks::{Ciphertext, CkksParams, Complex64, Encoder, Evaluator, Plaintext};
 
 use super::BootstrapParams;
@@ -440,6 +440,114 @@ impl EvalMod {
             .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
         evaluator
             .rescale_next_real(&rescaled_up)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))
+    }
+
+    /// Generalizes [`Self::reduce_mod_q_real_wide`] to a genuinely
+    /// **complex** slot-domain value - the gap that method's own doc
+    /// comment and `phantom_schemes::ckks::Evaluator::raise_level_real`'s
+    /// both flag: a real modulus-raise's own wraparound is a real integer
+    /// per **ring coefficient**, but `super::CoeffsToSlots::apply_real`'s
+    /// forward DFT of a real sequence is generically complex, not real - so
+    /// a raised ciphertext's actual slot-domain wraparound needs a
+    /// genuinely complex reduction, not the real-only
+    /// `reduce_mod_q_real`/`reduce_mod_q_real_wide`.
+    ///
+    /// Splits `input` into real and imaginary parts homomorphically via
+    /// `conjugate_real` (`Re(z) = (z + conj(z))/2`, `Im(z) = (z -
+    /// conj(z))/(2i)`, i.e. `(z - conj(z)) * (-i/2)` - both genuinely
+    /// real-valued once extracted, since a complex number's own real and
+    /// imaginary parts are each real by definition), reduces each
+    /// independently via [`Self::reduce_mod_q_real_wide`] (real and
+    /// imaginary wraparound integers are themselves independent - the same
+    /// reasoning [`Self::reduce_mod_q`]'s own doc comment already gives for
+    /// the transparent scaffold), then recombines `reduced_real +
+    /// i*reduced_imag`.
+    ///
+    /// Costs `1` (extraction: `conjugate_real` is free - no rescale, see
+    /// its own doc comment - `add_real`/`sub_real` likewise, only the
+    /// following `mul_plain_real`+rescale for each of `Re`/`Im` costs a
+    /// level, and both start from the same input level and cost the same
+    /// one rescale, so this consumes it once, not twice) `+ (19 +
+    /// doublings)` (the shared real-only reduction, itself run twice - once
+    /// per part - but in parallel from the same starting level, the same
+    /// "doesn't stack" reasoning [`Self::reduce_mod_q_real_wide`]'s own doc
+    /// comment gives for its own `sin`/`cos` branches) `+ 1` (recombination,
+    /// symmetric for the same reason: both `reduced_real`/`reduced_imag`
+    /// get their own `mul_plain_real`-by-unit-constant-then-rescale before
+    /// `add_real`, even though only the imaginary branch's constant is
+    /// actually `i` rather than `1`, so their scales stay exactly matched
+    /// rather than needing `Scale::compatible`'s tolerance to paper over an
+    /// asymmetry) `= 21 + doublings` rescales total.
+    pub fn reduce_mod_q_real_complex_wide(
+        &self,
+        input: &Ciphertext,
+        relin_keys: &[RelinearizationKey],
+        doublings: u32,
+        conjugation_key: &GaloisKey,
+    ) -> Result<Ciphertext> {
+        let evaluator = Evaluator::new(self.params.ckks_params().clone());
+        let slot_count = self.params.ckks_params().slot_count();
+
+        let encode_constant_at = |level: usize, value: Complex64| -> Result<Plaintext> {
+            let level_params = self
+                .params
+                .ckks_params()
+                .at_level(level)
+                .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+            let values = vec![value; slot_count];
+            Encoder::new(level_params)
+                .encode_complex_real(&values)
+                .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))
+        };
+
+        let conj = evaluator
+            .conjugate_real(input, conjugation_key)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+
+        let sum = evaluator
+            .add_real(input, &conj)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+        let half = encode_constant_at(sum.level(), Complex64::real(0.5))?;
+        let real_ct = evaluator
+            .mul_plain_real(&sum, &half)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+        let real_ct = evaluator
+            .rescale_next_real(&real_ct)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+
+        let diff = evaluator
+            .sub_real(input, &conj)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+        let neg_half_i = encode_constant_at(diff.level(), Complex64::new(0.0, -0.5))?;
+        let imag_ct = evaluator
+            .mul_plain_real(&diff, &neg_half_i)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+        let imag_ct = evaluator
+            .rescale_next_real(&imag_ct)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+
+        let reduced_real = self.reduce_mod_q_real_wide(&real_ct, relin_keys, doublings)?;
+        let reduced_imag = self.reduce_mod_q_real_wide(&imag_ct, relin_keys, doublings)?;
+
+        let one = encode_constant_at(reduced_real.level(), Complex64::real(1.0))?;
+        let real_part = evaluator
+            .mul_plain_real(&reduced_real, &one)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+        let real_part = evaluator
+            .rescale_next_real(&real_part)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+
+        let i_const = encode_constant_at(reduced_imag.level(), Complex64::new(0.0, 1.0))?;
+        let imag_part = evaluator
+            .mul_plain_real(&reduced_imag, &i_const)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+        let imag_part = evaluator
+            .rescale_next_real(&imag_part)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+
+        evaluator
+            .add_real(&real_part, &imag_part)
             .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))
     }
 }
