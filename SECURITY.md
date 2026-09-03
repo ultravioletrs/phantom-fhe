@@ -244,26 +244,31 @@ The following components are not yet at production cryptographic strength:
   precisely. BGV/BFV bootstrapping modules are reserved but unimplemented.
 - `phantom-multiparty` protocols have not had an adversarial security
   review. `mpbgv::CollectiveKeyGen`, `mpbgv::GaloisKeyGen`,
-  `mpbgv::RelinearizationKeyGen`, and `mpbgv::ReEncryptor` are real: each
-  participant generates an ordinary small RLWE secret independently (never
-  transmitted or assembled by anyone, including the infrastructure
-  aggregating shares), contributes a public, `t`-scaled share to a genuine
-  collective BGV public key, a genuine collective rotation key, and a
-  genuine collective relinearization key, and later contributes a real
-  collaborative key-switching (PCKS) share to re-encrypt a ciphertext
-  toward a separate recipient's own key - additive n-of-n throughout
-  (every contributing participant, not a threshold subset; deliberately
-  not a weaker t-of-n variant - see `docs/internal/implementation-plan.md`'s
-  Workstream 7 item 5b for why). `RelinearizationKeyGen` is structurally
-  different from the other three (relinearization needs the collective
-  secret's square, with cross terms no single participant can form alone),
-  so it runs a genuine two-round protocol instead of a one-round additive
-  share - see Workstream 7 item 4d for the full construction.
-  `PartialDecryptor` and `mpbgv`'s own `InteractiveBootstrap` still use
+  `mpbgv::RelinearizationKeyGen`, `mpbgv::ReEncryptor`, and
+  `mpbgv::PartialDecryptor` are real: each participant generates an
+  ordinary small RLWE secret independently (never transmitted or assembled
+  by anyone, including the infrastructure aggregating shares), contributes
+  a public, `t`-scaled share to a genuine collective BGV public key, a
+  genuine collective rotation key, and a genuine collective relinearization
+  key, and later contributes a real collaborative key-switching (PCKS)
+  share to re-encrypt a ciphertext toward a separate recipient's own key,
+  or a real partial-decryption share to collectively decrypt a ciphertext
+  directly - additive n-of-n throughout (every contributing participant,
+  not a threshold subset; deliberately not a weaker t-of-n variant - see
+  `docs/internal/implementation-plan.md`'s Workstream 7 item 5b for why).
+  `RelinearizationKeyGen` is structurally different from the other four
+  (relinearization needs the collective secret's square, with cross terms
+  no single participant can form alone), so it runs a genuine two-round
+  protocol instead of a one-round additive share - see Workstream 7 item
+  4d for the full construction. `PartialDecryptor` is structurally the
+  simplest of the five - a special case of `ReEncryptor`'s own PCKS
+  construction, "collective key-switching toward the null key" - see
+  Workstream 7 item 5c. `mpbgv`'s own `InteractiveBootstrap` still uses
   byte-equality aggregation (`ensure_equal_payloads`), not real
   cryptographic combination; `mpbfv`/`mpckks` have not yet had their own
-  `CollectiveKeyGen`/`GaloisKeyGen`/`RelinearizationKeyGen`/`ReEncryptor`
-  wired to real key material at all. `ReEncryptor`'s own smudging noise is
+  `CollectiveKeyGen`/`GaloisKeyGen`/`RelinearizationKeyGen`/`ReEncryptor`/
+  `PartialDecryptor` wired to real key material at all. `ReEncryptor`'s own
+  smudging noise is
   now a rigorously derived bound (`phantom_lattice::security::smudging_std_dev`,
   `sigma_smudge = ciphertext_noise_bound * 2^(statistical_security_bits/2)`,
   the same noise-flooding relationship Mouchet, Troncoso-Pastoriza, Bossuat
@@ -271,12 +276,14 @@ The following components are not yet at production cryptographic strength:
   [eprint 2020/304](https://eprint.iacr.org/2020/304), Section
   IV-E/Appendix A) rather than a fixed placeholder constant - see
   Workstream 7 item 5a for the full derivation and the concrete noise-budget
-  check against this crate's own test fixture.
+  check against this crate's own test fixture. `PartialDecryptor` reuses the
+  identical formula unchanged (item 5c).
   The same literature also warns that *retrying* a share-generation protocol
   (a participant producing a second share for the same session/public
   randomness) leaks key material via accumulated linear algebra, regardless
-  of any single call's smudging noise - `mpbgv`'s four real protocols
-  (CKG/GKG/RKG's both rounds/PCKS) now guard against this directly
+  of any single call's smudging noise - `mpbgv`'s five real protocols
+  (CKG/GKG/RKG's both rounds/PCKS/PartialDecryptor) now guard against this
+  directly
   (`phantom_multiparty::common::ReplayGuard`, Workstream 7 item 8): each
   `create_share`/`create_share_round1`/`create_share_round2` call requires a
   `&mut ReplayGuard` and refuses (before any crypto work) a second call for

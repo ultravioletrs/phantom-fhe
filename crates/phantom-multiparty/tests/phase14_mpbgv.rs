@@ -543,27 +543,91 @@ fn collective_galois_key_generation_via_real_dkg_rotates_a_genuine_ciphertext() 
 
 #[test]
 fn partial_decryption_reconstructs_plaintext() {
-    let params = params();
-    let ctx = BgvContext::new(params.clone());
+    // Real, end-to-end proof that `PartialDecryptor` is genuine collective
+    // decryption, not just checked-identical byte copying: the same `n`
+    // participants who generate a real collective public key
+    // (`CollectiveKeyGen`) also collectively decrypt a real ciphertext
+    // under it, and `aggregate_plaintext`'s own output already *is* the
+    // decrypted plaintext - no test-only secret reconstruction needed at
+    // all this time, unlike CKG/GKG/RKG/PCKS's own tests, since that's the
+    // actual point of partial decryption.
+    let params = real_ckg_params();
+    let ring = params.ring();
+    let n = 3;
+    let ckg_session = session(ProtocolKind::CollectiveKeyGen);
+    let partial_session = session(ProtocolKind::PartialDecryption);
+    let participants: Vec<ParticipantId> = (1..=n as u64).map(id).collect();
     let mut rng = rng();
-    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+
+    let secrets: Vec<Vec<i128>> = (0..n)
+        .map(|_| {
+            (0..ring.degree())
+                .map(|_| (rng.next_u32() % 3) as i128 - 1)
+                .collect()
+        })
+        .collect();
+    let local_secret_shares: Vec<SecretKey> = secrets
+        .iter()
+        .map(|secret| SecretKey::new(embed_centered_coeffs(secret, ring.moduli()).unwrap()))
+        .collect();
+
+    let mut replay_guards: Vec<ReplayGuard> =
+        participants.iter().map(|_| ReplayGuard::new()).collect();
+
+    let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+    let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
+        ckg_aggregator
+            .add_share(
+                ckg.create_share(participant, local_secret_share, replay_guard, &mut rng)
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_public_key = ckg.aggregate_public_key(&ckg_aggregator).unwrap();
+
+    let ctx = BgvContext::new(params.clone());
     let encoder = ctx.encoder();
-    let encryptor = ctx.encryptor(keys.public).unwrap();
+    let encryptor = ctx.real_encryptor(collective_public_key);
     let plaintext = encoder.encode_u64(&[7, 8, 9, 10]).unwrap();
     let ciphertext = encryptor.encrypt(&plaintext, &mut rng).unwrap();
-    let partial = PartialDecryptor::new(params.clone(), session(ProtocolKind::PartialDecryption));
-    let mut aggregator = ShareAggregator::new(
-        session(ProtocolKind::PartialDecryption),
-        ShareKind::PartialDecryption,
-    );
 
-    aggregator
-        .add_share(partial.create_share(id(1), &ciphertext).unwrap())
+    let ciphertext_noise_bound =
+        phantom_schemes::bgv::noise::fresh_public_key_noise_bound(ring.degree());
+    let partial = PartialDecryptor::new(
+        params,
+        partial_session.clone(),
+        phantom_lattice::security::RECOMMENDED_STATISTICAL_SECURITY_BITS,
+    );
+    let mut partial_aggregator =
+        ShareAggregator::new(partial_session, ShareKind::PartialDecryption);
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
+        partial_aggregator
+            .add_share(
+                partial
+                    .create_share(
+                        participant,
+                        local_secret_share,
+                        &ciphertext,
+                        ciphertext_noise_bound,
+                        replay_guard,
+                        &mut rng,
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let reconstructed = partial
+        .aggregate_plaintext(&partial_aggregator, &ciphertext)
         .unwrap();
-    aggregator
-        .add_share(partial.create_share(id(2), &ciphertext).unwrap())
-        .unwrap();
-    let reconstructed = partial.aggregate_plaintext(&aggregator).unwrap();
 
     assert_eq!(
         &encoder.decode_u64(&reconstructed).unwrap()[..4],
@@ -573,17 +637,48 @@ fn partial_decryption_reconstructs_plaintext() {
 
 #[test]
 fn invalid_shares_are_detected() {
-    let params = params();
+    // This test's own point is `ShareAggregator`-level validation
+    // (duplicate participants, stale sessions), orthogonal to whether
+    // `PartialDecryptor`'s own cryptography is real - real params/secret/
+    // ciphertext are used only because `create_share` now does genuine
+    // ring arithmetic requiring valid inputs, not to prove decryption
+    // correctness itself (see `partial_decryption_reconstructs_plaintext`
+    // for that).
+    let params = real_ckg_params();
+    let ring = params.ring();
     let ctx = BgvContext::new(params.clone());
     let mut rng = rng();
-    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+    let keys = ctx
+        .keygen()
+        .unwrap()
+        .generate_keypair_real(&mut rng)
+        .unwrap();
     let encoder = ctx.encoder();
-    let encryptor = ctx.encryptor(keys.public).unwrap();
+    let encryptor = ctx.real_encryptor(keys.public);
     let ciphertext = encryptor
         .encrypt(&encoder.encode_u64(&[1, 2]).unwrap(), &mut rng)
         .unwrap();
-    let partial = PartialDecryptor::new(params.clone(), session(ProtocolKind::PartialDecryption));
-    let share = partial.create_share(id(1), &ciphertext).unwrap();
+    let secret =
+        SecretKey::new(embed_centered_coeffs(&vec![0i128; ring.degree()], ring.moduli()).unwrap());
+    let ciphertext_noise_bound =
+        phantom_schemes::bgv::noise::fresh_public_key_noise_bound(ring.degree());
+    let mut replay_guard = ReplayGuard::new();
+
+    let partial = PartialDecryptor::new(
+        params.clone(),
+        session(ProtocolKind::PartialDecryption),
+        phantom_lattice::security::RECOMMENDED_STATISTICAL_SECURITY_BITS,
+    );
+    let share = partial
+        .create_share(
+            id(1),
+            &secret,
+            &ciphertext,
+            ciphertext_noise_bound,
+            &mut replay_guard,
+            &mut rng,
+        )
+        .unwrap();
     let mut aggregator = ShareAggregator::new(
         session(ProtocolKind::PartialDecryption),
         ShareKind::PartialDecryption,
@@ -595,7 +690,7 @@ fn invalid_shares_are_detected() {
     );
 
     let stale_partial = PartialDecryptor::new(
-        params.clone(),
+        params,
         SessionState::new(
             SessionId::new(999).unwrap(),
             ProtocolKind::PartialDecryption,
@@ -603,8 +698,18 @@ fn invalid_shares_are_detected() {
             2,
         )
         .unwrap(),
+        phantom_lattice::security::RECOMMENDED_STATISTICAL_SECURITY_BITS,
     );
-    let stale = stale_partial.create_share(id(2), &ciphertext).unwrap();
+    let stale = stale_partial
+        .create_share(
+            id(2),
+            &secret,
+            &ciphertext,
+            ciphertext_noise_bound,
+            &mut replay_guard,
+            &mut rng,
+        )
+        .unwrap();
     assert_eq!(
         aggregator.add_share(stale).unwrap_err(),
         MultipartyError::StaleShare

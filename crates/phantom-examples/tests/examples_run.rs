@@ -17,7 +17,6 @@ fn documented_examples_run_on_toy_presets() {
         ckks_dft().unwrap(),
         ckks_inverse().unwrap(),
         ckks_bootstrapping().unwrap(),
-        mpbgv_basic().unwrap(),
         mpckks_basic().unwrap(),
         mpckks_interactive_bootstrap().unwrap(),
     ];
@@ -33,10 +32,16 @@ fn documented_examples_run_on_toy_presets() {
 
 #[test]
 fn real_examples_run_on_realistically_sized_parameters() {
+    // `mpbgv_basic` moved here alongside the others: `mpbgv::CollectiveKeyGen`/
+    // `PartialDecryptor` are real now (Workstream 7), and real BGV needs
+    // noise-safe, realistically-sized parameters - the toy preset the other
+    // group above uses was never safe for this path (see
+    // `bgv_real_basic`'s own doc comment for the same requirement).
     let outputs = [
         bgv_real_basic().unwrap(),
         bfv_real_basic().unwrap(),
         ckks_real_basic().unwrap(),
+        mpbgv_basic().unwrap(),
     ];
 
     for output in outputs {

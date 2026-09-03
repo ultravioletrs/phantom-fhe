@@ -9,12 +9,14 @@ use phantom_bootstrapping::ckks::{
 use phantom_circuits::bgv::PolynomialEvaluator as BgvPolynomialEvaluator;
 use phantom_circuits::ckks::{DftDirection, DftEvaluator, InverseEvaluator};
 use phantom_lattice::rgsw::GadgetDecompositionParams;
+use phantom_lattice::rlwe::SecretKey;
 use phantom_multiparty::common::{
-    ParticipantId, ParticipantSet, ProtocolKind, SessionId, SessionState, ShareAggregator,
-    ShareKind,
+    ParticipantId, ParticipantSet, ProtocolKind, ReplayGuard, SessionId, SessionState,
+    ShareAggregator, ShareKind,
 };
 use phantom_multiparty::mpbgv;
 use phantom_multiparty::mpckks;
+use phantom_ring::rns::extension::embed_centered_coeffs;
 use phantom_ring::{Degree, Modulus, Ring};
 use phantom_schemes::bfv::{BfvContext, BfvParams};
 use phantom_schemes::bgv::{BgvContext, BgvParams};
@@ -359,25 +361,77 @@ pub fn ckks_bootstrapping() -> Result<ExampleOutput, ExampleError> {
     ))
 }
 
-/// Runs a multiparty BGV partial-decryption workflow.
+/// Runs a **real** multiparty BGV collective (partial) decryption workflow:
+/// two participants generate a real collective public key via
+/// `mpbgv::CollectiveKeyGen`, encrypt under it, then collectively decrypt
+/// via `mpbgv::PartialDecryptor` (see that module's own doc comment - it's
+/// PCKS's own "key-switch to the null key" special case). Unlike
+/// `bgv_basic`/`bgv_polynomial` above, this needs realistically-sized
+/// parameters (`bgv_real_params()`), the same requirement every other real
+/// BGV path in this crate has (see `bgv_real_basic`'s own doc comment) -
+/// `mpbgv`'s real protocols were transparent placeholders when this example
+/// (and the toy preset it used) was first written.
 pub fn mpbgv_basic() -> Result<ExampleOutput, ExampleError> {
-    let params = bgv_params()?;
-    let ctx = BgvContext::new(params.clone());
+    let params = bgv_real_params()?;
+    let ring = params.ring();
     let mut rng = rng(7);
-    let keys = ctx.keygen()?.generate_keypair(&mut rng)?;
+
+    // Two participants' own small (ternary-shaped) secrets - never
+    // transmitted, only their own protocol shares are.
+    let secrets = [
+        SecretKey::new(embed_centered_coeffs(
+            &[1i128, -1, 0, 1, -1, 0, 1, -1],
+            ring.moduli(),
+        )?),
+        SecretKey::new(embed_centered_coeffs(
+            &[-1i128, 1, 0, -1, 1, 0, -1, 1],
+            ring.moduli(),
+        )?),
+    ];
+    // One `ReplayGuard` per participant, reused across every real `mpbgv`
+    // protocol call that participant makes below (CKG, then partial
+    // decryption).
+    let mut replay_guards = [ReplayGuard::new(), ReplayGuard::new()];
+
+    let ckg_session = session(ProtocolKind::CollectiveKeyGen, 100)?;
+    let ckg = mpbgv::CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+    let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
+    for (index, secret) in secrets.iter().enumerate() {
+        ckg_aggregator.add_share(ckg.create_share(
+            id(index as u64 + 1)?,
+            secret,
+            &mut replay_guards[index],
+            &mut rng,
+        )?)?;
+    }
+    let collective_public_key = ckg.aggregate_public_key(&ckg_aggregator)?;
+
+    let ctx = BgvContext::new(params.clone());
     let encoder = ctx.encoder();
     let ciphertext = ctx
-        .encryptor(keys.public)?
+        .real_encryptor(collective_public_key)
         .encrypt(&encoder.encode_u64(&[7, 8, 9, 10])?, &mut rng)?;
-    let partial =
-        mpbgv::PartialDecryptor::new(params, session(ProtocolKind::PartialDecryption, 100)?);
-    let mut aggregator = ShareAggregator::new(
-        session(ProtocolKind::PartialDecryption, 100)?,
-        ShareKind::PartialDecryption,
+
+    let ciphertext_noise_bound =
+        phantom_schemes::bgv::noise::fresh_public_key_noise_bound(ring.degree());
+    let partial_session = session(ProtocolKind::PartialDecryption, 100)?;
+    let partial = mpbgv::PartialDecryptor::new(
+        params,
+        partial_session.clone(),
+        phantom_lattice::security::RECOMMENDED_STATISTICAL_SECURITY_BITS,
     );
-    aggregator.add_share(partial.create_share(id(1)?, &ciphertext)?)?;
-    aggregator.add_share(partial.create_share(id(2)?, &ciphertext)?)?;
-    let reconstructed = partial.aggregate_plaintext(&aggregator)?;
+    let mut aggregator = ShareAggregator::new(partial_session, ShareKind::PartialDecryption);
+    for (index, secret) in secrets.iter().enumerate() {
+        aggregator.add_share(partial.create_share(
+            id(index as u64 + 1)?,
+            secret,
+            &ciphertext,
+            ciphertext_noise_bound,
+            &mut replay_guards[index],
+            &mut rng,
+        )?)?;
+    }
+    let reconstructed = partial.aggregate_plaintext(&aggregator, &ciphertext)?;
     Ok(ExampleOutput::new(
         "mpbgv_basic",
         encoder.decode_u64(&reconstructed)?[..4].iter(),
