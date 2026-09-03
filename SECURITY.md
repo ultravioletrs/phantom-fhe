@@ -216,29 +216,32 @@ The following components are not yet at production cryptographic strength:
   independent real/imaginary reduction via conjugation), each removing an
   unknown multiple of a configurable `raise_modulus` and verified to
   recover a message from a modulus-raised-looking input. `CoeffsToSlots`/
-  `SlotsToCoeffs` also have real evaluators now (`apply_real`, against the
-  dense forward/inverse DFT matrix via homomorphic rotations, consuming the
-  real Galois key material `BootstrapKeyGenerator::generate_real` produces),
-  and `Bootstrapper::bootstrap_real`/`bootstrap_real_wide`/
-  `bootstrap_real_complex_wide` compose all three real stages end to end on
-  an actual encrypted ciphertext, verified to recover a message through the
-  full real pipeline against an *engineered* wraparound (including a
-  genuinely complex one). This is the digit-extraction half of
+  `SlotsToCoeffs` also have real evaluators now, rebuilt from real CKKS
+  bootstrapping's own CoeffToSlot/SlotToCoeff construction
+  (Cheon-Han-Kim-Kim-Song, EUROCRYPT 2018) after an earlier, generic-DFT-based
+  version was found not to correspond to that operation at all - the
+  corrected version produces **two** ciphertexts holding a ciphertext's own
+  raw ring coefficients directly, verified against real encryption, not
+  just transparently. `Bootstrapper::bootstrap_real`/`bootstrap_real_wide`
+  compose all three real stages end to end on an actual encrypted
+  ciphertext, verified to recover a message through the full real pipeline
+  against an *engineered* wraparound. This is the digit-extraction half of
   bootstrapping, not the whole circuit: real bootstrapping's own
   modulus-raise step (bringing a nearly-exhausted ciphertext's modulus back
   up to a full top-level chain before this pipeline can run on it) exists
   as a standalone, tested primitive (`ckks::Evaluator::raise_level_real`)
-  but is deliberately not yet connected to any `bootstrap_real*` variant -
-  tracing an actual end-to-end attempt found that `CoeffsToSlots::apply_real`
-  operates on a ciphertext's already-decoded canonical-embedding slots via a
-  generic DFT, not on its raw ring coefficients the way a genuine
-  modulus-raise does, so the two don't currently compose regardless of
-  domain width or real-vs-complex handling - confirmed directly (traced to
-  slot-domain values that weren't even integer multiples of the raise
-  modulus, ruling out a remaining domain-sizing explanation), not assumed.
-  `bootstrap_real`/`bootstrap_real_wide`/`bootstrap_real_complex_wide` still
-  require their input already be at the raised level/modulus this pipeline
-  expects. BGV/BFV bootstrapping modules are reserved but unimplemented.
+  but is deliberately not yet connected to `bootstrap_real_wide` - the
+  architectural mismatch that previously blocked this is resolved, but a
+  real, encrypted end-to-end attempt at a realistic `raise_modulus`
+  magnitude (`~2^32`, not the toy `~100`-scale value every passing test
+  still uses) surfaced at least one more encoding-precision issue in
+  `EvalMod`'s own arithmetic (one such issue - a plaintext constant
+  silently rounding to zero during encoding rather than erroring - was
+  found and fixed; the remaining one produces a large spurious imaginary
+  component and was not isolated). `bootstrap_real`/`bootstrap_real_wide`
+  still require their input already be at the raised level/modulus this
+  pipeline expects. BGV/BFV bootstrapping modules are reserved but
+  unimplemented.
 - `phantom-multiparty` protocols have not had an adversarial security
   review. Collective key generation, relinearization-key generation, and
   Galois-key generation currently aggregate shares into placeholder key

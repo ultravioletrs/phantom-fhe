@@ -3,9 +3,9 @@
 
 use phantom_circuits::ckks::{DftDirection, DftEvaluator, LinearTransformEvaluator};
 use phantom_lattice::rlwe::GaloisKey;
-use phantom_schemes::ckks::Ciphertext;
+use phantom_schemes::ckks::{Ciphertext, Evaluator};
 
-use super::coeffs_to_slots::dft_matrix;
+use super::coeffs_to_slots::u0_u1_matrices;
 use super::BootstrapParams;
 use crate::{BootstrappingError, Result};
 
@@ -30,24 +30,48 @@ impl SlotsToCoeffs {
             .map_err(|_| BootstrappingError::CircuitOperation("slots-to-coefficients"))
     }
 
-    /// Applies the **real** (encrypted) inverse transform - see
-    /// [`super::CoeffsToSlots::apply_real`]'s own doc comment for the
-    /// algorithm and the `n = slot_count` constraint; this is the exact
-    /// same diagonal method against the inverse DFT matrix instead of the
-    /// forward one.
+    /// Applies the **real** (encrypted) inverse of
+    /// [`super::CoeffsToSlots::apply_real`] - see that method's own doc
+    /// comment for the derivation. Given the two ciphertexts it produced
+    /// (or, after `EvalMod` has reduced each independently, their
+    /// corrected replacements), reconstructs the single ciphertext whose
+    /// own canonical-embedding slots are `z' = U_0 . z0 + U_1 . z1` (the
+    /// paper's own inverse identity, verified alongside the forward one) -
+    /// no conjugation needed this direction, just two
+    /// [`LinearTransformEvaluator::apply_real`] calls (against `U_0`,
+    /// `U_1` directly, not their conjugate-transposes) plus an `add_real`.
+    ///
+    /// `z0`/`z1` must be at the same level; `galois_keys` must contain one
+    /// real [`GaloisKey`] per rotation offset `1..n` (`n = slot_count`),
+    /// generated at that level. Costs one rescale (both underlying
+    /// `apply_real` calls are parallel branches from `z0`'s/`z1`'s own
+    /// starting level).
     pub fn apply_real(
         &self,
-        ciphertext: &Ciphertext,
+        z0: &Ciphertext,
+        z1: &Ciphertext,
         galois_keys: &[GaloisKey],
     ) -> Result<Ciphertext> {
         let n = self.params.ckks_params().slot_count();
-        let matrix = dft_matrix(n, DftDirection::Inverse);
+        let (u0, u1) = u0_u1_matrices(n);
         let lintrans = LinearTransformEvaluator::new(self.params.ckks_params().clone());
-        let diagonals = lintrans
-            .diagonalize(&matrix)
+        let evaluator = Evaluator::new(self.params.ckks_params().clone());
+
+        let diag_u0 = lintrans
+            .diagonalize(&u0)
             .map_err(|_| BootstrappingError::CircuitOperation("slots-to-coefficients"))?;
-        lintrans
-            .apply_real(ciphertext, &diagonals, galois_keys)
+        let diag_u1 = lintrans
+            .diagonalize(&u1)
+            .map_err(|_| BootstrappingError::CircuitOperation("slots-to-coefficients"))?;
+
+        let term0 = lintrans
+            .apply_real(z0, &diag_u0, galois_keys)
+            .map_err(|_| BootstrappingError::CircuitOperation("slots-to-coefficients"))?;
+        let term1 = lintrans
+            .apply_real(z1, &diag_u1, galois_keys)
+            .map_err(|_| BootstrappingError::CircuitOperation("slots-to-coefficients"))?;
+        evaluator
+            .add_real(&term0, &term1)
             .map_err(|_| BootstrappingError::CircuitOperation("slots-to-coefficients"))
     }
 }

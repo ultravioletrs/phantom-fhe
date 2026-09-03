@@ -263,17 +263,18 @@ impl EvalMod {
     /// across that whole range, not compounding into anything close to
     /// `reduce_mod_q_real`'s original (lower-degree, `r=0`-only) `~3%`.
     ///
-    /// Costs `1 + 17 + r + 1 = 19 + r` rescales total (pre-scale, the
-    /// degree-`17` Horner evaluation, one per doubling step, plus the
-    /// post-scale) - `sin` and `cos` run as *parallel* branches throughout
-    /// (the base evaluation, via two separate `evaluate_encrypted` calls
-    /// both starting from the same `scaled` ciphertext rather than
-    /// chaining one after the other; each doubling step, updating both
-    /// from the same prior level to the same next level), so every stage
-    /// consumes its own rescale **once**, not once per branch. This
-    /// exactly matches [`Self::reduce_mod_q_real`]'s own cost (`19`) when
-    /// `doublings == 0`, which skips evaluating `cos`/doubling entirely
-    /// rather than doing a zero-iteration loop for no reason.
+    /// Costs `2 + 17 + r + 1 = 20 + r` rescales total (the two-step
+    /// pre-scale below, the degree-`17` Horner evaluation, one per
+    /// doubling step, plus the post-scale) - `sin` and `cos` run as
+    /// *parallel* branches throughout (the base evaluation, via two
+    /// separate `evaluate_encrypted` calls both starting from the same
+    /// `scaled` ciphertext rather than chaining one after the other; each
+    /// doubling step, updating both from the same prior level to the same
+    /// next level), so every stage consumes its own rescale **once**, not
+    /// once per branch. This exactly matches [`Self::reduce_mod_q_real`]'s
+    /// own cost (`20`) when `doublings == 0`, which skips evaluating
+    /// `cos`/doubling entirely rather than doing a zero-iteration loop for
+    /// no reason.
     ///
     /// The doubling loop's own `-1` step (`cos(2*theta) = 2*cos(theta)^2 -
     /// 1`) needs its `-1` plaintext encoded at the *ciphertext's own actual
@@ -373,10 +374,33 @@ impl EvalMod {
                     .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))
             };
 
+        // Pre-scales by `1/effective_q` in **two** `mul_plain_real` +
+        // `rescale_next_real` steps (each by `1/sqrt(effective_q)`), not
+        // one - found directly (a real, encrypted test using a genuine
+        // `raise_modulus` on the order of `2^32`, not this method's own
+        // earlier `raise_modulus=100`-scale tests, silently producing
+        // all-zero output despite no error anywhere in the pipeline).
+        // Root cause: `encode_complex_real` rounds each coefficient to the
+        // nearest integer at the *current* scale (`~2^30` by default) -
+        // encoding `1/effective_q` directly, for `effective_q` this large,
+        // rounds to (essentially) zero before the multiplication ever
+        // happens, silently zeroing the entire computation rather than
+        // erroring. `1/sqrt(effective_q)` is comfortably larger (its own
+        // encoded coefficients land at hundreds to thousands, not below
+        // one) for every `effective_q` this method's own doc comment
+        // documents supporting, so splitting the division in half this way
+        // keeps each individual encoded constant safely representable.
         let effective_q = q * 2f64.powi(doublings as i32);
-        let inv_q = encode_constant_at(input.level(), 1.0 / effective_q)?;
+        let inv_sqrt_q = encode_constant_at(input.level(), 1.0 / effective_q.sqrt())?;
         let scaled = evaluator
-            .mul_plain_real(input, &inv_q)
+            .mul_plain_real(input, &inv_sqrt_q)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+        let scaled = evaluator
+            .rescale_next_real(&scaled)
+            .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
+        let inv_sqrt_q_again = encode_constant_at(scaled.level(), 1.0 / effective_q.sqrt())?;
+        let scaled = evaluator
+            .mul_plain_real(&scaled, &inv_sqrt_q_again)
             .map_err(|_| BootstrappingError::CircuitOperation("eval-mod"))?;
         let scaled = evaluator
             .rescale_next_real(&scaled)
