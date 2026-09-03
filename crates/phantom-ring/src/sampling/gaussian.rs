@@ -118,9 +118,68 @@ where
     poly
 }
 
+/// Samples a polynomial with coefficients drawn from a discrete Gaussian of
+/// standard deviation `sigma`, for `sigma` far too large for
+/// [`sample_discrete_gaussian`]'s own approach to handle: its underlying
+/// cumulative-distribution table allocates `O(sigma)` memory, fine at
+/// ordinary encryption-noise scale (`sigma ~= 3.2`) but catastrophic at
+/// smudging/noise-flooding scale (`sigma` in the hundreds of millions or
+/// more, needed to statistically hide a multiparty protocol share - a table
+/// that wide would need tens of gigabytes). Uses a Box-Muller transform instead: two
+/// independent uniform floats in `(0, 1]` become one standard-normal sample,
+/// scaled by `sigma` and rounded to the nearest integer - `O(1)` per
+/// coefficient, no table, no truncation (unlike the CDT table's own
+/// artificial 6-sigma cutoff, arguably a closer match to a true Gaussian).
+/// The rounding-to-nearest-integer discretization error is utterly
+/// negligible at this scale, a standard large-sigma discrete-Gaussian
+/// approximation.
+///
+/// Same per-coefficient/RNS-reduction convention as
+/// [`sample_discrete_gaussian`] (see that function's own doc comment): one
+/// true error value per coefficient, reduced identically into every RNS
+/// component.
+pub fn sample_smudging_gaussian<R>(ring: &Ring, rng: &mut R, sigma: f64) -> Poly
+where
+    R: RngCore + CryptoRng,
+{
+    debug_assert!(sigma > 0.0 && sigma.is_finite());
+    let degree = ring.degree();
+    let samples: Vec<i64> = (0..degree)
+        .map(|_| sample_one_smudging_coefficient(rng, sigma))
+        .collect();
+
+    let mut poly = ring.zero();
+    for (j, modulus) in ring.moduli().iter().enumerate() {
+        let q = modulus.value();
+        for (i, coeff) in poly.coeffs_mut()[j].iter_mut().enumerate() {
+            let sample = samples[i];
+            *coeff = if sample < 0 {
+                q - ((-sample) as u64 % q)
+            } else {
+                sample as u64 % q
+            };
+        }
+    }
+    poly
+}
+
+/// One Box-Muller-transformed, rounded standard-Gaussian sample scaled by
+/// `sigma` - see [`sample_smudging_gaussian`]'s own doc comment.
+fn sample_one_smudging_coefficient<R>(rng: &mut R, sigma: f64) -> i64
+where
+    R: RngCore,
+{
+    // u1 excludes 0 (ln(0) is undefined); u64::MAX+2 as the divisor keeps u1
+    // in (0, 1) even at rng output u64::MAX.
+    let u1 = (rng.next_u64() as f64 + 1.0) / (u64::MAX as f64 + 2.0);
+    let u2 = rng.next_u64() as f64 / (u64::MAX as f64 + 1.0);
+    let standard_normal = (-2.0 * u1.ln()).sqrt() * (2.0 * std::f64::consts::PI * u2).cos();
+    (standard_normal * sigma).round() as i64
+}
+
 #[cfg(test)]
 mod tests {
-    use super::DiscreteGaussianTable;
+    use super::{sample_one_smudging_coefficient, sample_smudging_gaussian, DiscreteGaussianTable};
     use rand_chacha::ChaCha20Rng;
     use rand_core::SeedableRng;
 
@@ -194,5 +253,53 @@ mod tests {
             (stddev - sigma).abs() < stddev_tolerance,
             "empirical stddev {stddev} too far from target sigma {sigma} (tolerance {stddev_tolerance})"
         );
+    }
+
+    #[test]
+    fn smudging_empirical_mean_and_stddev_match_the_target_at_smudging_scale() {
+        // sigma ~ 3.57e8 - the same order of magnitude
+        // `phantom_lattice::security::smudging_std_dev` produces at its
+        // recommended 40-bit statistical security level.
+        // `DiscreteGaussianTable::new` at this sigma would need a
+        // multi-gigabyte table; this test's own point is that this sampler
+        // needs none.
+        let sigma = 3.57e8;
+        let mut rng = ChaCha20Rng::from_seed([33u8; 32]);
+        let n = 200_000;
+        let samples: Vec<f64> = (0..n)
+            .map(|_| sample_one_smudging_coefficient(&mut rng, sigma) as f64)
+            .collect();
+
+        let mean: f64 = samples.iter().sum::<f64>() / n as f64;
+        let variance: f64 = samples.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / n as f64;
+        let stddev = variance.sqrt();
+
+        let mean_tolerance = 6.0 * sigma / (n as f64).sqrt();
+        assert!(
+            mean.abs() < mean_tolerance,
+            "empirical mean {mean} exceeds tolerance {mean_tolerance}"
+        );
+        let stddev_tolerance = 6.0 * sigma / (2.0 * n as f64).sqrt();
+        assert!(
+            (stddev - sigma).abs() < stddev_tolerance,
+            "empirical stddev {stddev} too far from target sigma {sigma} (tolerance {stddev_tolerance})"
+        );
+    }
+
+    #[test]
+    fn sample_smudging_gaussian_reduces_correctly_into_a_real_ring_at_smudging_scale() {
+        let ring = crate::Ring::new(
+            crate::Degree::new(8).unwrap(),
+            vec![crate::Modulus::new(1_000_000_000_000_037).unwrap()],
+        )
+        .unwrap();
+        let mut rng = ChaCha20Rng::from_seed([44u8; 32]);
+        let sigma = 3.57e8;
+        for _ in 0..20 {
+            let poly = sample_smudging_gaussian(&ring, &mut rng, sigma);
+            for coeff in &poly.coeffs()[0] {
+                assert!(*coeff < 1_000_000_000_000_037);
+            }
+        }
     }
 }

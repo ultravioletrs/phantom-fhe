@@ -589,7 +589,18 @@ fn reencryption_via_pcks_delivers_the_result_to_a_genuinely_separate_recipient()
         .generate_keypair_real(&mut rng)
         .unwrap();
 
-    let reencryption = ReEncryptor::new(params, reenc_session.clone());
+    // The ciphertext being switched was just encrypted above (no prior
+    // homomorphic operations), so its own fresh public-key noise bound is
+    // the correct worst-case bound to pass - see `ReEncryptor::create_share`'s
+    // own doc comment for why the caller, not `ReEncryptor` itself, supplies
+    // this.
+    let ciphertext_noise_bound =
+        phantom_schemes::bgv::noise::fresh_public_key_noise_bound(ring.degree());
+    let reencryption = ReEncryptor::new(
+        params,
+        reenc_session.clone(),
+        phantom_lattice::security::RECOMMENDED_STATISTICAL_SECURITY_BITS,
+    );
     let mut reenc_aggregator = ShareAggregator::new(reenc_session, ShareKind::ReEncryption);
     for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
         reenc_aggregator
@@ -599,6 +610,7 @@ fn reencryption_via_pcks_delivers_the_result_to_a_genuinely_separate_recipient()
                         participant,
                         local_secret_share,
                         &ciphertext,
+                        ciphertext_noise_bound,
                         &recipient_keys.public,
                         &mut rng,
                     )

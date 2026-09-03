@@ -1,26 +1,13 @@
 //! BGV re-encryption - real collaborative key-switching (PCKS).
 
 use phantom_lattice::rlwe::{PublicKey, SecretKey};
-use phantom_ring::sampling::{sample_discrete_gaussian, sample_ternary};
+use phantom_ring::sampling::{sample_smudging_gaussian, sample_ternary};
 use phantom_schemes::bgv::{BgvParams, Ciphertext};
 use rand_core::{CryptoRng, RngCore};
 
 use super::wire::{decode_poly_pair, encode_poly_pair};
 use crate::common::{ParticipantId, SessionState, Share, ShareAggregator, ShareKind};
 use crate::{MultipartyError, Result};
-
-/// Smudging-noise standard deviation for [`ReEncryptor::create_share`] -
-/// deliberately larger than
-/// [`phantom_lattice::security::STANDARD_ERROR_STD_DEV`] (ordinary
-/// fresh-encryption noise), so a per-party contribution's own precise
-/// magnitude isn't trivially distinguishable from any other party's own.
-/// **Not** yet a rigorously calibrated statistical-hiding bound - that needs
-/// tighter noise tracking than `phantom_lattice::noise`'s own worst-case
-/// bounds currently provide (Workstream 7 item 5a's own job, tracked
-/// separately) - this is a documented placeholder, generously larger than
-/// ordinary noise, not a value proven sufficient for genuine statistical
-/// hiding.
-const SMUDGING_ERROR_STD_DEV: f64 = 10.0 * phantom_lattice::security::STANDARD_ERROR_STD_DEV;
 
 /// Re-encryption helper for BGV: real collaborative key-switching (PCKS) -
 /// converts a ciphertext under the collective public key
@@ -38,7 +25,9 @@ const SMUDGING_ERROR_STD_DEV: f64 = 10.0 * phantom_lattice::security::STANDARD_E
 ///                 makes reusing the recipient's own public a_r safe: every
 ///                 output ciphertext gets its own fresh randomization, the
 ///                 same role a normal encryption's own ephemeral u plays)
-/// e0_i, e1_i   <- fresh smudging noise (see SMUDGING_ERROR_STD_DEV)
+/// e0_i, e1_i   <- fresh smudging noise (see [`Self::create_share`]'s own
+///                 doc comment for why the noise must be sized this way,
+///                 not a fixed constant)
 /// h0_i = u_i*b_r + t*e0_i + s_i*c1
 /// h1_i = u_i*a_r + t*e1_i
 /// ```
@@ -75,21 +64,58 @@ const SMUDGING_ERROR_STD_DEV: f64 = 10.0 * phantom_lattice::security::STANDARD_E
 pub struct ReEncryptor {
     params: BgvParams,
     session: SessionState,
+    statistical_security_bits: u32,
 }
 
 impl ReEncryptor {
-    /// Creates a re-encryptor.
-    pub const fn new(params: BgvParams, session: SessionState) -> Self {
-        Self { params, session }
+    /// Creates a re-encryptor targeting `statistical_security_bits` bits of
+    /// statistical security for its smudging noise (see
+    /// [`Self::create_share`]'s own doc comment) -
+    /// [`phantom_lattice::security::RECOMMENDED_STATISTICAL_SECURITY_BITS`]
+    /// unless a deployment has a specific reason to choose otherwise.
+    pub const fn new(
+        params: BgvParams,
+        session: SessionState,
+        statistical_security_bits: u32,
+    ) -> Self {
+        Self {
+            params,
+            session,
+            statistical_security_bits,
+        }
     }
 
     /// Creates this participant's own PCKS share, `(h0_i, h1_i)` - see this
     /// type's own doc comment for the construction.
+    ///
+    /// `ciphertext_noise_bound` must be the caller's own worst-case bound on
+    /// `ciphertext`'s current (unscaled, pre-`t`-multiplication) decryption
+    /// noise - e.g. `phantom_schemes::bgv::noise::fresh_public_key_noise_bound`
+    /// for a just-encrypted ciphertext, or the result of composing that
+    /// module's own bound functions through whatever circuit produced it.
+    /// `ReEncryptor` has no way to know a ciphertext's operation history
+    /// itself, so it can't derive this bound on its own.
+    ///
+    /// The smudging noise `e0_i`/`e1_i` below is what stops someone who can
+    /// decrypt an *individual* share (not just the combined output) - e.g. a
+    /// combiner colluding with the recipient - from learning
+    /// `local_secret_share` through the residual noise: each `h0_i` is,
+    /// from such a viewer's perspective, a fresh RLWE-style encryption of
+    /// `s_i*c1` under the recipient's own public key, and without enough
+    /// noise flooding the residual after decrypting it could otherwise leak
+    /// `s_i` itself (`c1` is public). Sized via
+    /// [`phantom_lattice::security::smudging_std_dev`] (`ciphertext_noise_bound`,
+    /// `statistical_security_bits`) - see that function's own doc comment
+    /// for the formula and its citation (Mouchet, Troncoso-Pastoriza,
+    /// Bossuat & Hubaux, EPRINT 2020/304, Section IV-E/Appendix A), which
+    /// this type adapts unchanged: the relevant "ciphertext noise" here is
+    /// the input `ciphertext`'s own noise, not anything specific to PCKS.
     pub fn create_share<R: RngCore + CryptoRng>(
         &self,
         participant: ParticipantId,
         local_secret_share: &SecretKey,
         ciphertext: &Ciphertext,
+        ciphertext_noise_bound: u64,
         recipient_public_key: &PublicKey,
         rng: &mut R,
     ) -> Result<Share> {
@@ -106,9 +132,13 @@ impl ReEncryptor {
         let b_r = &recipient_public_key.value()[0];
         let a_r = &recipient_public_key.value()[1];
 
+        let smudging_std_dev = phantom_lattice::security::smudging_std_dev(
+            ciphertext_noise_bound,
+            self.statistical_security_bits,
+        );
         let u_i = sample_ternary(ring, rng);
-        let e0_i = sample_discrete_gaussian(ring, rng, SMUDGING_ERROR_STD_DEV);
-        let e1_i = sample_discrete_gaussian(ring, rng, SMUDGING_ERROR_STD_DEV);
+        let e0_i = sample_smudging_gaussian(ring, rng, smudging_std_dev);
+        let e1_i = sample_smudging_gaussian(ring, rng, smudging_std_dev);
 
         let u_b_r = ring
             .mul(&u_i, b_r)

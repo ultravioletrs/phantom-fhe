@@ -263,10 +263,23 @@ The following components are not yet at production cryptographic strength:
   byte-equality aggregation (`ensure_equal_payloads`), not real
   cryptographic combination; `mpbfv`/`mpckks` have not yet had their own
   `CollectiveKeyGen`/`GaloisKeyGen`/`RelinearizationKeyGen`/`ReEncryptor`
-  wired to real key material at all. `ReEncryptor`'s own smudging noise
-  (`mpbgv::reencryption::SMUDGING_ERROR_STD_DEV`) is a documented
-  placeholder, not a rigorously calibrated statistical-hiding bound - that
-  calibration is Workstream 7 item 5a's own job, still open.
+  wired to real key material at all. `ReEncryptor`'s own smudging noise is
+  now a rigorously derived bound (`phantom_lattice::security::smudging_std_dev`,
+  `sigma_smudge = ciphertext_noise_bound * 2^(statistical_security_bits/2)`,
+  the same noise-flooding relationship Mouchet, Troncoso-Pastoriza, Bossuat
+  & Hubaux derive for a collective key-switching protocol,
+  [eprint 2020/304](https://eprint.iacr.org/2020/304), Section
+  IV-E/Appendix A) rather than a fixed placeholder constant - see
+  Workstream 7 item 5a for the full derivation and the concrete noise-budget
+  check against this crate's own test fixture.
+  **Known, currently-unaddressed limitation, found during that work**: the
+  same literature warns that *retrying* a share-generation protocol (a
+  participant producing a second share for the same session/public
+  randomness) leaks key material via accumulated linear algebra, regardless
+  of any single call's smudging noise. `mpbgv`'s protocols (CKG/GKG/RKG/PCKS)
+  do not currently guard against a participant's `create_share` being
+  invoked twice for the same session - tracked as Workstream 7 item 8, not
+  yet started.
   `phantom_multiparty::vss` is a real, tested Pedersen
   verifiable-secret-sharing distributed-key-generation primitive
   (Ristretto255-based; no party or aggregating infrastructure ever

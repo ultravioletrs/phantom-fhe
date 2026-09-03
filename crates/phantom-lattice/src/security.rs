@@ -46,6 +46,37 @@ pub fn fresh_error_bound() -> u64 {
     (STANDARD_ERROR_STD_DEV * ERROR_TAIL_CUT_STD_DEVS).ceil() as u64
 }
 
+/// Recommended statistical security parameter (bits) for smudging/noise-
+/// flooding error terms in multiparty protocols - see [`smudging_std_dev`].
+/// `40` is a standard statistical-security target, deliberately smaller
+/// than [`max_secure_total_modulus_bits_128`]'s own 128-bit *computational*
+/// target: statistical indistinguishability doesn't need to match RLWE's
+/// own hardness margin, and [`smudging_std_dev`]'s exponential noise growth
+/// makes a smaller target the practical choice for a usable noise budget.
+pub const RECOMMENDED_STATISTICAL_SECURITY_BITS: u32 = 40;
+
+/// Standard deviation for a smudging/noise-flooding error term that
+/// statistically hides a signal bounded by `signal_noise_bound`, at
+/// `statistical_security_bits` bits of statistical security.
+///
+/// `sigma_smudge^2 = 2^lambda * sigma_signal^2`, i.e. `sigma_smudge =
+/// signal_noise_bound * 2^(statistical_security_bits / 2)` - the same
+/// variance-scaling relationship Mouchet, Troncoso-Pastoriza, Bossuat &
+/// Hubaux, *"Multiparty Homomorphic Encryption from Ring-Learning-with-
+/// Errors"* ([eprint 2020/304](https://eprint.iacr.org/2020/304)), Section
+/// IV-E / Appendix A, use for exactly this purpose in a collective
+/// key-switching protocol: smudging noise must statistically flood
+/// whatever noise a ciphertext already carries, so that a party who can
+/// decrypt an individual protocol share learns nothing about the honest
+/// contribution beyond negligible advantage. Conservative:
+/// `signal_noise_bound` is an already tail-cut *bound*
+/// ([`ERROR_TAIL_CUT_STD_DEVS`] wider than a true sigma), used here in
+/// place of the signal's own sigma - this only strengthens the hiding,
+/// never weakens it.
+pub fn smudging_std_dev(signal_noise_bound: u64, statistical_security_bits: u32) -> f64 {
+    signal_noise_bound as f64 * 2f64.powf(statistical_security_bits as f64 / 2.0)
+}
+
 /// Maximum total ciphertext-modulus bit-length (`sum_i log2(q_i)`) a
 /// degree-`degree` ring can use while still meeting the
 /// homomorphicencryption.org security standard's 128-bit classical
@@ -89,6 +120,21 @@ mod tests {
         assert_eq!(max_secure_total_modulus_bits_128(8), None);
         assert_eq!(max_secure_total_modulus_bits_128(512), None);
         assert_eq!(max_secure_total_modulus_bits_128(65536), None);
+    }
+
+    #[test]
+    fn smudging_std_dev_matches_hand_worked_case() {
+        // signal_noise_bound=340 (fresh_public_key_noise_bound(8)),
+        // statistical_security_bits=40: 340 * 2^20 = 340 * 1_048_576 =
+        // 356_515_840.
+        assert_eq!(smudging_std_dev(340, 40), 356_515_840.0);
+    }
+
+    #[test]
+    fn smudging_std_dev_grows_exponentially_with_the_security_parameter() {
+        let low = smudging_std_dev(340, 20);
+        let high = smudging_std_dev(340, 40);
+        assert_eq!(high / low, 1024.0); // 2^((40-20)/2) = 2^10
     }
 
     #[test]
