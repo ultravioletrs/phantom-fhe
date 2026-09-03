@@ -32,7 +32,41 @@ Allowed today:
   borrowed slice into a fixed `[u8; 32]`, no allocation or ASN.1 OID encoding
   needed) - pulls in `digest`, `block-buffer`, `crypto-common`,
   `hybrid-array`, `typenum`, and `cpufeatures` transitively, all from the
-  same RustCrypto organization already vetted for this addition.
+  same RustCrypto organization already vetted for this addition. Also used
+  for `Sha512` (`vss::generators::hash_to_point`, Workstream 7 item 4/5
+  Stage 1) - no Cargo.toml change needed, `Sha512` is part of `sha2`'s own
+  base API, not gated behind an extra feature.
+- `curve25519-dalek` (`default-features = false`, `features = ["alloc",
+  "rand_core"]`) - `phantom-multiparty::vss` only, for Pedersen vector
+  commitments underlying real distributed key generation with verifiable
+  secret sharing (Workstream 7 item 4/5 Stage 1 - see
+  `crates/phantom-multiparty/src/vss/mod.rs`'s own module doc comment). No
+  discrete-log-hard group exists anywhere else in this workspace
+  (grep-confirmed before adding this), and RLWE ring moduli aren't usable as
+  a Shamir-sharing field for this purpose (`Modulus::new` doesn't check
+  primality). Ristretto255 via `curve25519-dalek`: pure Rust (with an
+  optional platform-specific `curve25519-dalek-derive`/`fiat-crypto`
+  backend, standard for this crate), BSD-3-Clause (permissive, compatible
+  with this workspace's Apache-2.0), from the same `dalek-cryptography`
+  organization as the widely-used `ed25519-dalek`, `rust-version` matching
+  this workspace's own `1.85`. `alloc` is required (`RistrettoPoint::
+  multiscalar_mul`/`vartime_multiscalar_mul`, used for every commit/verify,
+  are `alloc`-gated); `rand_core` is required for `Scalar::random`, pinned
+  to `rand_core = "0.6.4"`, satisfied by this workspace's existing
+  `rand_core = "0.6"`. `precomputed-tables` (default-on upstream) is
+  dropped - it only accelerates fixed-basepoint multiplication, which this
+  crate never performs (every generator is a custom hash-derived point, see
+  `vss::generators`). `digest` (default-off upstream, so no action needed to
+  exclude it, but must never be enabled) pins `digest = "0.10"`, incompatible
+  with this workspace's `sha2 = "0.11"` (which needs `digest ^0.11`) - two
+  different major versions of the same trait, not implementable for the same
+  type at once; generator derivation instead hashes with `sha2::Sha512`
+  directly into `RistrettoPoint::from_uniform_bytes`, which needs no
+  `Digest` trait bound at all. `zeroize` (default-on upstream) is dropped,
+  consistent with this file's own "not used" stance below - new
+  secret-bearing VSS types (`vss::polynomial::VectorPolynomial`) use a
+  manual `Drop`, matching `phantom_lattice::rlwe::secret_key::SecretKey`'s
+  own precedent.
 
 Not currently a dependency of any core crate, with a standing decision
 below:

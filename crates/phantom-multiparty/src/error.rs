@@ -35,4 +35,10 @@ pub enum MultipartyError {
     /// The threshold cannot be met with the available shares.
     #[error("threshold not met")]
     ThresholdNotMet,
+
+    /// A verifiable-secret-sharing share failed Pedersen commitment
+    /// verification - either a malicious/faulty dealer, a corrupted
+    /// transport, or the share was checked against the wrong commitment set.
+    #[error("share failed VSS commitment verification")]
+    InvalidVssShare,
 }

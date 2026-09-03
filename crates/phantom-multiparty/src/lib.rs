@@ -5,5 +5,6 @@ pub mod error;
 pub mod mpbfv;
 pub mod mpbgv;
 pub mod mpckks;
+pub mod vss;
 
 pub use error::{MultipartyError, Result};

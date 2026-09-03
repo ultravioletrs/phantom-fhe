@@ -250,10 +250,18 @@ The following components are not yet at production cryptographic strength:
   (`ensure_equal_payloads`, used by `PartialDecryptor`/`ReEncryptor`/
   `InteractiveBootstrap`) is byte-equality on identical cleartext-equivalent
   payloads, not real threshold secret-share reconstruction (no noise
-  flooding/smudging exists yet either). The transcript hash used for
-  protocol transcripts (`phantom_multiparty::common::transcript::stable_hash_256`)
-  is now SHA-256 (`sha2`), not the hand-rolled mixer earlier versions of
-  this document described.
+  flooding/smudging exists yet either). `phantom_multiparty::vss` is a real,
+  tested Pedersen verifiable-secret-sharing distributed-key-generation
+  primitive (Ristretto255-based; no party or aggregating infrastructure ever
+  assembles the full secret, and a dealer sending inconsistent shares to
+  different recipients is cryptographically detected) - but it is **not yet
+  wired into** `ckg`/`rkg`/`gkg`/`partial_decrypt`/`reencryption`/
+  `interactive_bootstrap`, so those six protocols remain exactly the
+  placeholders described above until that integration lands (Workstream 7
+  items 4/5). The transcript hash used for protocol transcripts
+  (`phantom_multiparty::common::transcript::stable_hash_256`) is now
+  SHA-256 (`sha2`), not the hand-rolled mixer earlier versions of this
+  document described.
 - All example and test parameter presets (see
   `docs/user-guide.md#choosing-parameters`) are small development sizes
   chosen for fast iteration, not production security margins. Every
