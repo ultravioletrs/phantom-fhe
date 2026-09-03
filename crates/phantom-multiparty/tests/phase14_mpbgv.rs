@@ -15,7 +15,7 @@ use phantom_multiparty::vss::{
 use phantom_multiparty::MultipartyError;
 use phantom_ring::rns::extension::embed_centered_coeffs;
 use phantom_ring::{Degree, Modulus, Ring};
-use phantom_schemes::bgv::{BgvContext, BgvParams, EvaluationKeys};
+use phantom_schemes::bgv::{BgvContext, BgvParams};
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha20Rng;
 
@@ -241,28 +241,126 @@ fn collective_public_key_generation_via_dkg_produces_a_genuinely_decryptable_key
 }
 
 #[test]
-fn collective_relinearization_key_generation_returns_a_marker() {
-    // RelinearizationKeyGen remains a placeholder - not wired to real key
-    // material yet (unlike CollectiveKeyGen/ReEncryptor/GaloisKeyGen, all
-    // real). This test only guards that the placeholder shape still works.
-    let rkg = RelinearizationKeyGen::new(session(ProtocolKind::RelinearizationKeyGen));
-    let mut rkg_aggregator = ShareAggregator::new(
-        session(ProtocolKind::RelinearizationKeyGen),
-        ShareKind::RelinearizationKeyGen,
-    );
-    rkg_aggregator
-        .add_share(rkg.create_share(id(1)).unwrap())
-        .unwrap();
-    rkg_aggregator
-        .add_share(rkg.create_share(id(2)).unwrap())
-        .unwrap();
-    let relin = rkg.aggregate_key(&rkg_aggregator).unwrap();
+fn collective_relinearization_key_generation_via_real_dkg_relinearizes_a_genuine_product() {
+    // Real, end-to-end proof that `RelinearizationKeyGen` produces genuine
+    // BGV relinearization key material via its own two-round protocol (see
+    // that module's own doc comment for why relinearization needs two
+    // rounds where CKG/GKG/PCKS each need only one): the same `n`
+    // participants who generate a real collective public key
+    // (`CollectiveKeyGen`) also collectively generate a real
+    // relinearization key, then relinearize a genuine degree-2 product
+    // ciphertext with it. Correctness is checked against the *raw*,
+    // not-yet-relinearized product ciphertext (BGV decryption already
+    // generalizes to any ciphertext degree) - so relinearization is proven
+    // to preserve the exact same decrypted value while reducing degree,
+    // without re-deriving the encoder's own convolution math here.
+    let params = real_ckg_params();
+    let ring = params.ring();
+    let t = params.plaintext_modulus();
+    let n = 3;
+    let ckg_session = session(ProtocolKind::CollectiveKeyGen);
+    let rkg_session = session(ProtocolKind::RelinearizationKeyGen);
+    let participants: Vec<ParticipantId> = (1..=n as u64).map(id).collect();
+    let mut rng = rng();
 
-    let eval_keys = EvaluationKeys {
-        relinearization: relin,
-        galois: Vec::new(),
-    };
-    assert!(eval_keys.galois.is_empty());
+    let secrets: Vec<Vec<i128>> = (0..n)
+        .map(|_| {
+            (0..ring.degree())
+                .map(|_| (rng.next_u32() % 3) as i128 - 1)
+                .collect()
+        })
+        .collect();
+    let local_secret_shares: Vec<SecretKey> = secrets
+        .iter()
+        .map(|secret| SecretKey::new(embed_centered_coeffs(secret, ring.moduli()).unwrap()))
+        .collect();
+
+    let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+    let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
+    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+        ckg_aggregator
+            .add_share(
+                ckg.create_share(participant, local_secret_share, &mut rng)
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_public_key = ckg.aggregate_public_key(&ckg_aggregator).unwrap();
+
+    let decomposition_params = GadgetDecompositionParams::new(8, 7).unwrap();
+    let rkg = RelinearizationKeyGen::new(
+        params.clone(),
+        rkg_session.clone(),
+        collective_public_key.clone(),
+        decomposition_params,
+    );
+
+    let mut round1_aggregator = ShareAggregator::new(rkg_session, ShareKind::RelinearizationKeyGen);
+    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+        round1_aggregator
+            .add_share(
+                rkg.create_share_round1(participant, local_secret_share, &mut rng)
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let round1_aggregate = rkg.aggregate_round1(&round1_aggregator).unwrap();
+
+    let mut round2_aggregator =
+        ShareAggregator::new(rkg.round2_session(), ShareKind::RelinearizationKeyGen);
+    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+        round2_aggregator
+            .add_share(
+                rkg.create_share_round2(
+                    participant,
+                    local_secret_share,
+                    &round1_aggregate,
+                    &mut rng,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_relin_key = rkg.aggregate_key(&round2_aggregator).unwrap();
+
+    let ctx = BgvContext::new(params.clone());
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_encryptor(collective_public_key);
+    let evaluator = ctx.evaluator().unwrap();
+
+    let a_values: Vec<u64> = (0..ring.degree() as u64).map(|i| i % t).collect();
+    let b_values: Vec<u64> = (0..ring.degree() as u64).map(|i| (2 * i + 1) % t).collect();
+    let a_ct = encryptor
+        .encrypt(&encoder.encode_u64(&a_values).unwrap(), &mut rng)
+        .unwrap();
+    let b_ct = encryptor
+        .encrypt(&encoder.encode_u64(&b_values).unwrap(), &mut rng)
+        .unwrap();
+
+    let product = evaluator.mul(&a_ct, &b_ct, None).unwrap();
+    assert_eq!(product.degree(), 2);
+    let relinearized = evaluator
+        .relinearize_real(&product, &collective_relin_key)
+        .unwrap();
+    assert_eq!(relinearized.degree(), 1);
+
+    // Test-only: sum the already-locally-known secrets to verify
+    // correctness against an independently-derived collective secret - not
+    // a production pattern, since a real deployment never assembles this.
+    let collective_secret_coeffs: Vec<i128> = (0..ring.degree())
+        .map(|coeff| secrets.iter().map(|s| s[coeff]).sum())
+        .collect();
+    let collective_secret =
+        SecretKey::new(embed_centered_coeffs(&collective_secret_coeffs, ring.moduli()).unwrap());
+    let decryptor = ctx.decryptor(collective_secret).unwrap();
+
+    let raw_decoded = encoder
+        .decode_u64(&decryptor.decrypt(&product).unwrap())
+        .unwrap();
+    let relinearized_decoded = encoder
+        .decode_u64(&decryptor.decrypt(&relinearized).unwrap())
+        .unwrap();
+    assert_eq!(relinearized_decoded, raw_decoded);
 }
 
 #[test]

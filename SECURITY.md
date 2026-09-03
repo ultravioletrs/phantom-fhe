@@ -243,21 +243,26 @@ The following components are not yet at production cryptographic strength:
   `EvalMod::reduce_mod_q_real_wide`'s own doc comments state this
   precisely. BGV/BFV bootstrapping modules are reserved but unimplemented.
 - `phantom-multiparty` protocols have not had an adversarial security
-  review. `mpbgv::CollectiveKeyGen`, `mpbgv::GaloisKeyGen`, and
-  `mpbgv::ReEncryptor` are real: each participant generates an ordinary
-  small RLWE secret independently (never transmitted or assembled by
-  anyone, including the infrastructure aggregating shares), contributes a
-  public, `t`-scaled share to a genuine collective BGV public key and to a
-  genuine collective rotation key, and later contributes a real
+  review. `mpbgv::CollectiveKeyGen`, `mpbgv::GaloisKeyGen`,
+  `mpbgv::RelinearizationKeyGen`, and `mpbgv::ReEncryptor` are real: each
+  participant generates an ordinary small RLWE secret independently (never
+  transmitted or assembled by anyone, including the infrastructure
+  aggregating shares), contributes a public, `t`-scaled share to a genuine
+  collective BGV public key, a genuine collective rotation key, and a
+  genuine collective relinearization key, and later contributes a real
   collaborative key-switching (PCKS) share to re-encrypt a ciphertext
   toward a separate recipient's own key - additive n-of-n throughout
   (every contributing participant, not a threshold subset; deliberately
   not a weaker t-of-n variant - see `docs/internal/implementation-plan.md`'s
-  Workstream 7 item 5b for why). `RelinearizationKeyGen`, `PartialDecryptor`,
-  and `mpbgv`'s own `InteractiveBootstrap` still use byte-equality
-  aggregation (`ensure_equal_payloads`) or return placeholder key material
-  regardless of shares, not real cryptographic combination; `mpbfv`/`mpckks`
-  have not yet had their own `CollectiveKeyGen`/`GaloisKeyGen`/`ReEncryptor`
+  Workstream 7 item 5b for why). `RelinearizationKeyGen` is structurally
+  different from the other three (relinearization needs the collective
+  secret's square, with cross terms no single participant can form alone),
+  so it runs a genuine two-round protocol instead of a one-round additive
+  share - see Workstream 7 item 4d for the full construction.
+  `PartialDecryptor` and `mpbgv`'s own `InteractiveBootstrap` still use
+  byte-equality aggregation (`ensure_equal_payloads`), not real
+  cryptographic combination; `mpbfv`/`mpckks` have not yet had their own
+  `CollectiveKeyGen`/`GaloisKeyGen`/`RelinearizationKeyGen`/`ReEncryptor`
   wired to real key material at all. `ReEncryptor`'s own smudging noise
   (`mpbgv::reencryption::SMUDGING_ERROR_STD_DEV`) is a documented
   placeholder, not a rigorously calibrated statistical-hiding bound - that
