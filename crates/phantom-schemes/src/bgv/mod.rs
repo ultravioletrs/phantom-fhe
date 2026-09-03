@@ -23,4 +23,4 @@ pub use keygen::{BgvKeyGenerator, BgvKeyPair, EvaluationKeys};
 pub use modulus_switch::ModulusSwitcher;
 pub use params::{BgvParams, BgvParamsBuilder};
 pub use plaintext::Plaintext;
-pub use relinearization::BgvRelinearizationKey;
+pub use relinearization::{scale_by_base_power_and_lift, BgvRelinearizationKey};

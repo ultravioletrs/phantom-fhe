@@ -1,4 +1,5 @@
 use curve25519_dalek::scalar::Scalar;
+use phantom_lattice::rgsw::GadgetDecompositionParams;
 use phantom_lattice::rlwe::SecretKey;
 use phantom_multiparty::common::{
     ParticipantId, ParticipantSet, ProtocolKind, SessionId, SessionState, ShareAggregator,
@@ -240,7 +241,10 @@ fn collective_public_key_generation_via_dkg_produces_a_genuinely_decryptable_key
 }
 
 #[test]
-fn collective_evaluation_key_generation_returns_markers() {
+fn collective_relinearization_key_generation_returns_a_marker() {
+    // RelinearizationKeyGen remains a placeholder - not wired to real key
+    // material yet (unlike CollectiveKeyGen/ReEncryptor/GaloisKeyGen, all
+    // real). This test only guards that the placeholder shape still works.
     let rkg = RelinearizationKeyGen::new(session(ProtocolKind::RelinearizationKeyGen));
     let mut rkg_aggregator = ShareAggregator::new(
         session(ProtocolKind::RelinearizationKeyGen),
@@ -254,24 +258,108 @@ fn collective_evaluation_key_generation_returns_markers() {
         .unwrap();
     let relin = rkg.aggregate_key(&rkg_aggregator).unwrap();
 
-    let gkg = GaloisKeyGen::new(session(ProtocolKind::GaloisKeyGen), vec![1, 3]);
-    let mut gkg_aggregator =
-        ShareAggregator::new(session(ProtocolKind::GaloisKeyGen), ShareKind::GaloisKeyGen);
-    gkg_aggregator
-        .add_share(gkg.create_share(id(1)).unwrap())
-        .unwrap();
-    gkg_aggregator
-        .add_share(gkg.create_share(id(2)).unwrap())
-        .unwrap();
-    let galois = gkg.aggregate_keys(&gkg_aggregator).unwrap();
-
     let eval_keys = EvaluationKeys {
         relinearization: relin,
-        galois,
+        galois: Vec::new(),
     };
-    assert_eq!(eval_keys.galois.len(), 2);
-    assert_eq!(eval_keys.galois[0].element(), 1);
-    assert_eq!(eval_keys.galois[1].element(), 3);
+    assert!(eval_keys.galois.is_empty());
+}
+
+#[test]
+fn collective_galois_key_generation_via_real_dkg_rotates_a_genuine_ciphertext() {
+    // Real, end-to-end proof that `GaloisKeyGen` produces genuine BGV
+    // rotation key material, not a marker: the same `n` participants who
+    // generate a real collective public key (`CollectiveKeyGen`) also
+    // collectively generate a real rotation key for one shift amount
+    // (`GaloisKeyGen`, additive n-of-n, matching `CollectiveKeyGen`'s own
+    // shape - see that type's own doc comment for why this isn't
+    // Lagrange/Shamir reconstruction), then rotate a real batched
+    // ciphertext with it and confirm both encoded rows genuinely shifted.
+    let params = real_ckg_params();
+    let ring = params.ring();
+    let n = 3;
+    let ckg_session = session(ProtocolKind::CollectiveKeyGen);
+    let gkg_session = session(ProtocolKind::GaloisKeyGen);
+    let participants: Vec<ParticipantId> = (1..=n as u64).map(id).collect();
+    let mut rng = rng();
+
+    let secrets: Vec<Vec<i128>> = (0..n)
+        .map(|_| {
+            (0..ring.degree())
+                .map(|_| (rng.next_u32() % 3) as i128 - 1)
+                .collect()
+        })
+        .collect();
+    let local_secret_shares: Vec<SecretKey> = secrets
+        .iter()
+        .map(|secret| SecretKey::new(embed_centered_coeffs(secret, ring.moduli()).unwrap()))
+        .collect();
+
+    let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+    let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
+    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+        ckg_aggregator
+            .add_share(
+                ckg.create_share(participant, local_secret_share, &mut rng)
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_public_key = ckg.aggregate_public_key(&ckg_aggregator).unwrap();
+
+    let shift = 1;
+    let element = params.rotation_element(shift);
+    let decomposition_params = GadgetDecompositionParams::new(8, 7).unwrap();
+    let gkg = GaloisKeyGen::new(
+        params.clone(),
+        gkg_session.clone(),
+        element,
+        decomposition_params,
+    );
+    let mut gkg_aggregator = ShareAggregator::new(gkg_session, ShareKind::GaloisKeyGen);
+    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+        gkg_aggregator
+            .add_share(
+                gkg.create_share(participant, local_secret_share, &mut rng)
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_rotation_key = gkg.aggregate_keys(&gkg_aggregator).unwrap();
+
+    let ctx = BgvContext::new(params.clone());
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_encryptor(collective_public_key);
+    let half = ring.degree() / 2;
+    let values: Vec<u64> = (0..ring.degree() as u64).map(|i| i + 1).collect();
+    let ciphertext = encryptor
+        .encrypt(&encoder.encode_batched(&values).unwrap(), &mut rng)
+        .unwrap();
+
+    let evaluator = ctx.evaluator().unwrap();
+    let rotated = evaluator
+        .rotate_real(&ciphertext, element, &collective_rotation_key)
+        .unwrap();
+
+    // Test-only: sum the already-locally-known secrets to verify
+    // correctness against an independently-derived collective secret - not
+    // a production pattern, since a real deployment never assembles this.
+    let collective_secret_coeffs: Vec<i128> = (0..ring.degree())
+        .map(|coeff| secrets.iter().map(|s| s[coeff]).sum())
+        .collect();
+    let collective_secret =
+        SecretKey::new(embed_centered_coeffs(&collective_secret_coeffs, ring.moduli()).unwrap());
+    let decryptor = ctx.decryptor(collective_secret).unwrap();
+    let decoded = encoder
+        .decode_batched(&decryptor.decrypt(&rotated).unwrap())
+        .unwrap();
+
+    let mut expected_row0 = values[..half].to_vec();
+    expected_row0.rotate_left(shift);
+    let mut expected_row1 = values[half..].to_vec();
+    expected_row1.rotate_left(shift);
+    let expected: Vec<u64> = expected_row0.into_iter().chain(expected_row1).collect();
+    assert_eq!(decoded, expected);
 }
 
 #[test]

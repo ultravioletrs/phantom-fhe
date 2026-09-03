@@ -72,6 +72,27 @@ pub struct BgvRelinearizationKey {
 }
 
 impl BgvRelinearizationKey {
+    /// Builds a key directly from its own already-computed rows
+    /// (`moduli.len() * decomposition_params.levels()` of them, in the same
+    /// `(modulus_index, level)` row order [`Self::generate`] itself
+    /// produces), rather than generating them itself the way
+    /// [`Self::generate`] does for a single party. This is the constructor
+    /// collective key generation needs
+    /// (`phantom_multiparty::mpbgv::GaloisKeyGen`): a real multiparty round
+    /// combines every participant's own per-row contribution first (each
+    /// row an additive `t`-scaled equation, see
+    /// [`scale_by_base_power_and_lift`]'s own doc comment), then wraps the
+    /// *combined* rows here.
+    pub const fn from_rows(
+        decomposition_params: GadgetDecompositionParams,
+        rows: Vec<Ciphertext>,
+    ) -> Self {
+        Self {
+            decomposition_params,
+            rows,
+        }
+    }
+
     /// Generates a key from `s_old` (typically `s^2`, already in `params`'s
     /// own ring - no CRT lift needed for `s_old` itself, unlike the RNS
     /// hybrid technique's extended `QP` basis) to `s_new`, with fresh noise
@@ -139,7 +160,12 @@ pub fn key_switch(poly: &Poly, key: &BgvRelinearizationKey, ring: &Ring) -> Resu
 /// matching exactly how [`GadgetDecomposition::recompose`] weights each
 /// `(modulus, level)` digit block. For a single-modulus ring `lift == [1]`
 /// always, so this reduces to the previous plain `B^level` scaling.
-fn scale_by_base_power_and_lift(
+///
+/// `pub` (not just used internally by [`BgvRelinearizationKey::generate`])
+/// because collective key generation needs the identical per-row weighting
+/// applied to each participant's own `s_old` contribution *before* summing
+/// - see [`BgvRelinearizationKey::from_rows`]'s own doc comment.
+pub fn scale_by_base_power_and_lift(
     ring: &Ring,
     poly: &Poly,
     base_log: u32,
