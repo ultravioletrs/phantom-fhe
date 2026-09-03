@@ -345,29 +345,87 @@ fn invalid_shares_are_detected() {
 }
 
 #[test]
-fn reencryption_from_shares_preserves_plaintext() {
-    let params = params();
-    let ctx = BgvContext::new(params.clone());
+fn reencryption_via_pcks_delivers_the_result_to_a_genuinely_separate_recipient() {
+    // Real, end-to-end proof that `ReEncryptor` is genuine collaborative
+    // key-switching (PCKS), matching this crate's own actual target
+    // deployment (a confidential-analytics cleanroom: providers jointly
+    // generate a collective key via DKG, encrypt under it, and later
+    // collectively re-encrypt a result toward a *recipient* who never
+    // participated in key generation at all - see `ReEncryptor`'s own doc
+    // comment). `n` participants each contribute their own already-known
+    // small secret (same shape `CollectiveKeyGen` already uses) to both
+    // generate the collective key and later re-encrypt a ciphertext under
+    // it toward a wholly separate recipient keypair - the platform
+    // combining shares never sees the plaintext, the collective secret, or
+    // the recipient's own secret.
+    let params = real_ckg_params();
+    let ring = params.ring();
+    let n = 3;
+    let ckg_session = session(ProtocolKind::CollectiveKeyGen);
+    let reenc_session = session(ProtocolKind::ReEncryption);
+    let participants: Vec<ParticipantId> = (1..=n as u64).map(id).collect();
     let mut rng = rng();
-    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+
+    let secrets: Vec<Vec<i128>> = (0..n)
+        .map(|_| {
+            (0..ring.degree())
+                .map(|_| (rng.next_u32() % 3) as i128 - 1)
+                .collect()
+        })
+        .collect();
+    let local_secret_shares: Vec<SecretKey> = secrets
+        .iter()
+        .map(|secret| SecretKey::new(embed_centered_coeffs(secret, ring.moduli()).unwrap()))
+        .collect();
+
+    let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+    let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
+    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+        ckg_aggregator
+            .add_share(
+                ckg.create_share(participant, local_secret_share, &mut rng)
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_public_key = ckg.aggregate_public_key(&ckg_aggregator).unwrap();
+
+    let ctx = BgvContext::new(params.clone());
     let encoder = ctx.encoder();
-    let encryptor = ctx.encryptor(keys.public.clone()).unwrap();
-    let decryptor = ctx.decryptor(keys.secret).unwrap();
-    let ciphertext = encryptor
-        .encrypt(&encoder.encode_u64(&[2, 4, 6, 8]).unwrap(), &mut rng)
-        .unwrap();
-    let reencryption = ReEncryptor::new(params, session(ProtocolKind::ReEncryption));
-    let mut aggregator =
-        ShareAggregator::new(session(ProtocolKind::ReEncryption), ShareKind::ReEncryption);
-    aggregator
-        .add_share(reencryption.create_share(id(1), &ciphertext).unwrap())
-        .unwrap();
-    aggregator
-        .add_share(reencryption.create_share(id(2), &ciphertext).unwrap())
+    let encryptor = ctx.real_encryptor(collective_public_key);
+    let plaintext = encoder.encode_u64(&[2, 4, 6, 8]).unwrap();
+    let ciphertext = encryptor.encrypt(&plaintext, &mut rng).unwrap();
+
+    // A wholly separate recipient keypair - never part of DKG.
+    let recipient_keys = ctx
+        .keygen()
+        .unwrap()
+        .generate_keypair_real(&mut rng)
         .unwrap();
 
-    let refreshed = reencryption.aggregate_ciphertext(&aggregator).unwrap();
-    let decrypted = decryptor.decrypt(&refreshed).unwrap();
+    let reencryption = ReEncryptor::new(params, reenc_session.clone());
+    let mut reenc_aggregator = ShareAggregator::new(reenc_session, ShareKind::ReEncryption);
+    for (&participant, local_secret_share) in participants.iter().zip(&local_secret_shares) {
+        reenc_aggregator
+            .add_share(
+                reencryption
+                    .create_share(
+                        participant,
+                        local_secret_share,
+                        &ciphertext,
+                        &recipient_keys.public,
+                        &mut rng,
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let ct_recipient = reencryption
+        .aggregate_ciphertext(&reenc_aggregator, &ciphertext)
+        .unwrap();
+
+    let decryptor = ctx.decryptor(recipient_keys.secret).unwrap();
+    let decrypted = decryptor.decrypt(&ct_recipient).unwrap();
     assert_eq!(&encoder.decode_u64(&decrypted).unwrap()[..4], &[2, 4, 6, 8]);
 }
 
