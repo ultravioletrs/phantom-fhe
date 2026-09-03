@@ -1,5 +1,7 @@
 //! Deterministic transcript encoding and hashing.
 
+use sha2::{Digest, Sha256};
+
 use crate::{MultipartyError, Result};
 
 use super::{ParticipantId, ProtocolKind, SessionId, SessionState};
@@ -157,24 +159,20 @@ pub(crate) fn encode_bytes(bytes: &[u8], out: &mut Vec<u8>) {
     out.extend_from_slice(bytes);
 }
 
+/// SHA-256 over `input` - a vetted cryptographic hash, not a hand-rolled
+/// mixer (an earlier version of this function was exactly that: a 4-lane
+/// XOR/multiply/rotate construction with no cryptanalysis behind it,
+/// deterministic but with no basis for relying on it for collision or
+/// preimage resistance - see this repository's own `SECURITY.md` and
+/// `docs/technical-manual.md`, both updated alongside this change). Nothing
+/// in this crate currently depends on collision/preimage resistance
+/// specifically ([`Transcript::hash`] is a convenience summary, not yet
+/// wired into a Fiat-Shamir-style protocol), but `TranscriptHash` is a
+/// public type other code may reasonably build such a protocol on top of
+/// later, so it needs a real primitive underneath it now rather than a
+/// footgun deferred to whoever does that.
 pub(crate) fn stable_hash_256(input: &[u8]) -> TranscriptHash {
-    let mut state = [
-        0x243f_6a88_85a3_08d3u64,
-        0x1319_8a2e_0370_7344u64,
-        0xa409_3822_299f_31d0u64,
-        0x082e_fa98_ec4e_6c89u64,
-    ];
-    for (index, byte) in input.iter().copied().enumerate() {
-        let lane = index % 4;
-        state[lane] ^= byte as u64;
-        state[lane] = state[lane].wrapping_mul(0x100_0000_01b3);
-        state[lane] = state[lane].rotate_left(13) ^ ((index as u64) << 32);
-    }
-    let mut out = [0u8; 32];
-    for (index, word) in state.into_iter().enumerate() {
-        out[index * 8..(index + 1) * 8].copy_from_slice(&word.to_le_bytes());
-    }
-    TranscriptHash(out)
+    TranscriptHash(Sha256::digest(input).into())
 }
 
 pub(crate) struct ByteReader<'a> {

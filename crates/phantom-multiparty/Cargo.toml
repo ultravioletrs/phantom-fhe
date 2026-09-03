@@ -11,6 +11,7 @@ phantom-bootstrapping = { path = "../phantom-bootstrapping" }
 phantom-lattice = { path = "../phantom-lattice" }
 phantom-ring = { path = "../phantom-ring" }
 phantom-schemes = { path = "../phantom-schemes" }
+sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

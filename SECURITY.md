@@ -246,9 +246,14 @@ The following components are not yet at production cryptographic strength:
   review. Collective key generation, relinearization-key generation, and
   Galois-key generation currently aggregate shares into placeholder key
   material (e.g. an all-zero public key) rather than real cryptographic key
-  material, and the transcript hash used for protocol transcripts
-  (`phantom_multiparty::common::transcript::stable_hash_256`) is a small
-  hand-rolled mixer, not a vetted cryptographic hash function.
+  material, and share aggregation's current agreement check
+  (`ensure_equal_payloads`, used by `PartialDecryptor`/`ReEncryptor`/
+  `InteractiveBootstrap`) is byte-equality on identical cleartext-equivalent
+  payloads, not real threshold secret-share reconstruction (no noise
+  flooding/smudging exists yet either). The transcript hash used for
+  protocol transcripts (`phantom_multiparty::common::transcript::stable_hash_256`)
+  is now SHA-256 (`sha2`), not the hand-rolled mixer earlier versions of
+  this document described.
 - All example and test parameter presets (see
   `docs/user-guide.md#choosing-parameters`) are small development sizes
   chosen for fast iteration, not production security margins. Every

@@ -21,6 +21,18 @@ Allowed today:
   rather than requiring it unconditionally.
 - `thiserror` - error-type ergonomics; does not affect the public API shape
   beyond `std::error::Error` implementations.
+- `sha2` (`default-features = false`) - `phantom-multiparty` only, for
+  `common::transcript::stable_hash_256`. Replaces a hand-rolled,
+  no-cryptanalysis mixer that `SECURITY.md` and `docs/technical-manual.md`
+  both flagged as unsuitable for anything relying on collision or preimage
+  resistance (Workstream 7 item 3). RustCrypto's `sha2`: pure Rust, MIT/Apache-2.0,
+  the same license terms already in use elsewhere in this workspace, `rust-version`
+  matching the workspace's own `1.85`. `default-features = false` drops the
+  `alloc`/`oid` features (this crate only ever calls `Sha256::digest` on a
+  borrowed slice into a fixed `[u8; 32]`, no allocation or ASN.1 OID encoding
+  needed) - pulls in `digest`, `block-buffer`, `crypto-common`,
+  `hybrid-array`, `typenum`, and `cpufeatures` transitively, all from the
+  same RustCrypto organization already vetted for this addition.
 
 Not currently a dependency of any core crate, with a standing decision
 below:
