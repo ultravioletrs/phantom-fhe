@@ -39,6 +39,27 @@ pub(crate) fn decode_poly(payload: &[u8], ring: &Ring) -> Result<Poly> {
     Ok(poly)
 }
 
+/// Encodes a pair of polynomials (e.g. a PCKS share's own `(h0, h1)`) as one
+/// payload: each poly's own [`encode_poly`] output, length-prefixed.
+pub(crate) fn encode_poly_pair(first: &Poly, second: &Poly) -> Vec<u8> {
+    let mut out = Vec::new();
+    let first_bytes = encode_poly(first);
+    out.extend_from_slice(&(first_bytes.len() as u64).to_le_bytes());
+    out.extend_from_slice(&first_bytes);
+    out.extend_from_slice(&encode_poly(second));
+    out
+}
+
+pub(crate) fn decode_poly_pair(payload: &[u8], ring: &Ring) -> Result<(Poly, Poly)> {
+    let mut reader = Reader::new(payload);
+    let first_len = reader.u64()? as usize;
+    let first_bytes = reader.take(first_len)?;
+    let first = decode_poly(first_bytes, ring)?;
+    let second_bytes = &payload[reader.offset..];
+    let second = decode_poly(second_bytes, ring)?;
+    Ok((first, second))
+}
+
 pub(crate) fn ensure_equal_payloads<'a>(
     shares: impl IntoIterator<Item = &'a crate::common::Share>,
 ) -> Result<&'a [u8]> {
@@ -63,16 +84,21 @@ impl<'a> Reader<'a> {
     }
 
     fn u64(&mut self) -> Result<u64> {
+        let bytes = self.take(8)?;
+        Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
+    }
+
+    fn take(&mut self, len: usize) -> Result<&'a [u8]> {
         let end = self
             .offset
-            .checked_add(8)
+            .checked_add(len)
             .ok_or(MultipartyError::MalformedMessage)?;
         let bytes = self
             .input
             .get(self.offset..end)
             .ok_or(MultipartyError::MalformedMessage)?;
         self.offset = end;
-        Ok(u64::from_le_bytes(bytes.try_into().unwrap()))
+        Ok(bytes)
     }
 
     const fn is_finished(&self) -> bool {

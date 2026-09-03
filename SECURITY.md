@@ -265,9 +265,15 @@ The following components are not yet at production cryptographic strength:
   construction, "collective key-switching toward the null key" - see
   Workstream 7 item 5c. `mpbgv`'s own `InteractiveBootstrap` still uses
   byte-equality aggregation (`ensure_equal_payloads`), not real
-  cryptographic combination; `mpbfv`/`mpckks` have not yet had their own
-  `CollectiveKeyGen`/`GaloisKeyGen`/`RelinearizationKeyGen`/`ReEncryptor`/
-  `PartialDecryptor` wired to real key material at all. `ReEncryptor`'s own
+  cryptographic combination. `mpbfv::CollectiveKeyGen`/`ReEncryptor`/
+  `PartialDecryptor` are real too (Workstream 7 item 9) - the identical
+  additive construction, minus BGV's own `t`-scaling (BFV's real path
+  doesn't need it); `mpbfv::RelinearizationKeyGen`/`GaloisKeyGen`/
+  `InteractiveBootstrap` and all of `mpckks` remain placeholders - mirroring
+  GKG/RKG needs a genuinely new RNS-hybrid multiparty construction, not a
+  port of `mpbgv`'s own gadget-decomposition one, and the CKKS mirror of
+  CKG/PCKS/PartialDecryptor is separate, not-yet-attempted follow-up work.
+  `ReEncryptor`'s own
   smudging noise is
   now a rigorously derived bound (`phantom_lattice::security::smudging_std_dev`,
   `sigma_smudge = ciphertext_noise_bound * 2^(statistical_security_bits/2)`,
@@ -282,8 +288,8 @@ The following components are not yet at production cryptographic strength:
   (a participant producing a second share for the same session/public
   randomness) leaks key material via accumulated linear algebra, regardless
   of any single call's smudging noise - `mpbgv`'s five real protocols
-  (CKG/GKG/RKG's both rounds/PCKS/PartialDecryptor) now guard against this
-  directly
+  (CKG/GKG/RKG's both rounds/PCKS/PartialDecryptor) and `mpbfv`'s three
+  (CKG/PCKS/PartialDecryptor) now guard against this directly
   (`phantom_multiparty::common::ReplayGuard`, Workstream 7 item 8): each
   `create_share`/`create_share_round1`/`create_share_round2` call requires a
   `&mut ReplayGuard` and refuses (before any crypto work) a second call for
