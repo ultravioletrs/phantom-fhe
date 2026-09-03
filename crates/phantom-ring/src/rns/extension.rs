@@ -236,21 +236,31 @@ pub fn floor_divide_residues(basis: &RnsBasis, divisor: u64) -> Vec<u64> {
 /// for the full derivation).
 ///
 /// Shares [`reconstruct_centered_values`] for the reconstruction half (the
-/// same primitive CKKS's own real decoder already relies on) and the same
-/// `rem_euclid`-based signed-to-residue embedding
-/// `phantom_schemes::ckks::encoder`'s own `embed_signed_coeffs` uses.
+/// same primitive CKKS's own real decoder already relies on) and
+/// [`embed_centered_coeffs`] for the embedding half.
 pub fn extend_basis_centered(poly: &Poly, source: &RnsBasis, target: &RnsBasis) -> Result<Poly> {
     let centered = reconstruct_centered_values(poly, source)?;
+    embed_centered_coeffs(&centered, target.moduli())
+}
 
-    let mut coeffs = vec![vec![0u64; centered.len()]; target.moduli().len()];
-    for (j, modulus) in target.moduli().iter().enumerate() {
+/// Embeds `coeffs` (one signed integer per ring coefficient) into an RNS
+/// representation over `moduli`, via `rem_euclid` per modulus - the
+/// signed-to-residue embedding [`extend_basis_centered`] uses for its own
+/// second half, and `phantom_schemes::ckks::encoder`'s own real encoder
+/// needs for exactly the same reason (a small signed coefficient value
+/// re-embedded unchanged, not reduced through a non-negative `[0, Q)`
+/// convention first). Takes a bare modulus slice, not a [`RnsBasis`] or a
+/// full `Ring`, so callers that only have one of those (or neither, just a
+/// modulus list) don't need to construct the other just to call this.
+pub fn embed_centered_coeffs(coeffs: &[i128], moduli: &[crate::Modulus]) -> Result<Poly> {
+    let mut out = vec![vec![0u64; coeffs.len()]; moduli.len()];
+    for (j, modulus) in moduli.iter().enumerate() {
         let q = i128::from(modulus.value());
-        for (i, &value) in centered.iter().enumerate() {
-            coeffs[j][i] = value.rem_euclid(q) as u64;
+        for (i, &value) in coeffs.iter().enumerate() {
+            out[j][i] = value.rem_euclid(q) as u64;
         }
     }
-
-    Poly::from_coeffs(coeffs)
+    Poly::from_coeffs(out)
 }
 
 /// Reconstructs each coefficient's true value via CRT (`reconstruct_true_values`),

@@ -72,7 +72,7 @@
 //! matching this crate's existing "correctness first" primitives -
 //! tracked as a future optimization, not attempted here.
 
-use phantom_ring::rns::extension::reconstruct_centered_values;
+use phantom_ring::rns::extension::{embed_centered_coeffs, reconstruct_centered_values};
 use phantom_ring::{Poly, Ring, RnsBasis};
 
 use super::{CkksParams, Complex64, Plaintext, Precision, Scale};
@@ -284,14 +284,10 @@ fn root_powers(n: usize) -> Vec<Complex64> {
 /// Embeds signed coefficients into `ring`'s own RNS residues, one modulus
 /// at a time - `rem_euclid` gives a residue in `[0, q)` regardless of
 /// sign, the same signed-embedding convention `bgv`/`bfv`'s own encoders
-/// use (there via an explicit `q - magnitude` branch).
+/// use (there via an explicit `q - magnitude` branch). Delegates to
+/// [`embed_centered_coeffs`], the same shared primitive
+/// `phantom_ring::rns::extension::extend_basis_centered` uses for its own
+/// embedding half - this function used to duplicate that loop locally.
 fn embed_signed_coeffs(coeffs: &[i128], ring: &Ring) -> Result<Poly> {
-    let mut out = vec![vec![0u64; coeffs.len()]; ring.moduli().len()];
-    for (j, modulus) in ring.moduli().iter().enumerate() {
-        let q = i128::from(modulus.value());
-        for (i, &c) in coeffs.iter().enumerate() {
-            out[j][i] = c.rem_euclid(q) as u64;
-        }
-    }
-    Ok(Poly::from_coeffs(out)?)
+    Ok(embed_centered_coeffs(coeffs, ring.moduli())?)
 }

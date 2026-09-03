@@ -243,22 +243,28 @@ The following components are not yet at production cryptographic strength:
   `EvalMod::reduce_mod_q_real_wide`'s own doc comments state this
   precisely. BGV/BFV bootstrapping modules are reserved but unimplemented.
 - `phantom-multiparty` protocols have not had an adversarial security
-  review. Collective key generation, relinearization-key generation, and
-  Galois-key generation currently aggregate shares into placeholder key
-  material (e.g. an all-zero public key) rather than real cryptographic key
-  material, and share aggregation's current agreement check
-  (`ensure_equal_payloads`, used by `PartialDecryptor`/`ReEncryptor`/
-  `InteractiveBootstrap`) is byte-equality on identical cleartext-equivalent
-  payloads, not real threshold secret-share reconstruction (no noise
-  flooding/smudging exists yet either). `phantom_multiparty::vss` is a real,
+  review. `mpbgv::CollectiveKeyGen` is real: each participant generates an
+  ordinary small RLWE secret independently (never transmitted or assembled
+  by anyone, including the infrastructure aggregating shares) and
+  contributes a public, `t`-scaled share to a genuine collective BGV public
+  key. Relinearization-key generation and Galois-key generation still
+  aggregate shares into placeholder key material (e.g. `GaloisKeyGen`
+  returns marker keys regardless of shares), and share aggregation for
+  threshold decryption/re-encryption (`ensure_equal_payloads`, used by
+  `PartialDecryptor`/`ReEncryptor`/`InteractiveBootstrap`) is still
+  byte-equality on identical cleartext-equivalent payloads, not real
+  threshold secret-share reconstruction (no noise flooding/smudging exists
+  yet either). `mpbfv`/`mpckks` have not yet had their own `CollectiveKeyGen`
+  wired to real key material at all. `phantom_multiparty::vss` is a real,
   tested Pedersen verifiable-secret-sharing distributed-key-generation
   primitive (Ristretto255-based; no party or aggregating infrastructure ever
   assembles the full secret, and a dealer sending inconsistent shares to
-  different recipients is cryptographically detected) - but it is **not yet
-  wired into** `ckg`/`rkg`/`gkg`/`partial_decrypt`/`reencryption`/
-  `interactive_bootstrap`, so those six protocols remain exactly the
-  placeholders described above until that integration lands (Workstream 7
-  items 4/5). The transcript hash used for protocol transcripts
+  different recipients is cryptographically detected) - composable with
+  `CollectiveKeyGen` (both draw on the same per-participant local secret,
+  demonstrated together in `phantom-multiparty/tests/phase14_mpbgv.rs`) but
+  not itself required for CKG's own correctness; its main un-wired
+  consumer remains real threshold decryption (Workstream 7 item 5). The
+  transcript hash used for protocol transcripts
   (`phantom_multiparty::common::transcript::stable_hash_256`) is now
   SHA-256 (`sha2`), not the hand-rolled mixer earlier versions of this
   document described.

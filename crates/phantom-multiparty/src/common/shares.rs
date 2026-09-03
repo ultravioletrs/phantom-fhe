@@ -185,6 +185,17 @@ impl ShareAggregator {
     }
 
     /// Returns shares in participant-id order once threshold is met.
+    ///
+    /// Truncates to exactly `threshold` shares - correct for genuine
+    /// Shamir-style (t-of-n) protocols, where any qualifying subset
+    /// reconstructs the same value and including extra shares beyond
+    /// `threshold` is unnecessary. **Wrong** for an *additive* (n-of-n)
+    /// construction like BGV collective public-key generation
+    /// (`mpbgv::CollectiveKeyGen`), where every contributing participant's
+    /// own share must be summed - omitting even one silently produces a
+    /// public key for a *different* collective secret than the one every
+    /// contributor actually agreed to. Use [`Self::all_shares`] for that
+    /// case instead.
     pub fn aggregate(&self) -> Result<Vec<Share>> {
         if !self.is_ready() {
             return Err(MultipartyError::ThresholdNotMet);
@@ -195,6 +206,17 @@ impl ShareAggregator {
             .take(self.session.threshold())
             .cloned()
             .collect())
+    }
+
+    /// Returns *every* collected share, in participant-id order, once at
+    /// least `threshold` have arrived - unlike [`Self::aggregate`], never
+    /// truncates. See [`Self::aggregate`]'s own doc comment for when each
+    /// is the right choice.
+    pub fn all_shares(&self) -> Result<Vec<Share>> {
+        if !self.is_ready() {
+            return Err(MultipartyError::ThresholdNotMet);
+        }
+        Ok(self.shares.values().cloned().collect())
     }
 
     /// Returns the number of collected shares.
