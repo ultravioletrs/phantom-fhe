@@ -99,23 +99,22 @@ part of the trusted core surface):
 
 - `rand_chacha` - deterministic seeded RNGs for tests and examples.
 - `proptest` - a dev-dependency of `phantom-ring` (`tests/property_tests.rs`,
-  Workstream 3 item 1) for property-based tests. Still pre-approved for the
-  same use in other crates (Workstream 8) as it's picked up there. Must
-  never appear in a non-dev dependency list.
+  Workstream 3 item 1), and of every other crate with a `serialization.rs`
+  (Workstream 8) for decode-never-panics property tests. Must never appear
+  in a non-dev dependency list.
+- `criterion` (`default-features = false`, `features = ["cargo_bench_support"]`)
+  - a dev-dependency of `phantom-benches` only (Workstream 9), pinned to
+    `0.7` (0.8+ needs a newer `rust-version` than this workspace's `1.85`).
+    Only `cargo_bench_support` is enabled - no `plotters`, `rayon`, or
+    `html_reports` transitively. Must never become a dependency of any core
+    crate.
 
 ## Benchmarks
 
-`phantom-benches` currently uses dependency-free `std::time::Instant` smoke
-timing (see `docs/technical-manual.md#performance`) so it runs without extra setup.
-Criterion is pre-approved for adoption once Workstream 9 is picked up, as a
-dev-dependency of `phantom-benches` only:
-
-```toml
-[dev-dependencies]
-criterion = { version = "...", default-features = false }
-```
-
-Criterion must not become a dependency of any core crate.
+`phantom-benches` uses Criterion (see `docs/technical-manual.md#performance`
+for the CI-tuned configuration and how to run a deeper local sweep). It
+replaced the earlier dependency-free `std::time::Instant` smoke timing
+once Workstream 9 was picked up, per this file's own prior pre-approval.
 
 ## Adding a new dependency
 

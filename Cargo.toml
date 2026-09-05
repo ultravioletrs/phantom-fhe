@@ -20,6 +20,7 @@ repository = "https://github.com/ultravioletrs/phantom-fhe"
 rust-version = "1.85"
 
 [workspace.dependencies]
+criterion = { version = "0.7", default-features = false, features = ["cargo_bench_support"] }
 curve25519-dalek = { version = "4.1", default-features = false, features = ["alloc", "rand_core"] }
 proptest = "1"
 rand_chacha = "0.3"

@@ -77,7 +77,7 @@ More workflows (BGV, CKKS, bootstrapping, multiparty) are runnable from [`crates
 | [`phantom-bootstrapping`](crates/phantom-bootstrapping) | CKKS bootstrapping pipeline plus reserved BGV/BFV module locations |
 | [`phantom-multiparty`](crates/phantom-multiparty) | Threshold protocol implementations (mpBGV, mpBFV, mpCKKS) |
 | [`phantom-examples`](crates/phantom-examples) | Runnable example workflows and binaries (workspace-only) |
-| [`phantom-benches`](crates/phantom-benches) | Dependency-free smoke benchmarks for current hot paths (workspace-only) |
+| [`phantom-benches`](crates/phantom-benches) | Criterion benchmarks for current hot paths (workspace-only) |
 
 `phantom-examples` and `phantom-benches` are workspace-only (`publish = false`): they exercise the individual `phantom-*` crates directly, and the facade crate has its own smoke test ([`crates/phantom-fhe/tests/facade.rs`](crates/phantom-fhe/tests/facade.rs)) confirming its re-exports resolve to working APIs.
 
