@@ -339,6 +339,39 @@ The following components are not yet at production cryptographic strength:
   (`phantom_multiparty::common::transcript::stable_hash_256`) is now
   SHA-256 (`sha2`), not the hand-rolled mixer earlier versions of this
   document described.
+  **Adversary model, stated explicitly (Workstream 7 item 6)**: every
+  construction above is additive n-of-n, so confidentiality of the
+  collective secret holds as long as at least one contributor is honest -
+  the standard n-of-n collusion-resistance argument, not a weaker t-of-n
+  threshold (see item 5b). What's mechanically enforced today is
+  *format/shape* validation: the generic `Share`/`ShareAggregator` layer
+  rejects a stale session/round, a duplicate or unknown participant, or a
+  mismatched `ShareKind` (`StaleShare`/`DuplicateParticipant`/
+  `UnknownParticipant`/`MalformedMessage`); `GaloisKeyGen::aggregate_keys`
+  independently verifies every share's own shared constant `a_{j,i}`
+  matches rather than summing it (the bug class described above);
+  `RelinearizationKeyGen`'s own aggregation checks row-count/shape
+  agreement across shares; and `ReplayGuard` refuses a second share for an
+  already-used `(session id, round, protocol, participant)` tuple. None of
+  this is *active* (malicious) security, though: there is no proof - e.g.
+  zero-knowledge - that a well-formed share was honestly computed from a
+  participant's real secret, so a malicious participant can still submit a
+  well-formed-but-wrong share (not a format violation, a deliberately
+  incorrect field element) to silently sabotage correctness - producing a
+  wrong key or ciphertext, not leaking anything - undetectable by any check
+  in this codebase today. Closing that gap needs share-correctness proofs,
+  materially bigger than this item; it is documented here, not fixed.
+  Adversarial tests exercising the format/shape checks above, including two
+  scenarios that pass the generic checks but must still be caught by a
+  scheme's own wire-decode or shared-constant check (a `CollectiveKeyGen`
+  share's payload relabeled as a `GaloisKeyGen` share; a round-1 or round-0
+  share submitted to a later round's aggregator), live in
+  `phantom-multiparty/tests/phase14_mpbgv.rs`,
+  `phase15_mpbfv.rs`, and `phase16_mpckks.rs` (Workstream 7 item 7).
+  `mpbgv`/`mpbfv`/`mpckks::InteractiveBootstrap` remain fully transparent
+  (byte-equality aggregation, no real secret-sharing of a decryption
+  computation) - no adversarial model applies to them yet; this is tracked
+  as its own, independent gap, not folded into the above.
 - All example and test parameter presets (see
   `docs/user-guide.md#choosing-parameters`) are small development sizes
   chosen for fast iteration, not production security margins. Every

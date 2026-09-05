@@ -2,7 +2,7 @@ use curve25519_dalek::scalar::Scalar;
 use phantom_lattice::rgsw::GadgetDecompositionParams;
 use phantom_lattice::rlwe::SecretKey;
 use phantom_multiparty::common::{
-    ParticipantId, ParticipantSet, ProtocolKind, ReplayGuard, SessionId, SessionState,
+    ParticipantId, ParticipantSet, ProtocolKind, ReplayGuard, SessionId, SessionState, Share,
     ShareAggregator, ShareKind,
 };
 use phantom_multiparty::mpbgv::{
@@ -713,6 +713,177 @@ fn invalid_shares_are_detected() {
     assert_eq!(
         aggregator.add_share(stale).unwrap_err(),
         MultipartyError::StaleShare
+    );
+}
+
+#[test]
+fn relinearization_key_generation_round1_share_is_rejected_by_the_round2_aggregator() {
+    // RKG's round 1 and round 2 both use the identical
+    // `ShareKind::RelinearizationKeyGen` tag - only the session's own
+    // `round` number tells them apart. This confirms a share genuinely
+    // produced for round 1 cannot be smuggled into round 2's aggregator -
+    // protocol confusion the shared `ShareKind` tag alone wouldn't catch.
+    let params = params();
+    let ring = params.ring();
+    let ckg_session = session(ProtocolKind::CollectiveKeyGen);
+    let rkg_session = session(ProtocolKind::RelinearizationKeyGen);
+    let participants = [id(1), id(2)];
+    let mut rng = rng();
+
+    let secrets: Vec<SecretKey> = participants
+        .iter()
+        .map(|_| {
+            let coeffs: Vec<i128> = (0..ring.degree())
+                .map(|_| (rng.next_u32() % 3) as i128 - 1)
+                .collect();
+            SecretKey::new(embed_centered_coeffs(&coeffs, ring.moduli()).unwrap())
+        })
+        .collect();
+    let mut replay_guards: Vec<ReplayGuard> =
+        participants.iter().map(|_| ReplayGuard::new()).collect();
+
+    let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+    let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
+    for ((&participant, secret), guard) in participants.iter().zip(&secrets).zip(&mut replay_guards)
+    {
+        ckg_aggregator
+            .add_share(
+                ckg.create_share(participant, secret, guard, &mut rng)
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_public_key = ckg.aggregate_public_key(&ckg_aggregator).unwrap();
+
+    let decomposition_params = GadgetDecompositionParams::new(8, 7).unwrap();
+    let rkg = RelinearizationKeyGen::new(
+        params,
+        rkg_session,
+        collective_public_key,
+        decomposition_params,
+    );
+
+    let round1_share = rkg
+        .create_share_round1(
+            participants[0],
+            &secrets[0],
+            &mut replay_guards[0],
+            &mut rng,
+        )
+        .unwrap();
+
+    let mut round2_aggregator =
+        ShareAggregator::new(rkg.round2_session(), ShareKind::RelinearizationKeyGen);
+    assert_eq!(
+        round2_aggregator.add_share(round1_share).unwrap_err(),
+        MultipartyError::StaleShare
+    );
+}
+
+#[test]
+fn a_collective_key_gen_share_cannot_be_smuggled_into_galois_key_generation() {
+    // A malicious or buggy participant can call the public `Share::new`
+    // directly, mislabeling arbitrary bytes under any `ShareKind` they
+    // like - the generic `ShareAggregator` only checks that the label
+    // matches, not that the payload's own shape does. This confirms
+    // `GaloisKeyGen::aggregate_keys`'s own wire-decode is a second,
+    // independent line of defense: a real CKG share's payload (a single
+    // polynomial), relabeled as a GKG share for the same session, still
+    // gets rejected once decoding tries to interpret it as GKG's own
+    // row-pair sequence.
+    let params = params();
+    let ring = params.ring();
+    let ckg_session = session(ProtocolKind::CollectiveKeyGen);
+    let gkg_session = session(ProtocolKind::GaloisKeyGen);
+    let mut rng = rng();
+    let secret =
+        SecretKey::new(embed_centered_coeffs(&vec![0i128; ring.degree()], ring.moduli()).unwrap());
+    let mut replay_guard = ReplayGuard::new();
+
+    let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+    let ckg_share = ckg
+        .create_share(id(1), &secret, &mut replay_guard, &mut rng)
+        .unwrap();
+
+    let smuggled = Share::new(
+        &gkg_session,
+        id(1),
+        ShareKind::GaloisKeyGen,
+        ckg_share.payload().to_vec(),
+    )
+    .unwrap();
+
+    let decomposition_params = GadgetDecompositionParams::new(8, 7).unwrap();
+    let element = params.rotation_element(1);
+    let gkg = GaloisKeyGen::new(params, gkg_session.clone(), element, decomposition_params);
+    // A second, genuinely well-formed GKG share, purely to satisfy the
+    // session's own threshold - the point of this test is the *first*
+    // share's own shape, not whether enough shares arrived.
+    let honest_share = gkg
+        .create_share(id(2), &secret, &mut replay_guard, &mut rng)
+        .unwrap();
+
+    let mut gkg_aggregator = ShareAggregator::new(gkg_session, ShareKind::GaloisKeyGen);
+    gkg_aggregator.add_share(smuggled).unwrap();
+    gkg_aggregator.add_share(honest_share).unwrap();
+
+    assert_eq!(
+        gkg.aggregate_keys(&gkg_aggregator).unwrap_err(),
+        MultipartyError::MalformedMessage
+    );
+}
+
+#[test]
+fn galois_key_generation_rejects_a_mismatched_shared_constant() {
+    // Simulates a malicious or buggy participant computing their own row
+    // against the wrong rotation `element` - `a_{j,i}`'s own purpose label
+    // is derived from `element` (see `GaloisKeyGen`'s own doc comment), so
+    // this produces genuine, well-formed rows whose shared constant
+    // doesn't match the other participant's. `aggregate_keys` must detect
+    // this: it checks, but never sums, `a_{j,i}` - this is exactly the
+    // "shared constant vs per-participant contribution" bug class this
+    // construction already found and fixed once for real; this test's own
+    // point is to guard against it silently reappearing.
+    let params = params();
+    let ring = params.ring();
+    let session = session(ProtocolKind::GaloisKeyGen);
+    let mut rng = rng();
+    let secret1 =
+        SecretKey::new(embed_centered_coeffs(&vec![0i128; ring.degree()], ring.moduli()).unwrap());
+    let secret2 =
+        SecretKey::new(embed_centered_coeffs(&vec![1i128; ring.degree()], ring.moduli()).unwrap());
+    let mut guard1 = ReplayGuard::new();
+    let mut guard2 = ReplayGuard::new();
+
+    let element1 = params.rotation_element(1);
+    let element2 = params.rotation_element(2);
+    let gkg_honest = GaloisKeyGen::new(
+        params.clone(),
+        session.clone(),
+        element1,
+        GadgetDecompositionParams::new(8, 7).unwrap(),
+    );
+    let gkg_wrong_element = GaloisKeyGen::new(
+        params,
+        session.clone(),
+        element2,
+        GadgetDecompositionParams::new(8, 7).unwrap(),
+    );
+
+    let share1 = gkg_honest
+        .create_share(id(1), &secret1, &mut guard1, &mut rng)
+        .unwrap();
+    let share2 = gkg_wrong_element
+        .create_share(id(2), &secret2, &mut guard2, &mut rng)
+        .unwrap();
+
+    let mut aggregator = ShareAggregator::new(session, ShareKind::GaloisKeyGen);
+    aggregator.add_share(share1).unwrap();
+    aggregator.add_share(share2).unwrap();
+
+    assert_eq!(
+        gkg_honest.aggregate_keys(&aggregator).unwrap_err(),
+        MultipartyError::MalformedMessage
     );
 }
 

@@ -148,6 +148,39 @@ fn collective_public_key_generation_via_dkg_produces_a_genuinely_decryptable_key
 }
 
 #[test]
+fn replay_guard_rejects_a_second_share_for_the_same_session_round_and_participant() {
+    // Mirrors `phase14_mpbgv.rs`'s own equivalent test: `ReplayGuard` is
+    // wired into every real `mpbfv` protocol's `create_share*` the same
+    // way it is for `mpbgv`'s, but until now only `mpbgv` had a test
+    // proving it actually fires.
+    let params = real_params();
+    let secret = SecretKey::new(
+        embed_centered_coeffs(&vec![0i128; params.ring().degree()], params.ring().moduli())
+            .unwrap(),
+    );
+    let mut rng = rng();
+    let mut replay_guard = ReplayGuard::new();
+
+    let ckg = CollectiveKeyGen::new(params, session(ProtocolKind::CollectiveKeyGen));
+
+    ckg.create_share(id(1), &secret, &mut replay_guard, &mut rng)
+        .unwrap();
+
+    assert_eq!(
+        ckg.create_share(id(1), &secret, &mut replay_guard, &mut rng),
+        Err(MultipartyError::ReplayedShare)
+    );
+
+    ckg.create_share(id(2), &secret, &mut replay_guard, &mut rng)
+        .unwrap();
+
+    let other_ckg = CollectiveKeyGen::new(real_params(), session(ProtocolKind::GaloisKeyGen));
+    other_ckg
+        .create_share(id(1), &secret, &mut replay_guard, &mut rng)
+        .unwrap();
+}
+
+#[test]
 fn collective_galois_key_generation_via_real_dkg_rotates_a_genuine_ciphertext() {
     // Real, end-to-end proof that `GaloisKeyGen` produces genuine RNS-hybrid
     // BFV rotation key material - mirrors `phase14_mpbgv.rs`'s own

@@ -174,6 +174,116 @@ fn collective_public_key_generation_via_dkg_produces_a_genuinely_decryptable_key
 }
 
 #[test]
+fn replay_guard_rejects_a_second_share_for_the_same_session_round_and_participant() {
+    // Mirrors `phase14_mpbgv.rs`'s own equivalent test: `ReplayGuard` is
+    // wired into every real `mpckks` protocol's `create_share*` the same
+    // way it is for `mpbgv`'s, but until now only `mpbgv` had a test
+    // proving it actually fires.
+    let params = real_params();
+    let secret = SecretKey::new(
+        embed_centered_coeffs(&vec![0i128; params.ring().degree()], params.ring().moduli())
+            .unwrap(),
+    );
+    let mut rng = rng();
+    let mut replay_guard = ReplayGuard::new();
+
+    let ckg = CollectiveKeyGen::new(params.clone(), session(ProtocolKind::CollectiveKeyGen));
+
+    ckg.create_share(id(1), &secret, &mut replay_guard, &mut rng)
+        .unwrap();
+
+    assert_eq!(
+        ckg.create_share(id(1), &secret, &mut replay_guard, &mut rng),
+        Err(MultipartyError::ReplayedShare)
+    );
+
+    ckg.create_share(id(2), &secret, &mut replay_guard, &mut rng)
+        .unwrap();
+
+    let other_ckg = CollectiveKeyGen::new(params, session(ProtocolKind::GaloisKeyGen));
+    other_ckg
+        .create_share(id(1), &secret, &mut replay_guard, &mut rng)
+        .unwrap();
+}
+
+#[test]
+fn relinearization_key_generation_round0_share_is_rejected_by_the_round1_aggregator() {
+    // Mirrors `phase14_mpbgv.rs`'s own equivalent test for the newer
+    // three-round hybrid construction (round 0 builds a collective public
+    // key over `QP`, then rounds 1/2 mirror `mpbgv::rkg`'s own two) - all
+    // three rounds reuse the identical `ShareKind::RelinearizationKeyGen`
+    // tag, so only the session's own `round` number tells them apart.
+    let params = real_params();
+    let ring = params.ring();
+    let p_moduli = vec![Modulus::new(1_000_000_000_000_159).unwrap()];
+    let rkg_session = session(ProtocolKind::RelinearizationKeyGen);
+    let secret =
+        SecretKey::new(embed_centered_coeffs(&vec![0i128; ring.degree()], ring.moduli()).unwrap());
+    let mut rng = rng();
+    let mut replay_guard = ReplayGuard::new();
+
+    let rkg = RelinearizationKeyGen::new(params, rkg_session.clone(), p_moduli);
+    let round0_share = rkg
+        .create_qp_ckg_share(id(1), &secret, &mut replay_guard, &mut rng)
+        .unwrap();
+
+    let mut round1_aggregator =
+        ShareAggregator::new(rkg.round1_session(), ShareKind::RelinearizationKeyGen);
+    assert_eq!(
+        round1_aggregator.add_share(round0_share).unwrap_err(),
+        MultipartyError::StaleShare
+    );
+}
+
+#[test]
+fn galois_key_generation_rejects_a_mismatched_shared_constant() {
+    // Simulates a malicious or buggy participant computing their own row
+    // against the wrong rotation `element` - `common::hybrid`'s own `a_j`
+    // purpose label is derived from `element`, so this produces genuine,
+    // well-formed rows whose shared constant doesn't match the other
+    // participant's. `aggregate_keys` must detect this: it checks, but
+    // never sums, `a_j`. Mirrors `phase14_mpbgv.rs`'s own equivalent test
+    // for the newer RNS-hybrid construction.
+    let params = real_params();
+    let ring = params.ring();
+    let p_moduli = vec![Modulus::new(1_000_000_000_000_159).unwrap()];
+    let gkg_session = session(ProtocolKind::GaloisKeyGen);
+    let mut rng = rng();
+    let secret1 =
+        SecretKey::new(embed_centered_coeffs(&vec![0i128; ring.degree()], ring.moduli()).unwrap());
+    let secret2 =
+        SecretKey::new(embed_centered_coeffs(&vec![1i128; ring.degree()], ring.moduli()).unwrap());
+    let mut guard1 = ReplayGuard::new();
+    let mut guard2 = ReplayGuard::new();
+
+    let element1 = params.rotation_element(1);
+    let element2 = params.rotation_element(2);
+    let gkg_honest = GaloisKeyGen::new(
+        params.clone(),
+        gkg_session.clone(),
+        element1,
+        p_moduli.clone(),
+    );
+    let gkg_wrong_element = GaloisKeyGen::new(params, gkg_session.clone(), element2, p_moduli);
+
+    let share1 = gkg_honest
+        .create_share(id(1), &secret1, &mut guard1, &mut rng)
+        .unwrap();
+    let share2 = gkg_wrong_element
+        .create_share(id(2), &secret2, &mut guard2, &mut rng)
+        .unwrap();
+
+    let mut aggregator = ShareAggregator::new(gkg_session, ShareKind::GaloisKeyGen);
+    aggregator.add_share(share1).unwrap();
+    aggregator.add_share(share2).unwrap();
+
+    assert_eq!(
+        gkg_honest.aggregate_keys(&aggregator).unwrap_err(),
+        MultipartyError::MalformedMessage
+    );
+}
+
+#[test]
 fn collective_galois_key_generation_via_real_dkg_rotates_a_genuine_ciphertext() {
     // Real, end-to-end proof that `GaloisKeyGen` produces genuine RNS-hybrid
     // CKKS rotation key material - mirrors `phase15_mpbfv.rs`'s own
