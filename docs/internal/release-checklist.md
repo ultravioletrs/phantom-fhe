@@ -16,9 +16,11 @@
 ## Beta
 
 - Criterion adopted as a `phantom-benches`-only dev-dependency, with toy/small benchmark tiers and per-evaluator allocation-count diagnostics - done (Alpha Hardening Workstream 9).
-- Add security notes for every published parameter preset.
+- Security notes added for every published parameter preset (BFV/BGV toy, CKKS toy, CKKS bootstrapping, the real-noise-headroom preset, and the production-shaped example) - done, see `docs/user-guide.md#choosing-parameters`'s own per-preset table and the dedicated "A production-shaped example" subsection.
 - Serialization compatibility and versioning audited: domain tags vs. versions, golden-byte/version-mismatch/proptest coverage for every serialized type - done, see `docs/internal/serialization-compatibility-policy.md` (Alpha Hardening Workstream 8).
 - Secret-bearing types confirmed to remain non-serializable by default, with the one deliberate, documented exception (`vss::VssShare`) - done (Alpha Hardening Workstream 8).
+
+The Beta checklist is complete as of 2026-09-06.
 
 ## Stable
 

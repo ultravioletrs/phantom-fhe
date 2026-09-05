@@ -21,6 +21,10 @@ Building and verifying that preset surfaced three real, previously-undiscovered 
 - **`phantom-multiparty`**: `vss::scalar_embed::recover_centered` had an `O(magnitude_bound)` denial-of-service hazard for any caller passing a large bound (found via an external report, independently verified before fixing). Fixed to `O(1)` via direct canonical-byte inspection.
 - **`phantom-schemes`**: real BFV decoding (`decode_u64_real`/`decode_batched_real`) silently produced wrong results for any ciphertext modulus with more than one RNS component - it only ever read the first modulus, correct by accident for every prior single-modulus test. Fixed with a new shared `phantom_ring::rns::decode_scaled_value` primitive.
 
+### Documentation
+
+- `docs/user-guide.md#choosing-parameters` restructured around a single per-preset table, each preset (BFV/BGV toy, CKKS toy, CKKS bootstrapping, the real-noise-headroom preset used by `*_real_basic`/multiparty examples, and the production-shaped example) carrying its own explicit security note - closes the `docs/internal/release-checklist.md` Beta checklist item asking for this, and the Beta checklist itself is now complete.
+
 ## 0.1.0 - Alpha (2026-09-05)
 
 First tagged milestone: all 18 roadmap phases are implemented, and Alpha
