@@ -260,3 +260,63 @@ pub fn rescale_and_round(
 
     Poly::from_coeffs(out_coeffs)
 }
+
+/// Undoes `Delta`-style scaling directly to a `mod t` result: reconstructs
+/// each coefficient's true signed value across `basis`'s full product `Q`
+/// (via CRT, same as [`rescale_and_round`]), computes `round(|value| * t /
+/// Q)`, reapplies `value`'s sign, and reduces mod `t`.
+///
+/// Unlike [`rescale_and_round`], there is no auxiliary basis to extend into
+/// first: `poly` here is a freshly decrypted, already-in-`basis` ciphertext
+/// coefficient (e.g. BFV's `Delta*m + noise (mod Q)`), not an unreduced
+/// tensor product that needs extra headroom to reconstruct safely - so
+/// `basis` alone is enough, and the result is already small enough
+/// (comparable to `t`) to return directly rather than re-expressing across
+/// `basis`'s own moduli the way `rescale_and_round` must.
+///
+/// This is what real (non-transparent, multi-`Q`-modulus) BFV/CKKS decoding
+/// needs and previously didn't have: reading only `basis`'s first modulus
+/// (as if it were the whole `Q`) is correct only when `Q` happens to be a
+/// single modulus, or when the scaled value is already smaller than any
+/// single modulus (true for BGV's `m + t*e`, false for BFV's `Delta*m +
+/// noise`, which is comparable in size to the *whole* `Q` by construction).
+/// That gap was a real, previously-undiscovered decode bug for
+/// multi-modulus `Q`, found while building a production-scale
+/// (multi-`Q`-modulus) parameter preset that no existing test had ever
+/// exercised.
+pub fn decode_scaled_value(poly: &Poly, basis: &RnsBasis, t: Modulus) -> Result<Vec<u64>> {
+    if poly.moduli_count() != basis.moduli().len() {
+        return Err(RingError::DimensionMismatch);
+    }
+
+    let (big_q, values) = reconstruct_true_values(poly, basis)?;
+    let t_value = t.value();
+
+    let mut out = Vec::with_capacity(values.len());
+    for value in &values {
+        // Center into (-Q/2, Q/2]: negative iff 2*value > Q.
+        let doubled = value.mul_u64(2);
+        let negative = doubled.cmp(&big_q) == Ordering::Greater;
+        let magnitude = if negative {
+            big_q.sub(value)
+        } else {
+            value.clone()
+        };
+
+        let scaled = magnitude.mul_u64(t_value);
+        let (quotient, remainder) = scaled.divmod(&big_q);
+        let rounded = if remainder.mul_u64(2).cmp(&big_q) != Ordering::Less {
+            quotient.add(&BigUint::from_u64(1))
+        } else {
+            quotient
+        };
+
+        let (_, residue) = rounded.divmod_u64(t_value);
+        out.push(if negative {
+            neg_mod(residue, t_value)
+        } else {
+            residue
+        });
+    }
+    Ok(out)
+}

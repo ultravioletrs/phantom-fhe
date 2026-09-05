@@ -159,6 +159,46 @@ fn ntt_round_trip_and_multiplication_hold_across_degrees_and_moduli() {
 }
 
 #[test]
+fn ntt_table_construction_is_fast_for_a_modulus_far_larger_than_the_degree() {
+    // Regression test for a real hang, not just slow computation: every
+    // (degree, modulus) pair used elsewhere in this crate's own tests keeps
+    // `modulus` close in size to `2 * degree` (e.g. `97` at degree `8`).
+    // `NttTable`'s internal `primitive_root_of_order` used to search for a
+    // root by testing candidates `2, 3, 4, ...` directly - fine when the
+    // order-`2*degree` subgroup is a large fraction of `[2, modulus)`, but
+    // for a modulus far larger than `2 * degree` (a realistic multi-prime
+    // RNS ciphertext modulus at a fixed, much smaller degree - discovered
+    // while building a production-scale parameter preset for
+    // Workstream 2 item 2), that subgroup shrinks to a vanishingly small,
+    // effectively randomly-scattered fraction of `[2, modulus)`, making the
+    // direct search take on the order of `modulus / (2*degree)` iterations -
+    // billions, for a real ~55-bit prime - rather than a handful. Fixed by
+    // computing a candidate directly via the known cofactor
+    // `(modulus - 1) / order` instead of searching for one; this asserts
+    // the fix by using the same 55-bit prime this bug was found with (at a
+    // small degree, so a regression back to the old behavior fails by
+    // taking clearly, obviously too long rather than by timing out exactly
+    // at some threshold).
+    let modulus = 36_028_797_018_652_673u64;
+    let degree = 8;
+    assert_eq!((modulus - 1) % (2 * degree) as u64, 0);
+
+    let ring = Ring::new_ntt(
+        Degree::new(degree).unwrap(),
+        vec![Modulus::new(modulus).unwrap()],
+    )
+    .unwrap();
+    let backend = CpuNttBackend;
+    let mut poly = Poly::from_coeffs(vec![vec![1, 2, 3, 4, 5, 6, 7, 8]]).unwrap();
+    let original = poly.clone();
+
+    backend.forward(&ring, &mut poly).unwrap();
+    backend.inverse(&ring, &mut poly).unwrap();
+
+    assert_eq!(poly, original);
+}
+
+#[test]
 fn ring_mul_matches_schoolbook_when_ntt_is_supported() {
     let cases: [(usize, u64); 6] = [
         (4, 17),

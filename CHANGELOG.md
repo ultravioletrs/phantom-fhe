@@ -7,6 +7,20 @@ track the Alpha Hardening roadmap in
 [`docs/internal/implementation-plan.md`](docs/internal/implementation-plan.md)
 rather than semver bumps.
 
+## Unreleased
+
+### Added
+
+- A production-shaped parameter preset (`N=8192`, table-validated against the homomorphicencryption.org 128-bit standard) proven correct end to end for BGV, BFV, and CKKS, in `crates/phantom-schemes/tests/production_preset.rs` (`#[ignore]`d by default - minutes-long at this scale, run explicitly with `--ignored`). See [`docs/user-guide.md#a-production-shaped-example`](docs/user-guide.md#a-production-shaped-example) for the exact numbers and scope (one example, not a general methodology or a security review).
+
+### Fixed
+
+Building and verifying that preset surfaced three real, previously-undiscovered bugs, all fixed:
+
+- **`phantom-ring`**: `NttTable`'s root-finding could hang (not just run slowly) for a ciphertext modulus far larger than the ring degree - every existing preset happened to avoid this by keeping the modulus close in size to `2 * degree`. Fixed by computing a candidate root directly instead of searching for one.
+- **`phantom-multiparty`**: `vss::scalar_embed::recover_centered` had an `O(magnitude_bound)` denial-of-service hazard for any caller passing a large bound (found via an external report, independently verified before fixing). Fixed to `O(1)` via direct canonical-byte inspection.
+- **`phantom-schemes`**: real BFV decoding (`decode_u64_real`/`decode_batched_real`) silently produced wrong results for any ciphertext modulus with more than one RNS component - it only ever read the first modulus, correct by accident for every prior single-modulus test. Fixed with a new shared `phantom_ring::rns::decode_scaled_value` primitive.
+
 ## 0.1.0 - Alpha (2026-09-05)
 
 First tagged milestone: all 18 roadmap phases are implemented, and Alpha

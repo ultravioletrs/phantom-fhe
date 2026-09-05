@@ -130,15 +130,50 @@ fn power_table(root: u64, count: usize, modulus: u64) -> Vec<u64> {
     powers
 }
 
+/// Finds an element of exact multiplicative order `order` (a power of two;
+/// `NttTable::new`'s only caller always passes `2 * degree`) modulo
+/// `modulus`, given `modulus.supports_ntt` has already confirmed `order`
+/// divides `modulus - 1`.
+///
+/// Works by first raising a small candidate base `g` to the cofactor power
+/// `k = (modulus - 1) / order`: since `g^(modulus-1) == 1 (mod modulus)`
+/// (Fermat) for any `g` coprime to `modulus`, `h = g^k` automatically
+/// satisfies `h^order == 1`, landing `h` inside the unique order-`order`
+/// subgroup directly - no search over that subgroup's own (effectively
+/// randomly scattered) elements is needed. The only thing left to check is
+/// whether `h`'s order is the full `order` or a smaller power-of-two
+/// divisor of it (`h^(order/2) == 1` catches every such case, since `order`
+/// is a power of two), exactly as the direct search below already checks -
+/// just applied to `h`, not to `g` itself. `g` only needs to range over a
+/// handful of small integers for this to succeed (roughly half of all `g`
+/// give an `h` of the exact right order), regardless of how large `modulus`
+/// is - unlike a direct search for `h` over `2..modulus`, which is only
+/// fast when `modulus` is close in size to `order` (every existing modulus
+/// in this codebase happens to satisfy that, which is exactly why the
+/// previous direct-search implementation here never surfaced its own
+/// `O(modulus / order)` blowup until a real production-scale modulus - far
+/// larger than `2 * degree` - was tried and it never returned; a
+/// denial-of-service-shaped bug, not merely a slow one, found and fixed
+/// directly rather than routed around).
 fn primitive_root_of_order(order: usize, modulus: u64) -> Result<u64> {
-    for candidate in 2..modulus {
-        if pow_mod(candidate, order as u64, modulus) != 1 {
+    let order = order as u64;
+    let cofactor = (modulus - 1) / order;
+    // `SEARCH_LIMIT` bounds the (already near-certain-to-succeed-within-a-
+    // handful-of-tries) search rather than leaving it fully unbounded, so a
+    // modulus/order combination that somehow never yields a match fails
+    // loudly instead of looping - and stays `<= modulus` for every modulus
+    // this crate's own tests use below the limit, preserving their exact
+    // prior search range.
+    const SEARCH_LIMIT: u64 = 10_000;
+    for candidate in 2..modulus.min(SEARCH_LIMIT) {
+        let h = pow_mod(candidate, cofactor, modulus);
+        if pow_mod(h, order, modulus) != 1 {
             continue;
         }
-        if pow_mod(candidate, (order / 2) as u64, modulus) == 1 {
+        if pow_mod(h, order / 2, modulus) == 1 {
             continue;
         }
-        return Ok(candidate);
+        return Ok(h);
     }
     Err(RingError::MissingRoot(modulus))
 }

@@ -1,7 +1,9 @@
 //! BFV batching encoder.
 
+use phantom_ring::{Modulus, RnsBasis};
+
 use super::{BfvParams, Plaintext};
-use crate::{bgv, Result, SchemesError};
+use crate::{bgv, Result};
 
 /// Coefficient-batching encoder for exact integers modulo `t`.
 #[derive(Clone, Debug)]
@@ -72,29 +74,23 @@ impl BatchEncoder {
     /// SIMD batching - the [`Self::encode_batched`]/[`Self::decode_batched`]
     /// counterpart [`Self::decode_u64_real`] is for raw-coefficient
     /// packing. First recovers each raw coefficient's true mod-`t` value
-    /// the same way [`Self::decode_u64_real`] does (`decode_bfv_residue`:
-    /// center, `round(|centered|*t/q)`, reapply sign), then re-embeds those
-    /// values as a fresh mod-`t` plaintext and runs
+    /// the same way [`Self::decode_u64_real`] does
+    /// ([`phantom_ring::rns::decode_scaled_value`]: reconstruct the true
+    /// value across every one of the ring's own moduli via CRT, center,
+    /// `round(|centered|*t/Q)`, reapply sign), then re-embeds those values
+    /// as a fresh mod-`t` plaintext and runs
     /// [`bgv::BatchEncoder::decode_batched`]'s own NTT-based slot decode on
-    /// it - safe because `decode_bfv_residue`'s output is always `< t`,
-    /// well inside the "positive half" `bgv`'s own residue interpretation
-    /// expects, so re-embedding it as a plain nonnegative coefficient and
-    /// decoding it again is a no-op round trip.
+    /// it - safe because the descaled output is always `< t`, well inside
+    /// the "positive half" `bgv`'s own residue interpretation expects, so
+    /// re-embedding it as a plain nonnegative coefficient and decoding it
+    /// again is a no-op round trip.
     pub fn decode_batched_real(&self, plaintext: &Plaintext) -> Result<Vec<u64>> {
         let ring = self.params.ring();
         ring.check_poly(plaintext.inner().inner().value())?;
-        let component = plaintext
-            .inner()
-            .inner()
-            .value()
-            .component(0)
-            .ok_or(SchemesError::DimensionMismatch)?;
-        let q = ring.moduli()[0].value();
-        let t = self.params.plaintext_modulus();
-        let descaled: Vec<u64> = component
-            .iter()
-            .map(|&coeff| decode_bfv_residue(coeff, q, t))
-            .collect();
+        let basis = RnsBasis::new(ring.moduli().to_vec())?;
+        let t = Modulus::new(self.params.plaintext_modulus())?;
+        let descaled: Vec<u64> =
+            phantom_ring::rns::decode_scaled_value(plaintext.inner().inner().value(), &basis, t)?;
 
         let mut embedded = ring.zero();
         for component_index in 0..embedded.moduli_count() {
@@ -128,32 +124,38 @@ impl BatchEncoder {
             .collect())
     }
 
-    /// Decodes a raw decrypted real-BFV ciphertext's first component (`c0 +
-    /// c1*s + ... = Delta*m + E (mod q)`, not yet unscaled) as unsigned
-    /// integers modulo the plaintext modulus - the counterpart
-    /// [`crate::bfv::Encryptor`]'s real path needs, since it scales the
-    /// message by `Delta = floor(q/t)` at encryption time instead of `t`
-    /// dividing the noise the way BGV's real path does. `plaintext` here is
-    /// the still-scaled-by-`Delta` value straight out of
-    /// [`crate::bfv::Decryptor::decrypt`] (itself unchanged - it's
-    /// scheme-agnostic and doesn't know about `Delta`), not something
-    /// [`Self::decode_u64`] can consume directly.
+    /// Decodes a raw decrypted real-BFV ciphertext (`c0 + c1*s + ... =
+    /// Delta*m + E (mod Q)`, not yet unscaled) as unsigned integers modulo
+    /// the plaintext modulus - the counterpart [`crate::bfv::Encryptor`]'s
+    /// real path needs, since it scales the message by `Delta = floor(Q/t)`
+    /// at encryption time instead of `t` dividing the noise the way BGV's
+    /// real path does. `plaintext` here is the still-scaled-by-`Delta`
+    /// value straight out of [`crate::bfv::Decryptor::decrypt`] (itself
+    /// unchanged - it's scheme-agnostic and doesn't know about `Delta`),
+    /// not something [`Self::decode_u64`] can consume directly.
+    ///
+    /// Reconstructs each coefficient's true value across *every* one of the
+    /// ring's own moduli (via
+    /// [`phantom_ring::rns::decode_scaled_value`]'s CRT reconstruction),
+    /// not just the first - `Delta*m + E` is comparable in size to the
+    /// *whole* ciphertext modulus `Q` by construction (unlike BGV's small
+    /// `m + t*e`), so for a `Q` with more than one modulus, reading only
+    /// the first one (an earlier version of this function did) recovers an
+    /// essentially arbitrary fragment of the true value, not the value
+    /// itself - a real, previously-undiscovered decode bug that no
+    /// existing test caught, since every prior real-BFV test used a
+    /// single-modulus `Q`, where "first modulus" and "the whole `Q`"
+    /// happen to coincide.
     pub fn decode_u64_real(&self, plaintext: &Plaintext) -> Result<Vec<u64>> {
-        self.params
-            .ring()
-            .check_poly(plaintext.inner().inner().value())?;
-        let component = plaintext
-            .inner()
-            .inner()
-            .value()
-            .component(0)
-            .ok_or(SchemesError::DimensionMismatch)?;
-        let q = self.params.ring().moduli()[0].value();
-        let t = self.params.plaintext_modulus();
-        Ok(component
-            .iter()
-            .map(|&coeff| decode_bfv_residue(coeff, q, t))
-            .collect())
+        let ring = self.params.ring();
+        ring.check_poly(plaintext.inner().inner().value())?;
+        let basis = RnsBasis::new(ring.moduli().to_vec())?;
+        let t = Modulus::new(self.params.plaintext_modulus())?;
+        Ok(phantom_ring::rns::decode_scaled_value(
+            plaintext.inner().inner().value(),
+            &basis,
+            t,
+        )?)
     }
 
     /// Decodes a raw decrypted real-BFV ciphertext as centered signed
@@ -165,27 +167,6 @@ impl BatchEncoder {
             .into_iter()
             .map(|value| decode_signed(value, t))
             .collect())
-    }
-}
-
-/// Recovers a `mod t` message value from one raw decrypted-and-`Delta`-scaled
-/// coefficient `Delta*m + E (mod q)`: centers `coeff` into `(-q/2, q/2]`,
-/// then computes `round(|centered| * t / q)` (the standard BFV decode
-/// rounding step - `Delta = floor(q/t)`, so `Delta*m*t/q ≈ m` up to the
-/// rounding this corrects for), reapplying `centered`'s sign before
-/// reducing `mod t`.
-fn decode_bfv_residue(coeff: u64, modulus: u64, plaintext_modulus: u64) -> u64 {
-    let (negative, magnitude) = if coeff <= modulus / 2 {
-        (false, coeff)
-    } else {
-        (true, modulus - coeff)
-    };
-    let numerator = u128::from(magnitude) * u128::from(plaintext_modulus);
-    let rounded = ((numerator + u128::from(modulus) / 2) / u128::from(modulus)) as u64;
-    if negative {
-        (plaintext_modulus - rounded % plaintext_modulus) % plaintext_modulus
-    } else {
-        rounded % plaintext_modulus
     }
 }
 

@@ -354,7 +354,24 @@ The following components are not yet at production cryptographic strength:
   `phantom-multiparty/tests/phase14_mpbgv.rs`) but not itself required for
   either's own correctness; it remains genuinely useful for a different,
   not-yet-attempted purpose (giving participants a verifiable backup of
-  each other's own secrets, for future fault-tolerance work). The
+  each other's own secrets, for future fault-tolerance work).
+  **Fixed a real denial-of-service hazard, found via an external report and
+  independently verified before fixing:** `vss::scalar_embed::recover_centered`
+  (public API, used internally by `vss::reconstruct::reconstruct_secret`)
+  used to recover a small signed integer from a field element via a linear
+  search - `O(magnitude_bound)` `Scalar` additions - sound for this crate's
+  own callers, which only ever pass small bounds, but a real hazard for any
+  caller (this crate's own future code or a downstream one) that passes a
+  large bound, since nothing in the type signature (`magnitude_bound:
+  i128`) prevents it. Fixed to `O(1)`: `embed_centered` embeds a
+  non-negative `k` as the literal integer `k` and a negative `k` as the
+  field's own additive inverse of `|k|`, so inspecting `value`'s (and
+  `-value`'s) canonical byte encoding directly recovers `k` without any
+  search - see the function's own doc comment for why exactly one of the
+  two ever has a small representative. Verified against the existing test
+  suite (unchanged behavior) plus a new regression test exercising a bound
+  of `i128::MAX / 2`, which the old implementation would never have
+  returned from in practice. The
   transcript hash used for protocol transcripts
   (`phantom_multiparty::common::transcript::stable_hash_256`) is now
   SHA-256 (`sha2`), not the hand-rolled mixer earlier versions of this
@@ -395,8 +412,8 @@ The following components are not yet at production cryptographic strength:
   the same `PartialDecryptor`/`CollectiveKeyGen`-shaped shares as the rest;
   it introduces no new adversarial surface beyond what's already described
   here.
-- All example and test parameter presets (see
-  `docs/user-guide.md#choosing-parameters`) are small development sizes
+- Almost every example and test parameter preset (see
+  `docs/user-guide.md#choosing-parameters`) is a small development size
   chosen for fast iteration, not production security margins. Every
   `BgvParams`/`BfvParams`/`CkksParams` builder now has an opt-in
   `.require_128_bit_security()` that checks a ring degree/total
@@ -409,7 +426,24 @@ The following components are not yet at production cryptographic strength:
   unconditionally reject a small set of always-wrong settings regardless
   of security level (duplicate ciphertext moduli; for BGV/BFV, a
   plaintext modulus not coprime to every ciphertext modulus) - genuine
-  correctness bugs, not a security-margin judgment call.
+  correctness bugs, not a security-margin judgment call. The one exception:
+  `crates/phantom-schemes/tests/production_preset.rs` (Alpha Hardening
+  Workstream 2 item 2) is a single representative example at `N=8192` that
+  does pass `.require_128_bit_security()`, proven correct end to end (real
+  keygen, encrypt, one multiplication, relinearize, decrypt) for BGV, BFV,
+  and CKKS - see `docs/user-guide.md#a-production-shaped-example` for the
+  exact numbers and its explicit scope: one example, not a general
+  methodology, and not an independently reviewed security choice. It also
+  does not account for the auxiliary `P` moduli real hybrid key-switching
+  needs - `.require_128_bit_security()` checks only the ciphertext modulus
+  `Q`, and the combined `QP` bit-length there has not been checked against
+  any published table. Building and verifying it surfaced two more real,
+  previously-undiscovered bugs, both fixed: a scalability cliff in
+  `phantom-ring`'s NTT root-finding for a modulus far larger than the ring
+  degree (`docs/technical-manual.md#ring-internals`), and a decode bug in
+  real BFV for any ciphertext modulus with more than one RNS component
+  (`docs/technical-manual.md#bgv--bfv`) - neither had ever been exercised
+  by any preset in this codebase before this one.
 
 For the precise, per-operation account of what each of the above means in
 code, see `docs/technical-manual.md`. This status is expected to change

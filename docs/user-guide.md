@@ -285,11 +285,27 @@ Every parameter set in this guide, in the examples, and in the test suite is a s
 | CKKS | 8 | `257`, `769`, `3329` | default scale `2^10` |
 | CKKS bootstrapping | (same as CKKS above) | (same) | target precision 20 bits (`default_bootstrap_params`) |
 
-There is currently no production parameter preset to graduate to — adding one is explicitly gated (per Alpha Hardening Workstream 2 in [`internal/implementation-plan.md`](internal/implementation-plan.md)) on the noise-management, RNS, and security-review work tracked in Workstreams 3–7 landing first. If you're evaluating this library for a real deployment, the honest current answer is: not yet: track the roadmap, and treat every parameter set you construct today as a development/testing convenience, not a security decision.
+There is no general-purpose production parameter methodology yet, and no independent cryptographic security review of any specific choice — see "A production-shaped example" below for the one exception, and its exact scope. If you're evaluating this library for a real deployment beyond that one example, the honest current answer is: not yet: track the roadmap ([`internal/implementation-plan.md`](internal/implementation-plan.md)), and treat every other parameter set you construct today as a development/testing convenience, not a security decision.
 
-The [multiparty protocols](#multiparty--threshold-protocols) above are the one exception to that table: their real (non-transparent) constructions inject noise sized off the ciphertext modulus itself (smudging for hiding, plus ordinary key-generation noise), and the toy `257`/`769`-style moduli have no headroom for that at all — a single-party round trip against them already fails most of the time. Every real multiparty example in this guide and in `phantom-examples` instead uses a single, much larger modulus (e.g. `1_000_000_000_000_037`), still a development convenience, not a security margin.
+The [multiparty protocols](#multiparty--threshold-protocols) above are the one exception to the toy-preset table: their real (non-transparent) constructions inject noise sized off the ciphertext modulus itself (smudging for hiding, plus ordinary key-generation noise), and the toy `257`/`769`-style moduli have no headroom for that at all — a single-party round trip against them already fails most of the time. Every real multiparty example in this guide and in `phantom-examples` instead uses a single, much larger modulus (e.g. `1_000_000_000_000_037`), still a development convenience, not a security margin.
 
 If you're experimenting with a larger ring degree and want a sanity check against the [homomorphicencryption.org](https://homomorphicencryption.org/standard/) 128-bit security table, call `.require_128_bit_security()` on `BgvParams::builder()`/`BfvParams::builder()`/`CkksParams::builder()` before `.build()` — it rejects a ring degree/total-ciphertext-modulus-bits combination the standard's own published table doesn't cover as secure. It's opt-in (every preset in the table above is far below the table's smallest covered degree, `1024`, and would fail this check by design) and is a parameter-shape check only, not a substitute for the noise-management and review work still tracked in the roadmap above.
+
+### A production-shaped example
+
+Alpha Hardening Workstream 2 item 2 asked for one example of parameters actually sized for real security, separate from the toy presets above — not a general methodology, not a family of presets for different circuit depths, and not an independent security review of the choice (that remains genuinely open work). This is that one example, at ring degree `N = 8192` (218 bits of total ciphertext-modulus budget per the homomorphicencryption.org table at this degree):
+
+| | Value |
+| --- | --- |
+| Ring degree | `8192` |
+| Ciphertext moduli (`Q`) | 3 NTT-friendly ~55-bit primes: `36028797018652673`, `36028797017571329`, `36028797017456641` (~165 bits total, comfortably under the 218-bit cap) |
+| Auxiliary key-switching moduli (`P`) | 2 ~58-bit primes: `288230376151711717`, `288230376151711687` (~116 bits total) |
+| Plaintext modulus (BGV/BFV) | `t = 65537` |
+| Default scale (CKKS) | `2^40` |
+
+`.require_128_bit_security()` passes for `Q` at this degree. **Known limitation, stated explicitly rather than assumed away:** that check only covers `Q` — it has no concept of `P` at all, since `P` is passed separately to `generate_hybrid_relinearization_key` and is never part of `BgvParams`/`BfvParams`/`CkksParams` themselves. `P` here is sized generously (comfortably exceeding `Q`'s own largest prime, the same shape this crate's other key-switching presets already use, needed for the mod-down step to actually suppress key-switching noise) but the combined `QP` bit-length hasn't been checked against any published table for an extended-dimension RLWE instance.
+
+This exact preset is proven correct end to end, not just asserted here — `crates/phantom-schemes/tests/production_preset.rs` runs real keygen, encryption, one multiplication, relinearization, and (CKKS) rescaling at these parameters for BGV, BFV, and CKKS, decrypts, and checks the result against a directly-computed expected value, plus a positive noise-budget/precision check on top of plain correctness.
 
 ## Runnable examples
 

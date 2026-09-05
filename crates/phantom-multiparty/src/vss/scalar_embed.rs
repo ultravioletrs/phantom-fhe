@@ -32,38 +32,66 @@ pub fn embed_centered(value: i128) -> Result<Scalar> {
 }
 
 /// Recovers a small signed integer from a scalar known to satisfy `|value|
-/// <= magnitude_bound`, via a bounded linear search over `k in
-/// 0..=magnitude_bound` testing `k` and `-k` against `value` - sound
-/// specifically because every value this crate ever calls this on is a
-/// Shamir-reconstructed sum of at most a handful of dealers' own tiny
-/// contributions, so its true magnitude is always astronomically smaller
-/// than the field's own ~2^252 order: there is no boundary-proximity
-/// ambiguity a generic "closest representative" comparison would need to
-/// resolve (see this module's own doc comment). Errs, rather than silently
-/// wrapping, if no `k` in range matches - the caller's own `magnitude_bound`
+/// <= magnitude_bound` - sound specifically because every value this crate
+/// ever calls this on is a Shamir-reconstructed sum of at most a handful of
+/// dealers' own tiny contributions, so its true magnitude is always
+/// astronomically smaller than the field's own ~2^252 order: there is no
+/// boundary-proximity ambiguity a generic "closest representative"
+/// comparison would need to resolve (see this module's own doc comment).
+///
+/// Determines `k`'s sign and magnitude by direct inspection of `value`'s
+/// (and `-value`'s) canonical little-endian byte encoding, rather than a
+/// search: [`embed_centered`] embeds a non-negative `k` as the literal
+/// integer `k`, so if `value`'s own canonical integer fits in the low 128
+/// bits (its top 16 bytes are all zero), that integer *is* `k` directly;
+/// symmetrically for a negative `k`, `-value` recovers `|k|` the same way,
+/// via `Scalar`'s own (already-implemented, already-tested) negation doing
+/// the `L - value` subtraction internally rather than this function
+/// hand-rolling wide arithmetic. `L` is a ~252-bit prime, so for any nonzero
+/// `value`, `value` and `-value` can never *both* fit in 128 bits (their
+/// canonical integers sum to exactly `L`, and `2^129 < L`) - no ambiguity
+/// between the two branches. This is `O(1)` (a fixed handful of `Scalar`
+/// operations and byte comparisons), not `O(magnitude_bound)`: an earlier
+/// version of this function walked `k` up from `0` one `Scalar::ONE` at a
+/// time, which is a real denial-of-service hazard for any caller (this
+/// crate's own or a downstream one) that passes a large `magnitude_bound` -
+/// found and fixed after an external report flagged it.
+///
+/// Errs, rather than silently wrapping, if neither `value` nor `-value` has
+/// a magnitude within `magnitude_bound` - the caller's own `magnitude_bound`
 /// was too tight, or `value` is not actually a small centered integer at
 /// all (a wiring bug, not a value this function should ever guess at).
 pub fn recover_centered(value: Scalar, magnitude_bound: i128) -> Result<i128> {
     let bound: u128 = magnitude_bound.try_into().map_err(|_| {
         MultipartyError::InvalidParameters("recover_centered: magnitude_bound must be non-negative")
     })?;
-    let mut candidate = Scalar::ZERO;
-    let mut k: u128 = 0;
-    loop {
-        if candidate == value {
+
+    if let Some(k) = small_magnitude(&value) {
+        if k <= bound {
             return Ok(k as i128);
         }
-        if -candidate == value {
+    }
+    if let Some(k) = small_magnitude(&-value) {
+        if k <= bound {
             return Ok(-(k as i128));
         }
-        if k == bound {
-            return Err(MultipartyError::InvalidParameters(
-                "recover_centered: value outside magnitude bound",
-            ));
-        }
-        k += 1;
-        candidate += Scalar::ONE;
     }
+    Err(MultipartyError::InvalidParameters(
+        "recover_centered: value outside magnitude bound",
+    ))
+}
+
+/// Returns `Some(k)` if `scalar`'s canonical little-endian integer
+/// representation fits in 128 bits (its top 16 bytes are all zero, i.e.
+/// `scalar < 2^128`), giving that integer directly - `None` otherwise.
+fn small_magnitude(scalar: &Scalar) -> Option<u128> {
+    let bytes = scalar.as_bytes();
+    if bytes[16..].iter().any(|&byte| byte != 0) {
+        return None;
+    }
+    Some(u128::from_le_bytes(
+        bytes[..16].try_into().expect("slice is exactly 16 bytes"),
+    ))
 }
 
 #[cfg(test)]
@@ -99,6 +127,33 @@ mod tests {
     #[test]
     fn recover_centered_rejects_a_negative_bound() {
         assert!(recover_centered(Scalar::ZERO, -1).is_err());
+    }
+
+    #[test]
+    fn recover_centered_handles_a_huge_bound_without_a_linear_scan() {
+        // Regression test for a real denial-of-service hazard (found via an
+        // external report, verified against this file before fixing): the
+        // original implementation walked `k` up from `0` one `Scalar::ONE`
+        // at a time, so a caller passing a bound like `i128::MAX / 2` would
+        // hang for an astronomical number of iterations. This exercises
+        // exactly that shape of call and expects it to return immediately.
+        let huge_bound = i128::MAX / 2;
+        assert_eq!(
+            recover_centered(embed_centered(12345).unwrap(), huge_bound).unwrap(),
+            12345
+        );
+        assert_eq!(
+            recover_centered(embed_centered(-12345).unwrap(), huge_bound).unwrap(),
+            -12345
+        );
+        // A value with no small representative at all (e.g. a random-looking
+        // scalar, not of the form `embed_centered(k)` for any small `k`)
+        // must still fail fast rather than scan up to `huge_bound`.
+        assert!(recover_centered(
+            Scalar::from(u128::MAX) + Scalar::from(u128::MAX),
+            huge_bound
+        )
+        .is_err());
     }
 
     #[test]
