@@ -386,45 +386,45 @@ flowchart LR
 3. **Slots → coefficients** — the inverse DFT-like transform, back to coefficient representation.
 4. **Sparse packing/unpacking** (`Packer`/`Unpacker`) — bootstrapping is often cheaper on a smaller sparsely-packed ring; packing concatenates several sparse ciphertexts into one dense batch before/after the pipeline (`bootstrap_batch`).
 
-BGV and BFV bootstrapping are architecturally reserved (`phantom_bootstrapping::{bgv, bfv}` module locations exist) but not implemented — see [SECURITY.md](../SECURITY.md). Interactive (threshold, multi-party) bootstrapping — a different, protocol-based way to refresh a ciphertext using cooperating parties instead of the centralized pipeline above — lives in `phantom-multiparty` instead, described next.
+BGV and BFV bootstrapping are architecturally reserved (`phantom_bootstrapping::{bgv, bfv}` module locations exist) but not implemented — see [SECURITY.md](../SECURITY.md). Interactive (collective, multi-party) bootstrapping — a different, protocol-based way to refresh a ciphertext using cooperating parties instead of the centralized pipeline above — lives in `phantom-multiparty` instead, described next.
 
 ## Multiparty / threshold protocols
 
-Everything above assumes one secret-key holder. Multiparty protocols distribute the secret key across `n` participants such that any `threshold` of them can cooperate to decrypt or perform key-dependent operations, but no smaller coalition can. `phantom-multiparty` implements this shape for BGV, BFV, and CKKS uniformly:
+Everything above assumes one secret-key holder. Multiparty protocols distribute the secret key across `n` participants so that key-dependent operations (key generation, decryption, re-encryption) need their cooperation instead of any single party holding the whole secret. `phantom-multiparty`'s own `common` module is generic enough to support genuine `t`-of-`n` threshold schemes — and its `vss` module (Pedersen verifiable secret sharing) is exactly that, real Shamir-style reconstruction from any qualifying subset — but the six real per-scheme protocols described below deliberately use a *different*, stronger model instead:
 
 - **Participants and sessions** — `ParticipantId`/`ParticipantSet` identify who's involved; `SessionState` binds a `ProtocolKind`, a `ParticipantSet`, a `threshold`, and a `round` counter, so shares can't be replayed into the wrong session, protocol, or round.
-- **Shares** — `Share` is a signed-and-typed payload (`ShareKind` + session/round/participant binding) that one participant contributes; `ShareAggregator` collects shares for one session/kind and reports `is_ready()` once `threshold` shares have arrived, then `aggregate()` returns them in canonical order.
+- **Shares** — `Share` is a signed-and-typed payload (`ShareKind` + session/round/participant binding) that one participant contributes; `ShareAggregator` collects shares for one session/kind and reports `is_ready()` once `threshold` shares have arrived. `aggregate()` then returns exactly `threshold` of them, in canonical order — correct for genuine threshold schemes (any qualifying subset reconstructs the same value), but **not** what the six protocols below use.
 - **Transcripts** — `Transcript`/`TranscriptMessage` give a deterministic, appendable, hashable log of a protocol run (useful for auditing and for protocols needing a public transcript, e.g. Fiat-Shamir-style constructions).
 
-On top of this, each of `mpbgv`/`mpbfv`/`mpckks` implements six protocols with the same names:
+**Additive n-of-n, not `t`-of-`n` threshold.** Each of `mpbgv`/`mpbfv`/`mpckks`'s six real protocols has every participant contribute using their own ordinary, independently-generated small secret (never a Shamir share of anything), and combines *every* contributor's own public share via `ShareAggregator::all_shares()` rather than `aggregate()` — omitting even one contributor's share silently produces a result for a *different* collective secret than the one everyone actually agreed to. `SessionState`'s own `threshold` is set to the full participant count for these protocols, not a genuine minority-tolerant threshold. This is a deliberate choice, not a missing feature: confidentiality holds as long as *at least one* contributor stays honest (the standard n-of-n collusion-resistance argument), and it avoids ever reconstructing the collective secret anywhere, even transiently, which a Lagrange-interpolation-based threshold scheme would need to do at combine time. See [SECURITY.md](../SECURITY.md) for the full adversary model this implies (and what it doesn't provide - there's no proof a contributed share was honestly computed).
 
-- **`CollectiveKeyGen` (ckg)** — participants jointly generate a public key for a secret key that's *shared* (no single party holds it).
-- **`RelinearizationKeyGen` (rkg)** / **`GaloisKeyGen` (gkg)** — the threshold analogues of relinearization/rotation key generation.
-- **`PartialDecryptor`** — each participant contributes a partial decryption share of a ciphertext (their share alone reveals nothing); aggregating `threshold` shares yields the plaintext.
-- **`ReEncryptor`** — re-encrypts a ciphertext under a different collective key using threshold shares, without full decryption.
-- **`InteractiveBootstrap`** — refreshes a ciphertext via cooperating participants rather than (or, for CKKS, in addition to) a centralized bootstrapping pipeline; `mpckks::InteractiveBootstrap` is the one that hands off to `phantom_bootstrapping::ckks::Bootstrapper` after aggregating shares.
+On top of this, each of `mpbgv`/`mpbfv`/`mpckks` implements the same six real protocols:
 
-Every one of the six protocols above follows the identical session → share → aggregate shape, illustrated here with `PartialDecryptor` and a 2-of-3 threshold (matching the runnable code in [`user-guide.md#multiparty--threshold-protocols`](user-guide.md#multiparty--threshold-protocols)):
+- **`CollectiveKeyGen` (ckg)** — participants jointly generate a public key for a secret key that's *shared* (no single party ever holds it, or needs to).
+- **`RelinearizationKeyGen` (rkg)** / **`GaloisKeyGen` (gkg)** — the collective analogues of relinearization/rotation key generation. `GaloisKeyGen` is a single round; `RelinearizationKeyGen` needs two rounds for BGV's own classical construction, three for BFV/CKKS's shared RNS-hybrid one (relinearization needs the collective secret's *square*, which no single round of purely-additive contributions can produce).
+- **`PartialDecryptor`** — each participant contributes a partial decryption share of a ciphertext (their share alone reveals nothing); combining every contributor's own share yields the plaintext.
+- **`ReEncryptor`** — re-encrypts a ciphertext under a different, ordinary (non-collective) recipient key using collective shares, without any party — including whoever combines the shares — ever seeing the plaintext or either secret.
+- **`InteractiveBootstrap`** — a real, single-round collective bootstrap: each participant discloses one share fusing a masked decrypt-toward-nothing with a fresh re-encryption, so the combined result is a genuinely fresh ciphertext under the *same* collective secret, with noise reset to a small, known floor regardless of how noisy the input was. This is the real **ColBootstrap** protocol Mouchet, Troncoso-Pastoriza, Bossuat & Hubaux describe (see [Further reading](#further-reading)) — a different, cheaper mechanism than the centralized CKKS pipeline above, and the reason multiparty deployments don't need that pipeline's own bootstrapping key at all.
+
+Every one of the six protocols above follows the identical session → share → aggregate shape, illustrated here with `PartialDecryptor` and two participants, both required (matching the runnable code in [`user-guide.md#multiparty--threshold-protocols`](user-guide.md#multiparty--threshold-protocols)):
 
 ```mermaid
 sequenceDiagram
     participant P1 as Participant 1
     participant P2 as Participant 2
-    participant P3 as Participant 3
     participant Proto as PartialDecryptor
     participant Agg as ShareAggregator
 
-    Note over P1,P3: SessionState: threshold = 2 of 3
-    P1->>Proto: create_share(id=1, ciphertext)
+    Note over P1,P2: SessionState: threshold = 2 of 2 (additive n-of-n)
+    P1->>Proto: create_share(id=1, secret_1, ciphertext, ...)
     Proto-->>Agg: Share (bound to session/round/kind)
     Agg->>Agg: is_ready()? 1 of 2 — not yet
-    P2->>Proto: create_share(id=2, ciphertext)
+    P2->>Proto: create_share(id=2, secret_2, ciphertext, ...)
     Proto-->>Agg: Share
     Agg->>Agg: is_ready()? 2 of 2 — yes
-    Note over P3: P3's share never arrives — not needed
-    Proto->>Agg: aggregate()
-    Agg-->>Proto: [share_1, share_2] in canonical order
-    Proto->>Proto: aggregate_plaintext(shares)
+    Proto->>Agg: all_shares()
+    Agg-->>Proto: [share_1, share_2] — every contributor, in canonical order
+    Proto->>Proto: aggregate_plaintext(shares, ciphertext)
     Proto-->>P1: Plaintext
 ```
 
@@ -442,7 +442,7 @@ Every public wire type (keys, parameters, plaintexts, ciphertexts, bootstrap par
 | **CRT** | Chinese Remainder Theorem — the math behind reconstructing a value from its RNS residues. |
 | **NTT** | Number Theoretic Transform — the finite-field FFT analogue used for fast polynomial multiplication. |
 | **Negacyclic** | A ring where `X^N ≡ -1` (as opposed to cyclic, `X^N ≡ 1`) — the wraparound behavior of `R_q`. |
-| **Secret / public key** | The RLWE key pair; the secret key never leaves the party that generated it (except, deliberately, in multiparty threshold protocols). |
+| **Secret / public key** | The RLWE key pair; the secret key never leaves the party that generated it — including in `phantom-multiparty`'s own six real additive protocols, where only public shares are ever transmitted. The one deliberate exception is `vss`'s own genuine Shamir/Pedersen secret sharing, which by design distributes actual fragments of a secret to other parties. |
 | **Relinearization** | Bringing a degree-2+ ciphertext (from multiplication) back down to degree 1. |
 | **Key switching** | Re-encrypting a ciphertext under a different key without decrypting; relinearization and rotation are both special cases. |
 | **Galois key / rotation key** | Key material enabling a specific slot rotation (Galois automorphism) via key switching. |
@@ -456,7 +456,7 @@ Every public wire type (keys, parameters, plaintexts, ciphertexts, bootstrap par
 | **Bootstrapping** | Homomorphically refreshing a ciphertext's noise/level budget by evaluating decryption itself, without exposing the plaintext. |
 | **Diagonal method / BSGS** | Techniques for evaluating a linear transform on packed slots using far fewer rotations than a dense matrix would need. |
 | **Paterson-Stockmeyer** | The BSGS idea applied to polynomial evaluation: `O(√d)` multiplications instead of `O(d)` for a degree-`d` polynomial. |
-| **Threshold / participant / share** | Multiparty protocol vocabulary: a secret distributed so any `threshold`-sized subset of `n` participants can cooperate via their shares. |
+| **Threshold / participant / share** | Multiparty protocol vocabulary: a secret distributed across `n` participants who cooperate via their shares. `phantom-multiparty`'s own six real per-scheme protocols use this additively, n-of-n (every contributor required); `vss` is the one place genuine `t`-of-`n` threshold reconstruction (any qualifying subset suffices) is actually implemented. See [Multiparty / threshold protocols](#multiparty--threshold-protocols). |
 | **Domain tag** | The 8-byte type identifier every serialized Phantom-FHE value starts with, rejecting cross-type decoding. |
 | **IND-CPA / semantic security** | The standard security notion these schemes target: ciphertexts of chosen plaintexts are computationally indistinguishable from each other. |
 
@@ -473,9 +473,10 @@ The primary literature behind every concept above, in roughly the order you'd wa
 - Cheon, J.H., Kim, A., Kim, M., Song, Y. *Homomorphic Encryption for Arithmetic of Approximate Numbers.* ASIACRYPT 2017. — CKKS.
 - Cheon, J.H., Han, K., Kim, A., Kim, M., Song, Y. *Bootstrapping for Approximate Homomorphic Encryption.* EUROCRYPT 2018. — the coefficients→slots→EvalMod→slots→coefficients pipeline `phantom-bootstrapping::ckks` mirrors the shape of.
 - Chillotti, I., Gama, N., Georgieva, M., Izabachène, M. *TFHE: Fast Fully Homomorphic Encryption over the Torus.* Journal of Cryptology, 2020. — fast per-gate bootstrapping; a different design point than BGV/BFV/CKKS, not implemented here, but useful context for the field as a whole.
+- Mouchet, C., Troncoso-Pastoriza, J., Bossuat, J-P., Hubaux, J-P. *Multiparty Homomorphic Encryption from Ring-Learning-with-Errors.* [IACR ePrint 2020/304](https://eprint.iacr.org/2020/304). — the multiparty/threshold-adjacent constructions `phantom-multiparty`'s own real protocols are built on: the smudging-noise-flooding bound `PartialDecryptor`/`ReEncryptor`/`InteractiveBootstrap` use to hide their own noise terms (Section IV-E/Appendix A), and the single-round **ColBootstrap** collective-bootstrapping protocol (Protocol 5) `InteractiveBootstrap` implements directly.
 
 For engineering patterns and reference implementations (not copied from — see the [Contributing](../README.md#contributing) authorship policy — but useful for cross-checking understanding): Microsoft SEAL, HElib, OpenFHE (formerly PALISADE), and Lattigo are the widely-used open-source FHE libraries a further-reading path would naturally lead to next.
 
 ## Where this stands today
 
-Everything described above is the *target* shape of the API and the math it's meant to implement — and the API shapes, types, and planning logic (circuits, BSGS, RNS structure, protocol session/share handling) are real. What's **not** yet real, in the current alpha, is a lot of the actual cryptographic content behind those shapes: encryption is transparent in several places, some "keys" are placeholders, and CKKS bootstrapping's real (encrypted) pipeline doesn't yet include the modulus-raise step a full bootstrap needs before it can run. None of this is hidden — [SECURITY.md](../SECURITY.md) lists the current gaps per crate, and [`technical-manual.md`](technical-manual.md) documents precisely what each operation does today versus what it's meant to do. Read both before building anything that assumes real security.
+Everything described above is real, working cryptography, not just the *target* shape of the API — including, as of the most recent hardening work, the full CKKS real (encrypted) bootstrapping pipeline (modulus-raise through CoeffsToSlots/EvalMod/SlotsToCoeffs, verified end to end) and all six `phantom-multiparty` protocols across BGV, BFV, and CKKS (`CollectiveKeyGen`, `RelinearizationKeyGen`, `GaloisKeyGen`, `PartialDecryptor`, `ReEncryptor`, and the real single-round `InteractiveBootstrap` described above). What's **not** yet real, in the current alpha, is narrower than it once was but still real: BGV/BFV bootstrapping are architecturally reserved but unimplemented, a handful of circuit evaluators (e.g. slot rotation for BGV/BFV's own polynomial circuits) still run on the transparent scaffold rather than real ciphertexts, sampling isn't yet constant-time, and — most importantly for anyone evaluating this for production — there is no production-grade parameter preset or completed security review yet. None of this is hidden — [SECURITY.md](../SECURITY.md) lists the current gaps per crate, and [`technical-manual.md`](technical-manual.md) documents precisely what each operation does today versus what it's meant to do. Read both before building anything that assumes real security.

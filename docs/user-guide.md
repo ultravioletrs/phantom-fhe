@@ -180,42 +180,86 @@ let refreshed_batch = bootstrapper.bootstrap_batch(&ciphertexts)?;
 
 ## Multiparty / threshold protocols
 
-Every `mpXXX` protocol follows the same session → share → aggregate shape. Here's the pattern with `mpbgv`'s `PartialDecryptor` as the concrete example — `mpbfv`/`mpckks` and the other protocol types (`CollectiveKeyGen`, `RelinearizationKeyGen`, `GaloisKeyGen`, `ReEncryptor`, `InteractiveBootstrap`) all follow it identically:
+Every `mpXXX` protocol follows the same session → share → aggregate shape — but read this first, since it's easy to assume the wrong security model: all six real protocols (`CollectiveKeyGen`, `RelinearizationKeyGen`, `GaloisKeyGen`, `PartialDecryptor`, `ReEncryptor`, `InteractiveBootstrap`) are **additive n-of-n**, not genuine `t`-of-`n` threshold — *every* participant who was given a share must contribute, not merely `threshold` of them; omitting even one silently produces a result for a different collective secret than the one everyone actually agreed to. `SessionState`'s own `threshold` field and `ShareAggregator::aggregate()` (which truncates to exactly `threshold` shares) exist to support genuine threshold schemes — `phantom_fhe::multiparty::vss`'s Pedersen verifiable secret sharing is the one place in this crate that actually uses them that way — but the six protocols below call `ShareAggregator::all_shares()` internally instead, and their own `SessionState` should be constructed with `threshold` set to the full participant count. See [`concepts.md#multiparty--threshold-protocols`](concepts.md#multiparty--threshold-protocols) for why this was the deliberate choice (collusion resistance: confidentiality holds as long as at least one contributor is honest) and [SECURITY.md](../SECURITY.md) for the full adversary model.
+
+Here's the pattern with `mpbgv`'s real `CollectiveKeyGen` + `PartialDecryptor` as the concrete example (mirroring the runnable `mpbgv_basic` example) — `mpbfv`/`mpckks` and the other four protocol types follow it identically, differing only in the per-share arguments each protocol's own doc comment lists:
 
 ```rust
+use phantom_fhe::lattice::rlwe::SecretKey;
 use phantom_fhe::multiparty::common::{
-    ParticipantId, ParticipantSet, ProtocolKind, SessionId, SessionState, ShareAggregator, ShareKind,
+    ParticipantId, ParticipantSet, ProtocolKind, ReplayGuard, SessionId, SessionState,
+    ShareAggregator, ShareKind,
 };
-use phantom_fhe::multiparty::mpbgv::PartialDecryptor;
+use phantom_fhe::multiparty::mpbgv::{CollectiveKeyGen, PartialDecryptor};
+use phantom_fhe::ring::rns::extension::embed_centered_coeffs;
+use phantom_fhe::ring::{Degree, Modulus, Ring};
+use phantom_fhe::schemes::bgv::{BgvContext, BgvParams};
 
-// 1. Describe who's participating and the threshold required to act.
-let participants = ParticipantSet::new(vec![
-    ParticipantId::new(1)?, ParticipantId::new(2)?, ParticipantId::new(3)?,
-])?;
-let session = SessionState::new(
-    SessionId::new(1)?,
-    ProtocolKind::PartialDecryption,
-    participants,
-    2, // threshold: any 2 of the 3 participants
+// Real multiparty protocols need a noise-safe modulus, not the toy `257`
+// preset used elsewhere in this guide - see "Choosing parameters" above.
+let ring = Ring::new(Degree::new(8)?, vec![Modulus::new(1_000_000_000_000_037)?])?;
+let params = BgvParams::new(ring.clone(), 17)?; // plaintext modulus t = 17
+
+// Every participant who contributes a session key/decrypt share below.
+let participants = ParticipantSet::new(vec![ParticipantId::new(1)?, ParticipantId::new(2)?])?;
+
+// Each participant's own ordinary, independently-generated small secret -
+// never a Shamir share of anything, kept entirely local; only the public
+// shares each protocol below computes from it are ever transmitted.
+let secrets = [
+    SecretKey::new(embed_centered_coeffs(&[1, -1, 0, 1, -1, 0, 1, -1], ring.moduli())?),
+    SecretKey::new(embed_centered_coeffs(&[-1, 1, 0, -1, 1, 0, -1, 1], ring.moduli())?),
+];
+// One `ReplayGuard` per participant, reused across every real protocol
+// call that participant makes - refuses to reuse a session's own
+// deterministic public randomness twice.
+let mut guards = [ReplayGuard::new(), ReplayGuard::new()];
+
+// 1. Collectively generate a public key nobody individually holds the
+//    secret for - threshold == participant count, since this is n-of-n.
+let ckg_session = SessionState::new(
+    SessionId::new(1)?, ProtocolKind::CollectiveKeyGen, participants.clone(), 2,
 )?;
+let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
+for (i, secret) in secrets.iter().enumerate() {
+    let share = ckg.create_share(ParticipantId::new(i as u64 + 1)?, secret, &mut guards[i], &mut rng)?;
+    ckg_aggregator.add_share(share)?;
+}
+let collective_public_key = ckg.aggregate_public_key(&ckg_aggregator)?;
 
-// 2. Each participant creates its share of the operation.
-let decryptor = PartialDecryptor::new(bgv_params.clone(), session.clone());
-let share_1 = decryptor.create_share(ParticipantId::new(1)?, &ciphertext)?;
-let share_2 = decryptor.create_share(ParticipantId::new(2)?, &ciphertext)?;
+// 2. Encrypt under the collective key like any ordinary public key.
+let ctx = BgvContext::new(params.clone());
+let encoder = ctx.encoder();
+let ciphertext = ctx
+    .real_encryptor(collective_public_key)
+    .encrypt(&encoder.encode_u64(&[7, 8, 9, 10])?, &mut rng)?;
 
-// 3. Collect shares until the threshold is met, then aggregate.
-let mut aggregator = ShareAggregator::new(session, ShareKind::PartialDecryption);
-aggregator.add_share(share_1)?;
-aggregator.add_share(share_2)?;
-assert!(aggregator.is_ready());
-
-let plaintext = decryptor.aggregate_plaintext(&aggregator)?;
+// 3. Collectively decrypt - each participant's own share alone reveals
+//    nothing; `ciphertext_noise_bound` is the caller's own worst-case
+//    bound on this ciphertext's current noise (see the type's own doc
+//    comment for why it can't be derived internally).
+let ciphertext_noise_bound = phantom_fhe::schemes::bgv::noise::fresh_public_key_noise_bound(ring.degree());
+let partial_session = SessionState::new(
+    SessionId::new(2)?, ProtocolKind::PartialDecryption, participants, 2,
+)?;
+let partial = PartialDecryptor::new(
+    params, partial_session.clone(), phantom_fhe::lattice::security::RECOMMENDED_STATISTICAL_SECURITY_BITS,
+);
+let mut aggregator = ShareAggregator::new(partial_session, ShareKind::PartialDecryption);
+for (i, secret) in secrets.iter().enumerate() {
+    let share = partial.create_share(
+        ParticipantId::new(i as u64 + 1)?, secret, &ciphertext, ciphertext_noise_bound, &mut guards[i], &mut rng,
+    )?;
+    aggregator.add_share(share)?;
+}
+let plaintext = partial.aggregate_plaintext(&aggregator, &ciphertext)?;
+assert_eq!(&encoder.decode_u64(&plaintext)?[..4], &[7, 8, 9, 10]);
 ```
 
-Swap `PartialDecryptor` for `CollectiveKeyGen`/`RelinearizationKeyGen`/`GaloisKeyGen`/`ReEncryptor`/`InteractiveBootstrap` (and their matching `ShareKind`/`ProtocolKind` variant) for the other protocols; swap `mpbgv` for `mpbfv` or `mpckks` for the other schemes. `mpckks::InteractiveBootstrap` additionally needs a `phantom_bootstrapping::ckks::BootstrapParams` alongside the `CkksParams` — see its constructor.
+Swap `mpbgv` for `mpbfv`/`mpckks` for the other schemes (BFV drops BGV's own `t`-scaled noise; CKKS additionally needs `at_level`-aware secret truncation for `ReEncryptor`/`PartialDecryptor`/`InteractiveBootstrap` once a ciphertext has been rescaled - see each type's own doc comment). `RelinearizationKeyGen` is a multi-round protocol (two rounds for `mpbgv`, three for `mpbfv`/`mpckks`'s own RNS-hybrid construction) rather than the single round shown above. `mpbgv_basic`/`mpckks_basic` (CKG + `PartialDecryptor`) and `mpckks_interactive_bootstrap` (CKG + `InteractiveBootstrap`) in `phantom-examples` are complete, runnable versions of this pattern; `GaloisKeyGen`/`RelinearizationKeyGen`/`ReEncryptor` aren't exposed as example binaries yet, but `phantom-multiparty`'s own integration tests (`phase14_mpbgv.rs`/`phase15_mpbfv.rs`/`phase16_mpckks.rs`) exercise all six protocols end to end and are the most complete reference for those three.
 
-`Transcript`/`TranscriptMessage` (also in `multiparty::common`) give you a deterministic, appendable, hashable log if your protocol needs a public record of what was exchanged — see [`concepts.md#multiparty--threshold-protocols`](concepts.md#multiparty--threshold-protocols).
+`Transcript`/`TranscriptMessage` (also in `multiparty::common`) give you a deterministic, appendable, hashable log if your protocol needs a public record of what was exchanged.
 
 ## Serialization
 
@@ -243,6 +287,8 @@ Every parameter set in this guide, in the examples, and in the test suite is a s
 
 There is currently no production parameter preset to graduate to — adding one is explicitly gated (per Alpha Hardening Workstream 2 in [`internal/implementation-plan.md`](internal/implementation-plan.md)) on the noise-management, RNS, and security-review work tracked in Workstreams 3–7 landing first. If you're evaluating this library for a real deployment, the honest current answer is: not yet: track the roadmap, and treat every parameter set you construct today as a development/testing convenience, not a security decision.
 
+The [multiparty protocols](#multiparty--threshold-protocols) above are the one exception to that table: their real (non-transparent) constructions inject noise sized off the ciphertext modulus itself (smudging for hiding, plus ordinary key-generation noise), and the toy `257`/`769`-style moduli have no headroom for that at all — a single-party round trip against them already fails most of the time. Every real multiparty example in this guide and in `phantom-examples` instead uses a single, much larger modulus (e.g. `1_000_000_000_000_037`), still a development convenience, not a security margin.
+
 If you're experimenting with a larger ring degree and want a sanity check against the [homomorphicencryption.org](https://homomorphicencryption.org/standard/) 128-bit security table, call `.require_128_bit_security()` on `BgvParams::builder()`/`BfvParams::builder()`/`CkksParams::builder()` before `.build()` — it rejects a ring degree/total-ciphertext-modulus-bits combination the standard's own published table doesn't cover as secure. It's opt-in (every preset in the table above is far below the table's smallest covered degree, `1024`, and would fail this check by design) and is a parameter-shape check only, not a substitute for the noise-management and review work still tracked in the roadmap above.
 
 ## Runnable examples
@@ -263,7 +309,7 @@ If you're experimenting with a larger ring degree and want a sanity check agains
 | `ckks_bootstrapping` | The CKKS bootstrapping pipeline |
 | `mpbgv_basic` | Multiparty BGV collective key generation and partial decryption (real) |
 | `mpckks_basic` | Multiparty CKKS collective key generation and partial decryption (real) |
-| `mpckks_interactive_bootstrap` | Multiparty CKKS interactive bootstrapping |
+| `mpckks_interactive_bootstrap` | Multiparty CKKS interactive (collective) bootstrapping (real) |
 
 ## Where to go next
 
