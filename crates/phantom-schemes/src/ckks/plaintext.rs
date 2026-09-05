@@ -45,12 +45,15 @@ impl Plaintext {
     }
 
     /// Creates a real plaintext backed by `poly` - see the type's own doc
-    /// comment. `pub(crate)`: only [`super::Encoder::encode_complex_real`]
-    /// and [`super::Decryptor::decrypt_real`] should construct one, since
-    /// `poly` must actually be one of those methods' own output for
+    /// comment. Ordinarily built by [`super::Encoder::encode_complex_real`]
+    /// or [`super::Decryptor::decrypt_real`]; `phantom-multiparty`'s own
+    /// collective decryption (`PartialDecryptor`) also constructs one
+    /// directly, from a `poly` legitimately combined from participant
+    /// shares the same way `decrypt_real` combines a single secret's own
+    /// contribution - `poly` must actually correspond to what it claims for
     /// [`super::Encoder::decode_complex_real`] to recover anything
-    /// meaningful from it.
-    pub(crate) fn new_real(
+    /// meaningful from it, the caller's own responsibility either way.
+    pub fn new_real(
         slots: Vec<Complex64>,
         scale: Scale,
         level: usize,

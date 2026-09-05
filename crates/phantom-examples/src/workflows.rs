@@ -438,30 +438,94 @@ pub fn mpbgv_basic() -> Result<ExampleOutput, ExampleError> {
     ))
 }
 
-/// Runs a multiparty CKKS partial-decryption workflow.
+// CKKS's own smudging noise costs decode precision directly rather than
+// being stripped by an exact modular reduction (see `mpckks::reencryption`'s
+// own doc comment) - a fixed magnitude independent of scale, so the scale
+// needs to be comfortably larger than that floor for a useful result.
+// `ckks_real_params()`'s own 30-bit scale (fine for its own, non-smudging
+// consumer, `ckks_real_basic`) isn't enough here - reusing `REAL_MODULUS`/
+// `REAL_P1` (both already Miller-Rabin-verified primes this file already
+// defines) with a larger, dedicated scale instead, matching
+// `phantom-multiparty`'s own `phase16_mpckks.rs` test fixture.
+const MPCKKS_SCALE_BITS: u32 = 45;
+
+fn mpckks_real_params() -> Result<CkksParams, ExampleError> {
+    Ok(CkksParams::builder()
+        .degree(REAL_DEGREE)
+        .moduli(vec![REAL_MODULUS, REAL_P1])
+        .default_scale_bits(MPCKKS_SCALE_BITS)
+        .build()?)
+}
+
+/// Runs a **real** multiparty CKKS collective (partial) decryption
+/// workflow: two participants generate a real collective public key via
+/// `mpckks::CollectiveKeyGen`, encrypt under it, then collectively decrypt
+/// via `mpckks::PartialDecryptor` (see that module's own doc comment - it's
+/// PCKS's own "key-switch to the null key" special case, the same
+/// construction `mpbgv`/`mpbfv`'s own equivalents use).
 pub fn mpckks_basic() -> Result<ExampleOutput, ExampleError> {
-    let params = ckks_params()?;
-    let ctx = CkksContext::new(params.clone());
+    let params = mpckks_real_params()?;
+    let ring = params.ring();
     let mut rng = rng(8);
-    let keys = ctx.keygen()?.generate_keypair(&mut rng)?;
+
+    let secrets = [
+        SecretKey::new(embed_centered_coeffs(
+            &[1i128, -1, 0, 1, -1, 0, 1, -1],
+            ring.moduli(),
+        )?),
+        SecretKey::new(embed_centered_coeffs(
+            &[-1i128, 1, 0, -1, 1, 0, -1, 1],
+            ring.moduli(),
+        )?),
+    ];
+    let mut replay_guards = [ReplayGuard::new(), ReplayGuard::new()];
+
+    let ckg_session = session(ProtocolKind::CollectiveKeyGen, 200)?;
+    let ckg = mpckks::CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+    let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
+    for (index, secret) in secrets.iter().enumerate() {
+        ckg_aggregator.add_share(ckg.create_share(
+            id(index as u64 + 1)?,
+            secret,
+            &mut replay_guards[index],
+            &mut rng,
+        )?)?;
+    }
+    let collective_public_key = ckg.aggregate_public_key(&ckg_aggregator)?;
+
+    let ctx = CkksContext::new(params.clone());
     let encoder = ctx.encoder();
+    let values = [
+        Complex64::real(0.5),
+        Complex64::real(-1.25),
+        Complex64::real(4.0),
+    ];
     let ciphertext = ctx
-        .encryptor(keys.public)?
-        .encrypt(&encoder.encode_real(&[0.5, -1.25, 4.0])?, &mut rng)?;
-    let partial =
-        mpckks::PartialDecryptor::new(params, session(ProtocolKind::PartialDecryption, 200)?);
-    let mut aggregator = ShareAggregator::new(
-        session(ProtocolKind::PartialDecryption, 200)?,
-        ShareKind::PartialDecryption,
+        .real_encryptor(collective_public_key)
+        .encrypt_real(&encoder.encode_complex_real(&values)?, &mut rng)?;
+
+    let partial_session = session(ProtocolKind::PartialDecryption, 200)?;
+    let partial = mpckks::PartialDecryptor::new(
+        params,
+        partial_session.clone(),
+        phantom_lattice::security::RECOMMENDED_STATISTICAL_SECURITY_BITS,
     );
-    aggregator.add_share(partial.create_share(id(1)?, &ciphertext)?)?;
-    aggregator.add_share(partial.create_share(id(2)?, &ciphertext)?)?;
-    let reconstructed = partial.aggregate_plaintext(&aggregator)?;
+    let mut aggregator = ShareAggregator::new(partial_session, ShareKind::PartialDecryption);
+    for (index, secret) in secrets.iter().enumerate() {
+        aggregator.add_share(partial.create_share(
+            id(index as u64 + 1)?,
+            secret,
+            &ciphertext,
+            &mut replay_guards[index],
+            &mut rng,
+        )?)?;
+    }
+    let reconstructed = partial.aggregate_plaintext(&aggregator, &ciphertext)?;
     Ok(ExampleOutput::new(
         "mpckks_basic",
-        encoder.decode_real(&reconstructed)?[..3]
+        encoder.decode_complex_real(&reconstructed)?[..3]
             .iter()
-            .map(|value| format!("{value:.2}")),
+            .map(|value| format!("{:.2}", value.re)),
     ))
 }
 

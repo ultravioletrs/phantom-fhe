@@ -49,10 +49,16 @@ impl Ciphertext {
     }
 
     /// Creates a real ciphertext backed by `poly` - see the type's own doc
-    /// comment. `pub(crate)`: only [`super::Encryptor::encrypt_real`] and
-    /// [`super::Evaluator`]'s own real-path operations should construct
-    /// one.
-    pub(crate) fn new_real(
+    /// comment. Ordinarily built by [`super::Encryptor::encrypt_real`] or
+    /// [`super::Evaluator`]'s own real-path operations; `phantom-multiparty`'s
+    /// own collective decryption/re-encryption (PCKS) also constructs one
+    /// directly, from a `poly` legitimately combined from participant
+    /// shares - the invariant this constructor doesn't check (that `poly`
+    /// actually matches the declared `scale`/`level`/`precision`/`degree`)
+    /// is the caller's own responsibility either way, the same contract
+    /// BGV/BFV's own always-`pub` ciphertext constructors already rely on
+    /// callers to uphold.
+    pub fn new_real(
         poly: RlweCiphertext,
         scale: Scale,
         level: usize,

@@ -268,11 +268,24 @@ The following components are not yet at production cryptographic strength:
   cryptographic combination. `mpbfv::CollectiveKeyGen`/`ReEncryptor`/
   `PartialDecryptor` are real too (Workstream 7 item 9) - the identical
   additive construction, minus BGV's own `t`-scaling (BFV's real path
-  doesn't need it); `mpbfv::RelinearizationKeyGen`/`GaloisKeyGen`/
-  `InteractiveBootstrap` and all of `mpckks` remain placeholders - mirroring
-  GKG/RKG needs a genuinely new RNS-hybrid multiparty construction, not a
-  port of `mpbgv`'s own gadget-decomposition one, and the CKKS mirror of
-  CKG/PCKS/PartialDecryptor is separate, not-yet-attempted follow-up work.
+  doesn't need it). `mpckks::CollectiveKeyGen`/`ReEncryptor`/
+  `PartialDecryptor` are real too (item 10) - the same construction, plus
+  CKKS-specific level-tracking (a CKKS ciphertext's own ring shrinks as it
+  rescales, so these derive their working ring from the ciphertext's own
+  level and truncate secrets/keys to match, mirroring
+  `ckks::Decryptor::decrypt_real`'s own technique) and a real,
+  previously-undocumented finding: unlike BGV/BFV's exact modular decode,
+  which strips smudging noise below a threshold entirely, CKKS has no such
+  reduction - smudging noise shows up directly in the decoded value, so the
+  scale must be sized well above the (scale-independent) smudging floor for
+  a useful result, not just for the usual multiplicative-depth reasons (see
+  `mpckks::reencryption`'s own doc comment for the full derivation, found
+  via a real test failure at an under-sized scale before this item shipped).
+  `mpbfv::RelinearizationKeyGen`/`GaloisKeyGen`/`InteractiveBootstrap` and
+  `mpckks::RelinearizationKeyGen`/`GaloisKeyGen`/`InteractiveBootstrap`
+  remain placeholders - mirroring GKG/RKG needs a genuinely new RNS-hybrid
+  multiparty construction, not a port of `mpbgv`'s own gadget-decomposition
+  one, for both schemes.
   `ReEncryptor`'s own
   smudging noise is
   now a rigorously derived bound (`phantom_lattice::security::smudging_std_dev`,
@@ -288,8 +301,8 @@ The following components are not yet at production cryptographic strength:
   (a participant producing a second share for the same session/public
   randomness) leaks key material via accumulated linear algebra, regardless
   of any single call's smudging noise - `mpbgv`'s five real protocols
-  (CKG/GKG/RKG's both rounds/PCKS/PartialDecryptor) and `mpbfv`'s three
-  (CKG/PCKS/PartialDecryptor) now guard against this directly
+  (CKG/GKG/RKG's both rounds/PCKS/PartialDecryptor) and `mpbfv`/`mpckks`'s
+  three each (CKG/PCKS/PartialDecryptor) now guard against this directly
   (`phantom_multiparty::common::ReplayGuard`, Workstream 7 item 8): each
   `create_share`/`create_share_round1`/`create_share_round2` call requires a
   `&mut ReplayGuard` and refuses (before any crypto work) a second call for

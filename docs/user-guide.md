@@ -262,7 +262,7 @@ If you're experimenting with a larger ring degree and want a sanity check agains
 | `ckks_inverse` | CKKS reciprocal-approximation circuit |
 | `ckks_bootstrapping` | The CKKS bootstrapping pipeline |
 | `mpbgv_basic` | Multiparty BGV collective key generation and partial decryption (real) |
-| `mpckks_basic` | Multiparty CKKS partial decryption |
+| `mpckks_basic` | Multiparty CKKS collective key generation and partial decryption (real) |
 | `mpckks_interactive_bootstrap` | Multiparty CKKS interactive bootstrapping |
 
 ## Where to go next
