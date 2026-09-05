@@ -3,9 +3,7 @@
 use std::error::Error;
 use std::fmt;
 
-use phantom_bootstrapping::ckks::{
-    default_bootstrap_params, BootstrapKeyGenerator, BootstrapParams, Bootstrapper,
-};
+use phantom_bootstrapping::ckks::{default_bootstrap_params, BootstrapKeyGenerator, Bootstrapper};
 use phantom_circuits::bgv::PolynomialEvaluator as BgvPolynomialEvaluator;
 use phantom_circuits::ckks::{DftDirection, DftEvaluator, InverseEvaluator};
 use phantom_lattice::rgsw::GadgetDecompositionParams;
@@ -529,38 +527,72 @@ pub fn mpckks_basic() -> Result<ExampleOutput, ExampleError> {
     ))
 }
 
-/// Runs multiparty CKKS interactive bootstrapping.
+/// Runs a **real** multiparty CKKS interactive (collective) bootstrap
+/// workflow: two participants generate a real collective public key via
+/// `mpckks::CollectiveKeyGen`, encrypt under it, then collectively refresh
+/// the ciphertext's own noise via `mpckks::InteractiveBootstrap` (see that
+/// module's own doc comment for the single-round construction) - mirroring
+/// `mpckks_basic`'s own real DKG setup.
 pub fn mpckks_interactive_bootstrap() -> Result<ExampleOutput, ExampleError> {
-    let params = ckks_params()?;
-    let boot_params = BootstrapParams::builder(params.clone())
-        .target_level(params.initial_level())
-        .target_precision_bits(18.0)
-        .build()?;
-    let ctx = CkksContext::new(params.clone());
+    let params = mpckks_real_params()?;
+    let ring = params.ring();
     let mut rng = rng(9);
-    let keys = ctx.keygen()?.generate_keypair(&mut rng)?;
+
+    let secrets = [
+        SecretKey::new(embed_centered_coeffs(
+            &[1i128, -1, 0, 1, -1, 0, 1, -1],
+            ring.moduli(),
+        )?),
+        SecretKey::new(embed_centered_coeffs(
+            &[-1i128, 1, 0, -1, 1, 0, -1, 1],
+            ring.moduli(),
+        )?),
+    ];
+    let mut replay_guards = [ReplayGuard::new(), ReplayGuard::new()];
+
+    let ckg_session = session(ProtocolKind::CollectiveKeyGen, 300)?;
+    let ckg = mpckks::CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+    let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
+    for (index, secret) in secrets.iter().enumerate() {
+        ckg_aggregator.add_share(ckg.create_share(
+            id(index as u64 + 1)?,
+            secret,
+            &mut replay_guards[index],
+            &mut rng,
+        )?)?;
+    }
+    let collective_public_key = ckg.aggregate_public_key(&ckg_aggregator)?;
+
+    let ctx = CkksContext::new(params.clone());
     let encoder = ctx.encoder();
-    let ciphertext = ctx.encryptor(keys.public)?.encrypt(
-        &encoder.encode_complex(&[Complex64::new(1.0, 0.5), Complex64::real(-2.0)])?,
-        &mut rng,
-    )?;
+    let values = [Complex64::real(1.0), Complex64::real(-2.0)];
+    let ciphertext = ctx
+        .real_encryptor(collective_public_key)
+        .encrypt_real(&encoder.encode_complex_real(&values)?, &mut rng)?;
+
+    let ib_session = session(ProtocolKind::InteractiveBootstrap, 300)?;
     let bootstrap = mpckks::InteractiveBootstrap::new(
         params,
-        boot_params,
-        session(ProtocolKind::InteractiveBootstrap, 300)?,
+        ib_session.clone(),
+        phantom_lattice::security::RECOMMENDED_STATISTICAL_SECURITY_BITS,
     );
-    let mut aggregator = ShareAggregator::new(
-        session(ProtocolKind::InteractiveBootstrap, 300)?,
-        ShareKind::InteractiveBootstrap,
-    );
-    aggregator.add_share(bootstrap.create_share(id(1)?, &ciphertext)?)?;
-    aggregator.add_share(bootstrap.create_share(id(2)?, &ciphertext)?)?;
-    let refreshed = bootstrap.aggregate_refreshed(&aggregator)?;
+    let mut aggregator = ShareAggregator::new(ib_session, ShareKind::InteractiveBootstrap);
+    for (index, secret) in secrets.iter().enumerate() {
+        aggregator.add_share(bootstrap.create_share(
+            id(index as u64 + 1)?,
+            secret,
+            &ciphertext,
+            &mut replay_guards[index],
+            &mut rng,
+        )?)?;
+    }
+    let refreshed = bootstrap.aggregate_refreshed(&aggregator, &ciphertext)?;
+
     Ok(ExampleOutput::new(
         "mpckks_interactive_bootstrap",
         [
             format!("level={}", refreshed.level()),
-            format!("precision={}", refreshed.precision().bits()),
+            format!("precision={:.1}", refreshed.precision().bits()),
         ],
     ))
 }

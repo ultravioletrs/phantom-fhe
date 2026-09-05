@@ -1,6 +1,7 @@
 //! Scheme-independent multiparty protocol building blocks.
 
 pub mod hybrid;
+pub mod masking;
 pub mod participant;
 pub mod randomness;
 pub mod replay_guard;
@@ -8,6 +9,7 @@ pub mod session;
 pub mod shares;
 pub mod transcript;
 
+pub use masking::sample_uniform_mod_t;
 pub use participant::{ParticipantId, ParticipantSet};
 pub use randomness::derive_common_ring_element;
 pub use replay_guard::ReplayGuard;

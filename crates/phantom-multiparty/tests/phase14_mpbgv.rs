@@ -997,30 +997,117 @@ fn reencryption_via_pcks_delivers_the_result_to_a_genuinely_separate_recipient()
 }
 
 #[test]
-fn interactive_bootstrap_preserves_plaintext() {
-    let params = params();
-    let ctx = BgvContext::new(params.clone());
+fn collective_interactive_bootstrap_via_real_dkg_refreshes_a_genuinely_noisy_ciphertext() {
+    // Real, end-to-end proof that `InteractiveBootstrap` is the genuine
+    // single-round collective-bootstrap construction (see that module's own
+    // doc comment), not a marker: real DKG'd collective key, real
+    // encryption, then artificially elevate the ciphertext's own noise (as
+    // if it had already been through several operations) before running
+    // the real bootstrap - proving the reset doesn't merely happen to work
+    // on an already-fresh ciphertext.
+    let params = real_ckg_params();
+    let ring = params.ring();
+    let n = 3;
+    let ckg_session = session(ProtocolKind::CollectiveKeyGen);
+    let ib_session = session(ProtocolKind::InteractiveBootstrap);
+    let participants: Vec<ParticipantId> = (1..=n as u64).map(id).collect();
     let mut rng = rng();
-    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+
+    let secrets: Vec<Vec<i128>> = (0..n)
+        .map(|_| {
+            (0..ring.degree())
+                .map(|_| (rng.next_u32() % 3) as i128 - 1)
+                .collect()
+        })
+        .collect();
+    let local_secret_shares: Vec<SecretKey> = secrets
+        .iter()
+        .map(|secret| SecretKey::new(embed_centered_coeffs(secret, ring.moduli()).unwrap()))
+        .collect();
+    let mut replay_guards: Vec<ReplayGuard> =
+        participants.iter().map(|_| ReplayGuard::new()).collect();
+
+    let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+    let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
+        ckg_aggregator
+            .add_share(
+                ckg.create_share(participant, local_secret_share, replay_guard, &mut rng)
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_public_key = ckg.aggregate_public_key(&ckg_aggregator).unwrap();
+
+    let ctx = BgvContext::new(params.clone());
     let encoder = ctx.encoder();
-    let encryptor = ctx.encryptor(keys.public.clone()).unwrap();
-    let decryptor = ctx.decryptor(keys.secret).unwrap();
+    let encryptor = ctx.real_encryptor(collective_public_key);
     let ciphertext = encryptor
         .encrypt(&encoder.encode_u64(&[5, 6, 7, 8]).unwrap(), &mut rng)
         .unwrap();
-    let bootstrap = InteractiveBootstrap::new(params, session(ProtocolKind::InteractiveBootstrap));
-    let mut aggregator = ShareAggregator::new(
-        session(ProtocolKind::InteractiveBootstrap),
-        ShareKind::InteractiveBootstrap,
-    );
-    aggregator
-        .add_share(bootstrap.create_share(id(1), &ciphertext).unwrap())
+
+    // Artificially elevate the noise well beyond a fresh ciphertext's own
+    // (`fresh_public_key_noise_bound(8) = 340`) - still tiny relative to
+    // `q`, but ~15x bigger than fresh, large enough that this is genuinely
+    // testing noise *reset*, not a no-op on an already-fresh ciphertext.
+    let elevated_noise = phantom_ring::sampling::sample_discrete_gaussian(ring, &mut rng, 2000.0);
+    let scaled_noise = ring
+        .scalar_mul(&elevated_noise, params.plaintext_modulus())
         .unwrap();
-    aggregator
-        .add_share(bootstrap.create_share(id(2), &ciphertext).unwrap())
+    let noisy_rows = ciphertext.inner().value().to_vec();
+    let noisy_c0 = ring.add(&noisy_rows[0], &scaled_noise).unwrap();
+    let noisy_ciphertext =
+        phantom_schemes::bgv::Ciphertext::new(phantom_lattice::rlwe::Ciphertext::new(vec![
+            noisy_c0,
+            noisy_rows[1].clone(),
+        ]));
+
+    // A safe worst-case bound on the *unscaled* noise above (elevated noise
+    // plus the original fresh noise, both well within a 6-sigma tail).
+    let ciphertext_noise_bound = 50_000u64;
+    let bootstrap = InteractiveBootstrap::new(
+        params.clone(),
+        ib_session.clone(),
+        phantom_lattice::security::RECOMMENDED_STATISTICAL_SECURITY_BITS,
+    );
+    let mut ib_aggregator = ShareAggregator::new(ib_session, ShareKind::InteractiveBootstrap);
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
+        ib_aggregator
+            .add_share(
+                bootstrap
+                    .create_share(
+                        participant,
+                        local_secret_share,
+                        &noisy_ciphertext,
+                        ciphertext_noise_bound,
+                        replay_guard,
+                        &mut rng,
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let refreshed = bootstrap
+        .aggregate_refreshed(&ib_aggregator, &noisy_ciphertext)
         .unwrap();
 
-    let refreshed = bootstrap.aggregate_refreshed(&aggregator).unwrap();
+    // Test-only: sum the already-locally-known secrets to verify
+    // correctness against an independently-derived collective secret - not
+    // a production pattern, since a real deployment never assembles this.
+    let collective_secret_coeffs: Vec<i128> = (0..ring.degree())
+        .map(|coeff| secrets.iter().map(|s| s[coeff]).sum())
+        .collect();
+    let collective_secret =
+        SecretKey::new(embed_centered_coeffs(&collective_secret_coeffs, ring.moduli()).unwrap());
+    let decryptor = ctx.decryptor(collective_secret).unwrap();
     let decrypted = decryptor.decrypt(&refreshed).unwrap();
     assert_eq!(&encoder.decode_u64(&decrypted).unwrap()[..4], &[5, 6, 7, 8]);
 }

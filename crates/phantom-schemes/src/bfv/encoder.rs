@@ -34,6 +34,26 @@ impl BatchEncoder {
         self.inner.decode_u64(plaintext.inner())
     }
 
+    /// Encodes unsigned integers `Delta`-scaled - the encrypt-side
+    /// counterpart [`Self::decode_u64_real`] needs on the way back: embeds
+    /// a value directly as if it had gone through the real encryption
+    /// path's own `Delta = floor(q/t)` scaling, without any encryption
+    /// (e.g. to build a trivial, `c1 = 0` ciphertext row from an already-
+    /// known plaintext value - `phantom_multiparty`'s own collective
+    /// bootstrapping needs exactly this, re-embedding a value revealed
+    /// through a masked collective decryption).
+    pub fn encode_u64_real(&self, values: &[u64]) -> Result<Plaintext> {
+        let unscaled = self.inner.encode_u64(values)?;
+        let scaled = super::encryptor::scale_by_delta(
+            self.params.ring(),
+            unscaled.inner().value(),
+            self.params.plaintext_modulus(),
+        )?;
+        Ok(Plaintext::new(bgv::Plaintext::new(
+            phantom_lattice::rlwe::Plaintext::new(scaled),
+        )))
+    }
+
     /// Encodes `values` via genuine CRT-based SIMD batching - a direct
     /// pass-through to [`bgv::BatchEncoder::encode_batched`] (BFV shares
     /// BGV's plaintext ring/slot structure entirely; see that method's own

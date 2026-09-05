@@ -1,4 +1,3 @@
-use phantom_bootstrapping::ckks::BootstrapParams;
 use phantom_lattice::rlwe::SecretKey;
 use phantom_multiparty::common::{
     ParticipantId, ParticipantSet, ProtocolKind, ReplayGuard, SessionId, SessionState,
@@ -19,17 +18,8 @@ fn id(value: u64) -> ParticipantId {
     ParticipantId::new(value).unwrap()
 }
 
-fn params() -> CkksParams {
-    CkksParams::builder()
-        .degree(8)
-        .moduli(vec![257, 769, 3329])
-        .default_scale_bits(10)
-        .build()
-        .unwrap()
-}
-
-// Real CKKS encryption needs noise-safe parameters - `params()`'s own toy
-// preset was only ever exercised against the transparent scaffold. Unlike
+// Real CKKS encryption needs noise-safe parameters - a toy preset was only
+// ever exercised against the transparent scaffold. Unlike
 // BGV/BFV, CKKS's own smudging noise directly costs *decode precision*
 // rather than being stripped by an exact modular reduction (there is none -
 // see `mpckks::reencryption`'s own doc comment): `smudging_std_dev` at the
@@ -81,13 +71,6 @@ fn protocol_tag(protocol: ProtocolKind) -> u32 {
 
 fn rng() -> ChaCha20Rng {
     ChaCha20Rng::from_seed([29; 32])
-}
-
-fn assert_complex_close(actual: Complex64, expected: Complex64) {
-    assert!(
-        (actual.re - expected.re).abs() < 1e-9 && (actual.im - expected.im).abs() < 1e-9,
-        "{actual:?} != {expected:?}"
-    );
 }
 
 // Real CKKS encryption needs a real noise-tolerant approximate comparison,
@@ -794,54 +777,101 @@ fn reencryption_via_pcks_delivers_the_result_to_a_genuinely_separate_recipient()
 }
 
 #[test]
-fn interactive_ckks_bootstrap_preserves_values_and_refreshes_metadata() {
-    // `InteractiveBootstrap` remains a placeholder for CKKS - out of scope
-    // for this item (CKG/PCKS/PartialDecryptor only). Confirmed
-    // independent of all five protocols: it calls the transparent
-    // `Bootstrapper::bootstrap` scaffold, not `bootstrap_real`, and doesn't
-    // consume a real `CollectiveKeyGen` public key or `PartialDecryptor`
-    // output.
-    let params = params();
-    let bootstrap_params = BootstrapParams::builder(params.clone())
-        .target_precision_bits(18.0)
-        .target_level(params.initial_level())
-        .build()
-        .unwrap();
-    let ctx = CkksContext::new(params.clone());
+fn collective_interactive_bootstrap_via_real_dkg_refreshes_a_genuine_ciphertext() {
+    // Real, end-to-end proof that `InteractiveBootstrap` is the genuine
+    // single-round collective-bootstrap construction (see that module's own
+    // doc comment) - mirrors `phase14_mpbgv.rs`'s own equivalent test.
+    // Unlike BGV/BFV, CKKS's own construction doesn't discard the input
+    // ciphertext's noise (no discrete decode step exists to discard it
+    // through - see the module doc comment), so the tolerance here is
+    // dominated by the smudging-sized flooding noise, not exactness.
+    let params = real_params();
+    let ring = params.ring();
+    let n = 3;
+    let ckg_session = session(ProtocolKind::CollectiveKeyGen);
+    let ib_session = session(ProtocolKind::InteractiveBootstrap);
+    let participants: Vec<ParticipantId> = (1..=n as u64).map(id).collect();
     let mut rng = rng();
-    let keys = ctx.keygen().unwrap().generate_keypair(&mut rng).unwrap();
+
+    let secrets: Vec<Vec<i128>> = (0..n)
+        .map(|_| {
+            (0..ring.degree())
+                .map(|_| (rng.next_u32() % 3) as i128 - 1)
+                .collect()
+        })
+        .collect();
+    let local_secret_shares: Vec<SecretKey> = secrets
+        .iter()
+        .map(|secret| SecretKey::new(embed_centered_coeffs(secret, ring.moduli()).unwrap()))
+        .collect();
+    let mut replay_guards: Vec<ReplayGuard> =
+        participants.iter().map(|_| ReplayGuard::new()).collect();
+
+    let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+    let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
+        ckg_aggregator
+            .add_share(
+                ckg.create_share(participant, local_secret_share, replay_guard, &mut rng)
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_public_key = ckg.aggregate_public_key(&ckg_aggregator).unwrap();
+
+    let ctx = CkksContext::new(params.clone());
     let encoder = ctx.encoder();
-    let encryptor = ctx.encryptor(keys.public.clone()).unwrap();
-    let decryptor = ctx.decryptor(keys.secret).unwrap();
+    let encryptor = ctx.real_encryptor(collective_public_key);
+    let values = vec![Complex64::real(1.5), Complex64::real(-2.0)];
     let ciphertext = encryptor
-        .encrypt(
-            &encoder
-                .encode_complex(&[Complex64::new(1.0, 0.5), Complex64::new(-2.0, 1.0)])
-                .unwrap(),
-            &mut rng,
-        )
-        .unwrap();
-    let bootstrap = InteractiveBootstrap::new(
-        params,
-        bootstrap_params.clone(),
-        session(ProtocolKind::InteractiveBootstrap),
-    );
-    let mut aggregator = ShareAggregator::new(
-        session(ProtocolKind::InteractiveBootstrap),
-        ShareKind::InteractiveBootstrap,
-    );
-    aggregator
-        .add_share(bootstrap.create_share(id(1), &ciphertext).unwrap())
-        .unwrap();
-    aggregator
-        .add_share(bootstrap.create_share(id(2), &ciphertext).unwrap())
+        .encrypt_real(&encoder.encode_complex_real(&values).unwrap(), &mut rng)
         .unwrap();
 
-    let refreshed = bootstrap.aggregate_refreshed(&aggregator).unwrap();
-    let decrypted = decryptor.decrypt(&refreshed).unwrap();
-    let decoded = encoder.decode_complex(&decrypted).unwrap();
-    assert_complex_close(decoded[0], Complex64::new(1.0, 0.5));
-    assert_complex_close(decoded[1], Complex64::new(-2.0, 1.0));
-    assert_eq!(refreshed.level(), bootstrap_params.target_level());
-    assert_eq!(refreshed.precision().bits(), 18.0);
+    let bootstrap = InteractiveBootstrap::new(
+        params.clone(),
+        ib_session.clone(),
+        phantom_lattice::security::RECOMMENDED_STATISTICAL_SECURITY_BITS,
+    );
+    let mut ib_aggregator = ShareAggregator::new(ib_session, ShareKind::InteractiveBootstrap);
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
+        ib_aggregator
+            .add_share(
+                bootstrap
+                    .create_share(
+                        participant,
+                        local_secret_share,
+                        &ciphertext,
+                        replay_guard,
+                        &mut rng,
+                    )
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let refreshed = bootstrap
+        .aggregate_refreshed(&ib_aggregator, &ciphertext)
+        .unwrap();
+
+    // Test-only: sum the already-locally-known secrets to verify
+    // correctness against an independently-derived collective secret - not
+    // a production pattern, since a real deployment never assembles this.
+    let collective_secret_coeffs: Vec<i128> = (0..ring.degree())
+        .map(|coeff| secrets.iter().map(|s| s[coeff]).sum())
+        .collect();
+    let collective_secret =
+        SecretKey::new(embed_centered_coeffs(&collective_secret_coeffs, ring.moduli()).unwrap());
+    let decryptor = ctx.real_decryptor(collective_secret).unwrap();
+    let decrypted = decryptor.decrypt_real(&refreshed).unwrap();
+    assert_real_close(
+        &encoder.decode_complex_real(&decrypted).unwrap()[..2],
+        &[1.5, -2.0],
+    );
 }

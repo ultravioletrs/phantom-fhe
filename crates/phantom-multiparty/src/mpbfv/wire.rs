@@ -124,19 +124,6 @@ fn decode_poly_body(bytes: &[u8], moduli_count: usize, degree: usize, ring: &Rin
     Ok(poly)
 }
 
-pub(crate) fn ensure_equal_payloads<'a>(
-    shares: impl IntoIterator<Item = &'a crate::common::Share>,
-) -> Result<&'a [u8]> {
-    let mut iter = shares.into_iter();
-    let first = iter.next().ok_or(MultipartyError::MissingShare)?;
-    for share in iter {
-        if share.payload() != first.payload() {
-            return Err(MultipartyError::MalformedMessage);
-        }
-    }
-    Ok(first.payload())
-}
-
 struct Reader<'a> {
     input: &'a [u8],
     offset: usize,

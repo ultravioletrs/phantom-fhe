@@ -263,9 +263,7 @@ The following components are not yet at production cryptographic strength:
   4d for the full construction. `PartialDecryptor` is structurally the
   simplest of the five - a special case of `ReEncryptor`'s own PCKS
   construction, "collective key-switching toward the null key" - see
-  Workstream 7 item 5c. `mpbgv`'s own `InteractiveBootstrap` still uses
-  byte-equality aggregation (`ensure_equal_payloads`), not real
-  cryptographic combination. `mpbfv::CollectiveKeyGen`/`ReEncryptor`/
+  Workstream 7 item 5c. `mpbfv::CollectiveKeyGen`/`ReEncryptor`/
   `PartialDecryptor` are real too (Workstream 7 item 9) - the identical
   additive construction, minus BGV's own `t`-scaling (BFV's real path
   doesn't need it). `mpckks::CollectiveKeyGen`/`ReEncryptor`/
@@ -294,9 +292,31 @@ The following components are not yet at production cryptographic strength:
   needs three rounds - one more than `mpbgv::rkg`'s own two - since the
   hybrid construction's rows live in an extended `QP` ring requiring its own
   freshly-built collective public key first (`mpbgv::rkg` reuses its
-  already-existing `Q`-ring collective key directly). `mpbfv::InteractiveBootstrap`
-  and `mpckks::InteractiveBootstrap` remain the last placeholders across all
-  three schemes.
+  already-existing `Q`-ring collective key directly).
+  `mpbgv`/`mpbfv`/`mpckks::InteractiveBootstrap` are real too (Workstream 7
+  item 5, the last item closed out) - a real, single-round collective
+  bootstrap, not a port of anything above: it fuses `PartialDecryptor`'s own
+  decrypt-toward-the-null-key share with `CollectiveKeyGen`'s own
+  fresh-encryption share via a per-participant mask that cancels exactly on
+  combination, the same **ColBootstrap** protocol Mouchet,
+  Troncoso-Pastoriza, Bossuat & Hubaux describe
+  ([eprint 2020/304](https://eprint.iacr.org/2020/304), Protocol 5). For
+  BGV/BFV the mask is uniform over the exact plaintext ring (perfect,
+  information-theoretic hiding), and the masked-reveal step goes through
+  the same exact `mod t`/`Delta` decode ordinary decryption already uses,
+  discarding the input ciphertext's own noise entirely - the bootstrapped
+  ciphertext's own noise is just the freshly-added term, independent of how
+  noisy the input was. CKKS has no such discrete decode to discard noise
+  through, so its own input noise persists into the output on top of the
+  freshly-added smudging term - a real, deliberate difference, not an
+  oversight: it still caps total output noise/precision to a known,
+  parameter-derived floor rather than letting it grow unboundedly, and its
+  own mask is uniform over the *entire* ciphertext ring rather than a
+  scaled Gaussian (sizing it the smudging-noise way was tried, and
+  overflowed the Gaussian sampler's own realistic range - a real numeric
+  finding, not a hypothetical one). This closes out Workstream 7 in full -
+  every one of the six real multiparty protocols across all three schemes
+  is now real.
   `ReEncryptor`'s own
   smudging noise is
   now a rigorously derived bound (`phantom_lattice::security::smudging_std_dev`,
@@ -368,10 +388,13 @@ The following components are not yet at production cryptographic strength:
   share submitted to a later round's aggregator), live in
   `phantom-multiparty/tests/phase14_mpbgv.rs`,
   `phase15_mpbfv.rs`, and `phase16_mpckks.rs` (Workstream 7 item 7).
-  `mpbgv`/`mpbfv`/`mpckks::InteractiveBootstrap` remain fully transparent
-  (byte-equality aggregation, no real secret-sharing of a decryption
-  computation) - no adversarial model applies to them yet; this is tracked
-  as its own, independent gap, not folded into the above.
+  `mpbgv`/`mpbfv`/`mpckks::InteractiveBootstrap` are real now too
+  (Workstream 7 item 5) and fall under the identical adversary model
+  described above - additive n-of-n, the same generic format/shape checks,
+  no active security - since its own construction is built entirely from
+  the same `PartialDecryptor`/`CollectiveKeyGen`-shaped shares as the rest;
+  it introduces no new adversarial surface beyond what's already described
+  here.
 - All example and test parameter presets (see
   `docs/user-guide.md#choosing-parameters`) are small development sizes
   chosen for fast iteration, not production security margins. Every

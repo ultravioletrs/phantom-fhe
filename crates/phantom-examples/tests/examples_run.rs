@@ -17,7 +17,6 @@ fn documented_examples_run_on_toy_presets() {
         ckks_dft().unwrap(),
         ckks_inverse().unwrap(),
         ckks_bootstrapping().unwrap(),
-        mpckks_interactive_bootstrap().unwrap(),
     ];
 
     for output in outputs {
@@ -41,13 +40,16 @@ fn real_examples_run_on_realistically_sized_parameters() {
     // `mpckks_real_params()` additionally needs a much larger scale than
     // `ckks_real_basic`'s own fixture, since CKKS's own smudging noise
     // costs decode precision directly - see `mpckks::reencryption`'s own
-    // doc comment).
+    // doc comment). `mpckks_interactive_bootstrap` joined them once
+    // `mpckks::InteractiveBootstrap` went real too (Workstream 7 item 5),
+    // for the identical reason.
     let outputs = [
         bgv_real_basic().unwrap(),
         bfv_real_basic().unwrap(),
         ckks_real_basic().unwrap(),
         mpbgv_basic().unwrap(),
         mpckks_basic().unwrap(),
+        mpckks_interactive_bootstrap().unwrap(),
     ];
 
     for output in outputs {
