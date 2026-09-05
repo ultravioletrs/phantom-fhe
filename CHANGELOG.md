@@ -7,7 +7,9 @@ track the Alpha Hardening roadmap in
 [`docs/internal/implementation-plan.md`](docs/internal/implementation-plan.md)
 rather than semver bumps.
 
-## Unreleased
+## 0.2.0 - Beta (2026-09-06)
+
+Closes the [Beta release checklist](docs/internal/release-checklist.md) in full: Criterion adoption, the serialization compatibility/versioning audit, and secret-non-serializability confirmation were already done from Alpha Hardening Workstreams 8/9; this release adds the last piece (security notes for every published parameter preset) alongside the production-shaped parameter preset from Alpha Hardening Workstream 2 item 2.
 
 ### Added
 
@@ -17,13 +19,17 @@ rather than semver bumps.
 
 Building and verifying that preset surfaced three real, previously-undiscovered bugs, all fixed:
 
-- **`phantom-ring`**: `NttTable`'s root-finding could hang (not just run slowly) for a ciphertext modulus far larger than the ring degree - every existing preset happened to avoid this by keeping the modulus close in size to `2 * degree`. Fixed by computing a candidate root directly instead of searching for one.
+- **`phantom-ring`**: `NttTable`'s root-finding could hang (not just run slowly) for a ciphertext modulus far larger than the ring degree - every existing preset happened to avoid this by keeping the modulus close in size to `2 * degree`. Fixed by computing a candidate root directly instead of searching for one, while still preferring the minimal root where the original bounded search finds one, for backward-compatible determinism.
 - **`phantom-multiparty`**: `vss::scalar_embed::recover_centered` had an `O(magnitude_bound)` denial-of-service hazard for any caller passing a large bound (found via an external report, independently verified before fixing). Fixed to `O(1)` via direct canonical-byte inspection.
 - **`phantom-schemes`**: real BFV decoding (`decode_u64_real`/`decode_batched_real`) silently produced wrong results for any ciphertext modulus with more than one RNS component - it only ever read the first modulus, correct by accident for every prior single-modulus test. Fixed with a new shared `phantom_ring::rns::decode_scaled_value` primitive.
 
 ### Documentation
 
-- `docs/user-guide.md#choosing-parameters` restructured around a single per-preset table, each preset (BFV/BGV toy, CKKS toy, CKKS bootstrapping, the real-noise-headroom preset used by `*_real_basic`/multiparty examples, and the production-shaped example) carrying its own explicit security note - closes the `docs/internal/release-checklist.md` Beta checklist item asking for this, and the Beta checklist itself is now complete.
+- `docs/user-guide.md#choosing-parameters` restructured around a single per-preset table, each preset (BFV/BGV toy, CKKS toy, CKKS bootstrapping, the real-noise-headroom preset used by `*_real_basic`/multiparty examples, and the production-shaped example) carrying its own explicit security note.
+
+### What's still open
+
+Stable-tier work remains, tracked in [`docs/internal/release-checklist.md`](docs/internal/release-checklist.md)'s Stable section: freezing public APIs and serialization domains for the first compatibility window, general production parameter guidance beyond the one representative example above, performance baselines for supported CPU targets, and a full independent security review.
 
 ## 0.1.0 - Alpha (2026-09-05)
 
