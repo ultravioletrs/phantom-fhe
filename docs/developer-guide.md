@@ -33,9 +33,9 @@ See [`architecture.md`](architecture.md#crate-dependency-graph) for the dependen
 - **Deterministic RNGs everywhere.** Tests and examples never use OS randomness — they build a `ChaCha20Rng` from a fixed 32-byte seed (`ChaCha20Rng::from_seed([N; 32])`, or `phantom_utils::test::deterministic_rng`/`zero_seed_rng` where available). This keeps test failures reproducible. Follow the same pattern for new tests.
 - **Local test-only params/rng helper functions** (`fn params() -> BgvParams { ... }`, `fn seeded_rng() -> ChaCha20Rng { ... }`) at the top of each test file, built on the development presets in [`user-guide.md#choosing-parameters`](user-guide.md#choosing-parameters). Don't reach for a shared test-fixture crate; the duplication across test files is intentional and keeps each file self-contained.
 - **`phantom-utils`'s `test-utils` feature** gates its `deterministic_rng`/`zero_seed_rng` helpers for use as a dev-dependency from other crates; it's otherwise always available under `cfg(test)` within `phantom-utils` itself.
-- **Serialization tests always cover three cases**: a successful round trip, rejection of a wrong-domain payload, and rejection of a truncated payload (see any `phaseNN_serialization.rs`). Match this shape for any new encode/decode pair — see [Adding a new serialized type](#adding-a-new-serialized-type) below.
+- **Serialization tests always cover five cases** (Workstream 8): a successful round trip, a golden-byte fixture (a previously-generated encoding pinned in the test, asserted in both directions - catches wire-shape drift a round trip alone can't), rejection of a wrong-domain payload, rejection of a wrong-version payload, rejection of a truncated payload, and a `proptest` property that decoding arbitrary bytes never panics. See [`internal/serialization-compatibility-policy.md`](internal/serialization-compatibility-policy.md) for the full policy and [Adding a new serialized type](#adding-a-new-serialized-type) below.
 - **`phantom-examples`'s `tests/examples_run.rs`** exercises every example workflow function as a test (not just as a runnable binary), so a broken example fails `cargo test`, not just `cargo run`.
-- Property-based testing (`proptest`) is pre-approved as a dev-dependency (see [`internal/dependency-policy.md`](internal/dependency-policy.md)) but not yet adopted — Alpha Hardening Workstream 3 and 8 in [`internal/implementation-plan.md`](internal/implementation-plan.md) are where this is expected to land.
+- Property-based testing (`proptest`) is pre-approved as a dev-dependency (see [`internal/dependency-policy.md`](internal/dependency-policy.md)) and adopted workspace-wide as of Workstream 8: `phantom-ring`/`phantom-lattice` use it for arithmetic/algebraic properties (`tests/property_tests.rs`, `tests/randomized.rs`), `phantom-circuits` for its scheme-independent planning logic, and every `SerializationHeader`-based crate plus `phantom-multiparty` for decode-never-panics coverage.
 
 Run the full suite with `make test` (`cargo test --workspace --all-targets`), or `make check` to also run fmt/clippy/doc — the same commands CI runs. See [Makefile and CI](#makefile-and-ci) below.
 
@@ -46,10 +46,10 @@ Follow the exact pattern in any existing `serialization.rs` (`phantom-lattice`, 
 1. Pick an 8-byte ASCII domain tag not already in the catalog ([`technical-manual.md#domain-tag-catalog`](technical-manual.md#domain-tag-catalog) has every tag in use) — the existing convention is an abbreviation of the type name padded with a two-digit version suffix, e.g. `b"BGVCTXT1"`.
 2. Add `const XXX_DOMAIN: DomainTag = DomainTag::from_array(*b"XXXXXXXX");` alongside the crate's existing `VERSION: Version` constant (reuse the crate's existing version unless you're intentionally starting a new format).
 3. Write `encode_xxx`/`decode_xxx` using the crate-local `writer`/`reader` helpers (which wrap `SerializationHeader::write_to`/`read_expected`) and `BufferWriter`/`BufferReader`'s primitive methods — never write raw bytes without going through these.
-4. Add the three-case test set described [above](#testing-conventions).
+4. Add the five-case test set described [above](#testing-conventions).
 5. Add a row to the domain-tag table in [`technical-manual.md`](technical-manual.md#domain-tag-catalog) — that table is the canonical cross-crate catalog and must stay in sync with the source.
 
-Never serialize a secret-bearing type (`SecretKey`, RGSW key material) — see [`internal/dependency-policy.md`](internal/dependency-policy.md) for the standing policy this enforces.
+Never serialize a secret-bearing type (`SecretKey`, RGSW key material, a multiparty participant's own local secret share) without a deliberate security review — see [`internal/serialization-compatibility-policy.md`](internal/serialization-compatibility-policy.md) for the standing policy this enforces and its one documented exception (`vss::VssShare`).
 
 ## Adding a new scheme or circuit
 

@@ -241,7 +241,7 @@ After the header, each format writes its fields with `BufferWriter`'s determinis
 | `CIRBSGS1` | `phantom_circuits::common::BabyStepGiantStepPlan` | `phantom-circuits` | `encode_bsgs_plan` / `decode_bsgs_plan` |
 | `CKKSBTP1` | `phantom_bootstrapping::ckks::BootstrapParams` | `phantom-bootstrapping` | `encode_ckks_bootstrap_params` / `decode_ckks_bootstrap_params` |
 
-Every crate's test suite includes malformed/truncated/wrong-domain payload rejection tests (see the `phaseNN_serialization.rs` files noted in [`developer-guide.md`](developer-guide.md#testing-conventions)). Secret-bearing types (`SecretKey`, RLWE/RGSW key material) intentionally have **no** encode/decode path — see [`internal/dependency-policy.md`](internal/dependency-policy.md) for the standing policy on this.
+Every crate's test suite includes golden-byte, malformed/truncated, wrong-domain, wrong-version, and `proptest` decode-never-panics coverage for every type pair in this table (Workstream 8 - see the `phaseNN_serialization.rs`/`tests/serialization.rs` files noted in [`developer-guide.md`](developer-guide.md#testing-conventions)). Secret-bearing types (`SecretKey`, RLWE/RGSW key material) intentionally have **no** encode/decode path — see [`internal/serialization-compatibility-policy.md`](internal/serialization-compatibility-policy.md) for the standing policy on this and its one documented exception (`vss::VssShare`).
 
 ## Error reference
 

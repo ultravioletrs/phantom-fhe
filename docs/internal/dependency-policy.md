@@ -77,7 +77,9 @@ below:
   secret-bearing types (`SecretKey`, RLWE/RGSW key material, multiparty
   shares) must **not** derive `Serialize`/`Deserialize` even when the
   feature is enabled - use the workspace's own versioned binary encodings
-  in each crate's `serialization.rs` for anything secret-adjacent.
+  in each crate's `serialization.rs` for anything secret-adjacent - see
+  [`serialization-compatibility-policy.md`](serialization-compatibility-policy.md)
+  for the full policy and its one documented exception (`vss::VssShare`).
 - `zeroize` - not used. Secret-bearing types currently implement `Drop`
   manually (see `phantom-lattice::rlwe::secret_key::SecretKey`). Adopting
   `zeroize` is worth revisiting during Workstream 4 (production RLWE/RGSW)
