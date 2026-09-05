@@ -15,10 +15,10 @@
 
 ## Beta
 
-- Decide whether Criterion is part of the benchmark dependency policy (pre-approved as a `phantom-benches`-only dev-dependency in `docs/internal/dependency-policy.md`; not yet adopted).
+- Criterion adopted as a `phantom-benches`-only dev-dependency, with toy/small benchmark tiers and per-evaluator allocation-count diagnostics - done (Alpha Hardening Workstream 9).
 - Add security notes for every published parameter preset.
-- Audit serialization compatibility and versioning decisions.
-- Confirm secret-bearing types remain non-serializable by default.
+- Serialization compatibility and versioning audited: domain tags vs. versions, golden-byte/version-mismatch/proptest coverage for every serialized type - done, see `docs/internal/serialization-compatibility-policy.md` (Alpha Hardening Workstream 8).
+- Secret-bearing types confirmed to remain non-serializable by default, with the one deliberate, documented exception (`vss::VssShare`) - done (Alpha Hardening Workstream 8).
 
 ## Stable
 
