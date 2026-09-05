@@ -1,5 +1,6 @@
 //! Scheme-independent multiparty protocol building blocks.
 
+pub mod hybrid;
 pub mod participant;
 pub mod randomness;
 pub mod replay_guard;

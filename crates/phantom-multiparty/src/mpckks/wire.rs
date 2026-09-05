@@ -40,6 +40,70 @@ pub(crate) fn decode_poly(payload: &[u8], ring: &Ring) -> Result<Poly> {
     Ok(poly)
 }
 
+/// Encodes a sequence of `(b, a)` polynomial-pair rows (e.g. a collective
+/// Galois/relinearization-key share's own per-row contributions) as one
+/// payload: a row count, one shared `moduli_count`/`degree` header (every
+/// row lives in the same ring), then each row's own coefficients
+/// back-to-back.
+pub(crate) fn encode_poly_rows(rows: &[(Poly, Poly)]) -> Vec<u8> {
+    let mut out = Vec::new();
+    out.extend_from_slice(&(rows.len() as u64).to_le_bytes());
+    let (moduli_count, degree) = rows
+        .first()
+        .map_or((0, 0), |(first, _)| (first.moduli_count(), first.degree()));
+    out.extend_from_slice(&(moduli_count as u64).to_le_bytes());
+    out.extend_from_slice(&(degree as u64).to_le_bytes());
+    for (b, a) in rows {
+        for poly in [b, a] {
+            for component in poly.coeffs() {
+                for coeff in component {
+                    out.extend_from_slice(&coeff.to_le_bytes());
+                }
+            }
+        }
+    }
+    out
+}
+
+pub(crate) fn decode_poly_rows(payload: &[u8], ring: &Ring) -> Result<Vec<(Poly, Poly)>> {
+    let mut reader = Reader::new(payload);
+    let row_count = reader.u64()? as usize;
+    let moduli_count = reader.u64()? as usize;
+    let degree = reader.u64()? as usize;
+    if row_count > 0 && (moduli_count != ring.moduli().len() || degree != ring.degree()) {
+        return Err(MultipartyError::MalformedMessage);
+    }
+    let poly_len = moduli_count
+        .checked_mul(degree)
+        .and_then(|n| n.checked_mul(8))
+        .ok_or(MultipartyError::MalformedMessage)?;
+
+    let mut rows = Vec::with_capacity(row_count);
+    for _ in 0..row_count {
+        let b = decode_poly_body(reader.take(poly_len)?, moduli_count, degree, ring)?;
+        let a = decode_poly_body(reader.take(poly_len)?, moduli_count, degree, ring)?;
+        rows.push((b, a));
+    }
+    if !reader.is_finished() {
+        return Err(MultipartyError::MalformedMessage);
+    }
+    Ok(rows)
+}
+
+fn decode_poly_body(bytes: &[u8], moduli_count: usize, degree: usize, ring: &Ring) -> Result<Poly> {
+    let mut reader = Reader::new(bytes);
+    let mut coeffs = vec![vec![0u64; degree]; moduli_count];
+    for component in &mut coeffs {
+        for coeff in component {
+            *coeff = reader.u64()?;
+        }
+    }
+    let poly = Poly::from_coeffs(coeffs).map_err(|_| MultipartyError::MalformedMessage)?;
+    ring.check_poly(&poly)
+        .map_err(|_| MultipartyError::MalformedMessage)?;
+    Ok(poly)
+}
+
 /// Encodes a pair of polynomials (e.g. a PCKS share's own `(h0, h1)`) as one
 /// payload: each poly's own [`encode_poly`] output, length-prefixed.
 pub(crate) fn encode_poly_pair(first: &Poly, second: &Poly) -> Vec<u8> {

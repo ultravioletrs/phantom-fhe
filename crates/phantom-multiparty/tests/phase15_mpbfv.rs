@@ -42,6 +42,17 @@ fn real_params() -> BfvParams {
     BfvParams::new(ring, 17).unwrap()
 }
 
+// Auxiliary "P" moduli for the real RNS-hybrid GKG/RKG construction - the
+// same pair `phantom-schemes/tests/phase6_bfv.rs`'s own `p_moduli()` uses
+// for real BFV multiplication's own rescale-and-round step, already
+// Miller-Rabin verified there.
+fn p_moduli() -> Vec<Modulus> {
+    vec![
+        Modulus::new(1_000_000_000_000_091).unwrap(),
+        Modulus::new(1_000_000_000_000_159).unwrap(),
+    ]
+}
+
 fn session(protocol: ProtocolKind) -> SessionState {
     SessionState::new(
         SessionId::new(protocol_tag(protocol) as u64 + 150).unwrap(),
@@ -137,38 +148,256 @@ fn collective_public_key_generation_via_dkg_produces_a_genuinely_decryptable_key
 }
 
 #[test]
-fn collective_bfv_evaluation_key_generation_returns_markers() {
-    // RelinearizationKeyGen/GaloisKeyGen remain placeholders for BFV -
-    // real RNS-hybrid multiparty key generation is separate, larger
-    // follow-up work (Workstream 7), not part of this item's own scope
-    // (CKG/PCKS/PartialDecryptor only).
-    let rkg = RelinearizationKeyGen::new(session(ProtocolKind::RelinearizationKeyGen));
-    let mut rkg_aggregator = ShareAggregator::new(
-        session(ProtocolKind::RelinearizationKeyGen),
-        ShareKind::RelinearizationKeyGen,
-    );
-    rkg_aggregator
-        .add_share(rkg.create_share(id(1)).unwrap())
-        .unwrap();
-    rkg_aggregator
-        .add_share(rkg.create_share(id(2)).unwrap())
-        .unwrap();
-    let _relin = rkg.aggregate_key(&rkg_aggregator).unwrap();
+fn collective_galois_key_generation_via_real_dkg_rotates_a_genuine_ciphertext() {
+    // Real, end-to-end proof that `GaloisKeyGen` produces genuine RNS-hybrid
+    // BFV rotation key material - mirrors `phase14_mpbgv.rs`'s own
+    // equivalent test, using the shared `common::hybrid` construction
+    // (see `mpbfv::gkg`'s own doc comment) instead of BGV's own bespoke
+    // classical-gadget-decomposition one.
+    let params = real_params();
+    let ring = params.ring();
+    let p_moduli = p_moduli();
+    let n = 3;
+    let ckg_session = session(ProtocolKind::CollectiveKeyGen);
+    let gkg_session = session(ProtocolKind::GaloisKeyGen);
+    let participants: Vec<ParticipantId> = (1..=n as u64).map(id).collect();
+    let mut rng = rng();
 
-    let gkg = GaloisKeyGen::new(session(ProtocolKind::GaloisKeyGen), vec![1, 5]);
-    let mut gkg_aggregator =
-        ShareAggregator::new(session(ProtocolKind::GaloisKeyGen), ShareKind::GaloisKeyGen);
-    gkg_aggregator
-        .add_share(gkg.create_share(id(1)).unwrap())
-        .unwrap();
-    gkg_aggregator
-        .add_share(gkg.create_share(id(2)).unwrap())
-        .unwrap();
-    let galois = gkg.aggregate_keys(&gkg_aggregator).unwrap();
+    let secrets: Vec<Vec<i128>> = (0..n)
+        .map(|_| {
+            (0..ring.degree())
+                .map(|_| (rng.next_u32() % 3) as i128 - 1)
+                .collect()
+        })
+        .collect();
+    let local_secret_shares: Vec<SecretKey> = secrets
+        .iter()
+        .map(|secret| SecretKey::new(embed_centered_coeffs(secret, ring.moduli()).unwrap()))
+        .collect();
+    let mut replay_guards: Vec<ReplayGuard> =
+        participants.iter().map(|_| ReplayGuard::new()).collect();
 
-    assert_eq!(galois.len(), 2);
-    assert_eq!(galois[0].element(), 1);
-    assert_eq!(galois[1].element(), 5);
+    let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+    let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
+        ckg_aggregator
+            .add_share(
+                ckg.create_share(participant, local_secret_share, replay_guard, &mut rng)
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_public_key = ckg.aggregate_public_key(&ckg_aggregator).unwrap();
+
+    let shift = 1;
+    let element = params.rotation_element(shift);
+    let gkg = GaloisKeyGen::new(params.clone(), gkg_session.clone(), element, p_moduli);
+    let mut gkg_aggregator = ShareAggregator::new(gkg_session, ShareKind::GaloisKeyGen);
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
+        gkg_aggregator
+            .add_share(
+                gkg.create_share(participant, local_secret_share, replay_guard, &mut rng)
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_rotation_key = gkg.aggregate_keys(&gkg_aggregator).unwrap();
+
+    let ctx = BfvContext::new(params.clone());
+    let encoder = ctx.encoder();
+    let encryptor = ctx.real_encryptor(collective_public_key);
+    let half = ring.degree() / 2;
+    let values: Vec<u64> = (0..ring.degree() as u64).map(|i| i + 1).collect();
+    let ciphertext = encryptor
+        .encrypt(&encoder.encode_batched(&values).unwrap(), &mut rng)
+        .unwrap();
+
+    let evaluator = ctx.evaluator().unwrap();
+    let rotated = evaluator
+        .rotate_real(&ciphertext, &collective_rotation_key)
+        .unwrap();
+
+    // Test-only: sum the already-locally-known secrets to verify
+    // correctness against an independently-derived collective secret - not
+    // a production pattern, since a real deployment never assembles this.
+    let collective_secret_coeffs: Vec<i128> = (0..ring.degree())
+        .map(|coeff| secrets.iter().map(|s| s[coeff]).sum())
+        .collect();
+    let collective_secret =
+        SecretKey::new(embed_centered_coeffs(&collective_secret_coeffs, ring.moduli()).unwrap());
+    let decryptor = ctx.decryptor(collective_secret).unwrap();
+    let decoded = encoder
+        .decode_batched_real(&decryptor.decrypt(&rotated).unwrap())
+        .unwrap();
+
+    let mut expected_row0 = values[..half].to_vec();
+    expected_row0.rotate_left(shift);
+    let mut expected_row1 = values[half..].to_vec();
+    expected_row1.rotate_left(shift);
+    let expected: Vec<u64> = expected_row0.into_iter().chain(expected_row1).collect();
+    assert_eq!(decoded, expected);
+}
+
+#[test]
+fn collective_relinearization_key_generation_via_real_dkg_relinearizes_a_genuine_product() {
+    // Real, end-to-end proof that `RelinearizationKeyGen` produces genuine
+    // RNS-hybrid BFV relinearization key material via its own three-round
+    // protocol (see `mpbfv::rkg`'s own doc comment for why this needs one
+    // more round than `mpbgv::rkg`'s two). Correctness is checked against
+    // the *raw*, not-yet-relinearized product ciphertext, mirroring
+    // `phase14_mpbgv.rs`'s own equivalent test.
+    let params = real_params();
+    let ring = params.ring();
+    let p_moduli = p_moduli();
+    let n = 3;
+    let ckg_session = session(ProtocolKind::CollectiveKeyGen);
+    let rkg_session = session(ProtocolKind::RelinearizationKeyGen);
+    let participants: Vec<ParticipantId> = (1..=n as u64).map(id).collect();
+    let mut rng = rng();
+
+    let secrets: Vec<Vec<i128>> = (0..n)
+        .map(|_| {
+            (0..ring.degree())
+                .map(|_| (rng.next_u32() % 3) as i128 - 1)
+                .collect()
+        })
+        .collect();
+    let local_secret_shares: Vec<SecretKey> = secrets
+        .iter()
+        .map(|secret| SecretKey::new(embed_centered_coeffs(secret, ring.moduli()).unwrap()))
+        .collect();
+    let mut replay_guards: Vec<ReplayGuard> =
+        participants.iter().map(|_| ReplayGuard::new()).collect();
+
+    let ckg = CollectiveKeyGen::new(params.clone(), ckg_session.clone());
+    let mut ckg_aggregator = ShareAggregator::new(ckg_session, ShareKind::CollectiveKeyGen);
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
+        ckg_aggregator
+            .add_share(
+                ckg.create_share(participant, local_secret_share, replay_guard, &mut rng)
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_public_key = ckg.aggregate_public_key(&ckg_aggregator).unwrap();
+
+    // Round 0 runs against `rkg`'s own `session` constructor argument
+    // (round1/round2 are one/two rounds advanced from it) - clone it before
+    // it's moved into `RelinearizationKeyGen::new` so this test can also
+    // build round 0's own aggregator against the identical session.
+    let round0_session = rkg_session.clone();
+    let rkg = RelinearizationKeyGen::new(params.clone(), rkg_session, p_moduli.clone());
+
+    let mut round0_aggregator =
+        ShareAggregator::new(round0_session, ShareKind::RelinearizationKeyGen);
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
+        round0_aggregator
+            .add_share(
+                rkg.create_qp_ckg_share(participant, local_secret_share, replay_guard, &mut rng)
+                    .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_public_key_qp = rkg.aggregate_qp_public_key(&round0_aggregator).unwrap();
+
+    let mut round1_aggregator =
+        ShareAggregator::new(rkg.round1_session(), ShareKind::RelinearizationKeyGen);
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
+        round1_aggregator
+            .add_share(
+                rkg.create_share_round1(
+                    participant,
+                    local_secret_share,
+                    &collective_public_key_qp,
+                    replay_guard,
+                    &mut rng,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let round1_aggregate = rkg.aggregate_round1(&round1_aggregator).unwrap();
+
+    let mut round2_aggregator =
+        ShareAggregator::new(rkg.round2_session(), ShareKind::RelinearizationKeyGen);
+    for ((&participant, local_secret_share), replay_guard) in participants
+        .iter()
+        .zip(&local_secret_shares)
+        .zip(&mut replay_guards)
+    {
+        round2_aggregator
+            .add_share(
+                rkg.create_share_round2(
+                    participant,
+                    local_secret_share,
+                    &collective_public_key_qp,
+                    &round1_aggregate,
+                    replay_guard,
+                    &mut rng,
+                )
+                .unwrap(),
+            )
+            .unwrap();
+    }
+    let collective_relin_key = rkg.aggregate_key(&round2_aggregator).unwrap();
+
+    let ctx = BfvContext::new(params.clone());
+    let encoder = ctx.encoder();
+    let evaluator = ctx.evaluator().unwrap();
+    let encryptor = ctx.real_encryptor(collective_public_key);
+
+    let a_values: Vec<u64> = (0..ring.degree() as u64).map(|i| i % 17).collect();
+    let b_values: Vec<u64> = (0..ring.degree() as u64)
+        .map(|i| (2 * i + 1) % 17)
+        .collect();
+    let a_ct = encryptor
+        .encrypt(&encoder.encode_u64(&a_values).unwrap(), &mut rng)
+        .unwrap();
+    let b_ct = encryptor
+        .encrypt(&encoder.encode_u64(&b_values).unwrap(), &mut rng)
+        .unwrap();
+
+    let product = evaluator.mul_real(&a_ct, &b_ct, &p_moduli).unwrap();
+    assert_eq!(product.degree(), 2);
+    let relinearized = evaluator
+        .relinearize_real(&product, &collective_relin_key)
+        .unwrap();
+    assert_eq!(relinearized.degree(), 1);
+
+    let collective_secret_coeffs: Vec<i128> = (0..ring.degree())
+        .map(|coeff| secrets.iter().map(|s| s[coeff]).sum())
+        .collect();
+    let collective_secret =
+        SecretKey::new(embed_centered_coeffs(&collective_secret_coeffs, ring.moduli()).unwrap());
+    let decryptor = ctx.decryptor(collective_secret).unwrap();
+
+    let raw_decoded = encoder
+        .decode_u64_real(&decryptor.decrypt(&product).unwrap())
+        .unwrap();
+    let relinearized_decoded = encoder
+        .decode_u64_real(&decryptor.decrypt(&relinearized).unwrap())
+        .unwrap();
+    assert_eq!(relinearized_decoded, raw_decoded);
 }
 
 #[test]

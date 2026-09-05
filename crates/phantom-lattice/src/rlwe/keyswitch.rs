@@ -76,6 +76,18 @@ impl KeySwitchKey {
     pub const fn qp_params(&self) -> &RlweParams {
         &self.qp_params
     }
+
+    /// Builds a key-switching key directly from already-computed rows,
+    /// bypassing [`generate_key_switch_key`] (which needs `s_old` fully
+    /// known - unusable when the rows are the collectively-combined output
+    /// of a multiparty protocol that never assembles `s_old` anywhere).
+    /// `rows.len()` must equal `qp_params.ring()`'s own moduli count minus
+    /// `p_moduli`'s own count (i.e. `q_len`) for [`key_switch`] to accept
+    /// the result - not checked here, since this constructor doesn't know
+    /// where the `Q`/`P` split falls within `qp_params`'s own ring.
+    pub const fn from_rows(qp_params: RlweParams, rows: Vec<Ciphertext>) -> Self {
+        Self { qp_params, rows }
+    }
 }
 
 /// Generates a key-switching key from `s_old` to `s_new`.

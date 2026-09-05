@@ -281,11 +281,22 @@ The following components are not yet at production cryptographic strength:
   a useful result, not just for the usual multiplicative-depth reasons (see
   `mpckks::reencryption`'s own doc comment for the full derivation, found
   via a real test failure at an under-sized scale before this item shipped).
-  `mpbfv::RelinearizationKeyGen`/`GaloisKeyGen`/`InteractiveBootstrap` and
-  `mpckks::RelinearizationKeyGen`/`GaloisKeyGen`/`InteractiveBootstrap`
-  remain placeholders - mirroring GKG/RKG needs a genuinely new RNS-hybrid
-  multiparty construction, not a port of `mpbgv`'s own gadget-decomposition
-  one, for both schemes.
+  `mpbfv::GaloisKeyGen`/`RelinearizationKeyGen` and
+  `mpckks::GaloisKeyGen`/`RelinearizationKeyGen` are real too (Workstream 7
+  item 11) - not a port of `mpbgv`'s own gadget-decomposition construction
+  (which BGV needs specifically to protect its exact `mod t` decode from
+  RNS-hybrid key-switching's rounding error), but a genuinely new collective
+  version of the RNS-hybrid construction BFV and CKKS already use unmodified
+  for their own single-party keys, derived once in a shared,
+  scheme-agnostic `phantom_multiparty::common::hybrid` module and wired
+  into both schemes as thin wrappers. `GaloisKeyGen` stays single-round,
+  additive per row, structurally like `mpbgv::gkg`; `RelinearizationKeyGen`
+  needs three rounds - one more than `mpbgv::rkg`'s own two - since the
+  hybrid construction's rows live in an extended `QP` ring requiring its own
+  freshly-built collective public key first (`mpbgv::rkg` reuses its
+  already-existing `Q`-ring collective key directly). `mpbfv::InteractiveBootstrap`
+  and `mpckks::InteractiveBootstrap` remain the last placeholders across all
+  three schemes.
   `ReEncryptor`'s own
   smudging noise is
   now a rigorously derived bound (`phantom_lattice::security::smudging_std_dev`,
@@ -300,9 +311,10 @@ The following components are not yet at production cryptographic strength:
   The same literature also warns that *retrying* a share-generation protocol
   (a participant producing a second share for the same session/public
   randomness) leaks key material via accumulated linear algebra, regardless
-  of any single call's smudging noise - `mpbgv`'s five real protocols
-  (CKG/GKG/RKG's both rounds/PCKS/PartialDecryptor) and `mpbfv`/`mpckks`'s
-  three each (CKG/PCKS/PartialDecryptor) now guard against this directly
+  of any single call's smudging noise - `mpbgv`, `mpbfv`, and `mpckks`'s own
+  five real protocols each (CKG/GKG/RKG - two rounds for `mpbgv::rkg`, three
+  for `mpbfv`/`mpckks`'s own RKG - /PCKS/PartialDecryptor) now guard against
+  this directly
   (`phantom_multiparty::common::ReplayGuard`, Workstream 7 item 8): each
   `create_share`/`create_share_round1`/`create_share_round2` call requires a
   `&mut ReplayGuard` and refuses (before any crypto work) a second call for
