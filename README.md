@@ -1,34 +1,60 @@
-# Phantom-FHE
+<div align="center">
+
+<img src="docs/assets/phantom-logo.png" alt="Phantom-FHE" width="220">
+
+### Fully homomorphic encryption, natively in Rust.
+
+BFV, BGV, and CKKS, homomorphic circuits, bootstrapping, and multiparty/threshold protocols — an original Rust implementation, not a binding.
 
 [![CI](https://github.com/ultravioletrs/phantom-fhe/actions/workflows/ci.yml/badge.svg)](https://github.com/ultravioletrs/phantom-fhe/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](Cargo.toml)
+[![Release](https://img.shields.io/github/v/release/ultravioletrs/phantom-fhe?include_prereleases&label=release)](https://github.com/ultravioletrs/phantom-fhe/releases)
 
-`phantom-fhe` is a Rust-native fully homomorphic encryption (FHE) library for modern RLWE-based cryptography: BFV, BGV, CKKS, homomorphic circuits, bootstrapping, and multiparty/threshold protocols, built as an original Rust implementation.
+[Quickstart](#quickstart) · [Why Phantom-FHE](#why-phantom-fhe) · [How It Works](#how-it-works) · [Workspace](#workspace) · [Documentation](#documentation) · [Security](#security) · [Contributing](#contributing)
 
-Phantom-FHE is a research-stage implementation under active development (TRL 2–3). The full architecture is implemented and tested end-to-end; cryptographic hardening toward production-grade security is in progress under a tracked roadmap — see [SECURITY.md](SECURITY.md) for current status.
+</div>
 
-## Contents
+## Introduction
 
-- [Scope](#scope)
-- [Quickstart](#quickstart)
-- [Workspace](#workspace)
-- [Status](#status)
-- [Documentation](#documentation)
-- [Development](#development)
-- [Security](#security)
-- [Contributing](#contributing)
-- [License](#license)
+Phantom-FHE lets you compute on encrypted data without ever decrypting it: `Enc(a) ⊕ Enc(b) → Enc(a + b)`, `Enc(a) ⊗ Enc(b) → Enc(a * b)`, and further — homomorphic circuits, CKKS bootstrapping, and multiparty/threshold protocols — all built from first principles in Rust, on the RLWE-based family of schemes (BFV, BGV, CKKS) that underlies most practical FHE today.
 
-## Scope
+Phantom-FHE is a research-stage implementation under active development (TRL 2–3). The full architecture is implemented and tested end-to-end — every scheme, every circuit, CKKS bootstrapping, and all six multiparty protocols run on real, non-transparent ciphertexts today. Cryptographic hardening toward production-grade security is in progress under a tracked, public roadmap — see [Security](#security) for exactly what that means before you rely on it.
 
-- RNS polynomial ring arithmetic
-- RLWE and RGSW core primitives
-- BFV, BGV, and CKKS schemes
-- Homomorphic circuits (linear transforms, polynomial evaluation, comparison/inverse/mod1, DFT)
-- Scheme bootstrapping, with CKKS first
-- Multiparty / threshold protocols
-- Runnable examples and smoke benchmarks
+## Why Phantom-FHE?
+
+- **A real implementation, not a wrapper.** Every ring operation, scheme, circuit, and protocol here is original Rust — no bindings to an existing C++/Go FHE library.
+- **Honest about what's real.** [`SECURITY.md`](SECURITY.md) and [`docs/technical-manual.md`](docs/technical-manual.md) state precisely what's production-shaped versus still a transparent scaffold, operation by operation — no glossing over gaps.
+- **A tracked, public hardening roadmap.** Alpha and Beta hardening are both complete ([`CHANGELOG.md`](CHANGELOG.md)); [`docs/internal/implementation-plan.md`](docs/internal/implementation-plan.md) tracks every remaining item toward Stable.
+- **Batteries included.** RNS ring arithmetic, RLWE/RGSW, three schemes, homomorphic circuits, CKKS bootstrapping, and multiparty threshold protocols — one workspace, one dependency graph, no missing middle layer.
+- **Built for both people and agents.** A facade crate with one coherent API, runnable examples for every workflow, and Criterion benchmarks for the hot paths that matter.
+
+## How It Works
+
+```mermaid
+flowchart LR
+    ring["Ring arithmetic<br/>(phantom-ring)"] --> lattice["RLWE / RGSW<br/>(phantom-lattice)"]
+    lattice --> schemes["BFV · BGV · CKKS<br/>(phantom-schemes)"]
+    schemes --> circuits["Circuits<br/>(phantom-circuits)"]
+    schemes --> bootstrapping["Bootstrapping<br/>(phantom-bootstrapping)"]
+    schemes --> multiparty["Multiparty<br/>(phantom-multiparty)"]
+    circuits --> bootstrapping
+```
+
+Each layer is its own crate with its own tests, benchmarks, and API stability tier — `phantom-ring`'s NTT and RNS arithmetic underlies `phantom-lattice`'s RLWE/RGSW primitives, which the three schemes build on directly. Circuits, bootstrapping, and multiparty protocols sit on top of the schemes, not the ring, so they never need to know how a ciphertext's arithmetic is actually implemented. See [`docs/architecture.md`](docs/architecture.md) for the full crate dependency graph and construction pattern.
+
+## Features
+
+| Area | Capabilities |
+| --- | --- |
+| Ring arithmetic | RNS polynomial rings, an O(N log N) NTT, Barrett/Montgomery reduction, RNS basis extension and rescaling |
+| RLWE / RGSW | Real (non-transparent) encryption, RNS hybrid key-switching, relinearization, Galois automorphisms, noise bounds |
+| Schemes | BFV, BGV, and CKKS, each with both a transparent scaffold path (for fast iteration) and a real, noise-bearing encryption path |
+| Circuits | Linear transforms (diagonal/BSGS), polynomial evaluation, comparison, inverse, mod1, and DFT |
+| Bootstrapping | CKKS bootstrapping end to end on real ciphertexts: modulus raise, CoeffsToSlots, EvalMod, SlotsToCoeffs |
+| Multiparty | Six threshold protocols across BGV/BFV/CKKS — collective keygen, Galois/relinearization keygen, collaborative re-encryption, partial decryption, interactive bootstrap — plus Pedersen VSS |
+| Serialization | Versioned binary wire formats for every public type, golden-byte/version-mismatch/fuzz-tested; secret-bearing types are never serializable |
+| Developer tooling | A facade crate, 16 runnable examples, Criterion benchmarks with toy/small parameter tiers, and a full local `make ci` matching CI exactly |
 
 ## Quickstart
 
@@ -83,9 +109,9 @@ More workflows (BGV, CKKS, bootstrapping, multiparty) are runnable from [`crates
 
 ## Status
 
-All 18 roadmap phases are implemented — every crate above compiles, is tested, and its examples run end-to-end. The project is now executing an **Alpha Hardening** plan to progress cryptographic hardness toward production strength: release infrastructure and API/documentation clarity are complete, and remaining work is tracked as a sequence of workstreams — ring hardening, production RLWE/RGSW, production BFV/BGV/CKKS, bootstrapping/circuits hardening, and multiparty protocol security. See [SECURITY.md](SECURITY.md) for current cryptographic status.
+All 18 roadmap phases are implemented — every crate above compiles, is tested, and its examples run end-to-end. Alpha and Beta hardening are both complete: real (non-transparent) encryption paths, RNS hybrid key-switching, CKKS bootstrapping, all six multiparty protocols, a versioned serialization format, Criterion benchmarks, and a production-shaped parameter preset validated against the homomorphicencryption.org 128-bit standard. Remaining work targets the Stable tier — an API/serialization-domain freeze, general production parameter guidance, performance baselines, and an independent security review. See [SECURITY.md](SECURITY.md) for current cryptographic status.
 
-The full phase-by-phase and workstream-by-workstream detail lives in [`docs/internal/implementation-plan.md`](docs/internal/implementation-plan.md). See [CHANGELOG.md](CHANGELOG.md) for the current release's crate map, supported examples, security status, and planned hardening tracks.
+The full phase-by-phase and workstream-by-workstream detail lives in [`docs/internal/implementation-plan.md`](docs/internal/implementation-plan.md); the release tiers themselves are tracked in [`docs/internal/release-checklist.md`](docs/internal/release-checklist.md). See [CHANGELOG.md](CHANGELOG.md) for what shipped in each release.
 
 ## Documentation
 
@@ -108,7 +134,7 @@ make help    # list all targets
 make check   # fmt-check + clippy + test + doc, same as CI
 make test    # cargo test --workspace --all-targets
 make examples  # run every phantom-examples binary
-make bench   # run the phantom-benches smoke benchmarks
+make bench   # run the phantom-benches Criterion benchmarks
 make ci      # check + bench, the full local command matrix
 ```
 
