@@ -9,7 +9,7 @@ BFV, BGV, and CKKS, homomorphic circuits, bootstrapping, and multiparty/threshol
 [![CI](https://github.com/ultravioletrs/phantom-fhe/actions/workflows/ci.yml/badge.svg)](https://github.com/ultravioletrs/phantom-fhe/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](Cargo.toml)
-[![Release](https://img.shields.io/github/v/release/ultravioletrs/phantom-fhe?include_prereleases&label=release)](https://github.com/ultravioletrs/phantom-fhe/releases)
+[![Release](https://img.shields.io/badge/release-v0.2.0--beta-blue.svg)](https://github.com/ultravioletrs/phantom-fhe/releases)
 
 [Quickstart](#quickstart) · [Why Phantom-FHE](#why-phantom-fhe) · [How It Works](#how-it-works) · [Workspace](#workspace) · [Documentation](#documentation) · [Security](#security) · [Contributing](#contributing)
 
