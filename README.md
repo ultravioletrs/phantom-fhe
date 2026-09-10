@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/assets/phantom-fhe-logo.svg" alt="Phantom-FHE" width="480">
+<img src="docs/assets/phantom-fhe-logo-banner.svg" alt="Phantom-FHE" width="480">
 
 ### Fully homomorphic encryption, natively in Rust.
 
